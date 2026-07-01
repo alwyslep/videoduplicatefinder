@@ -421,12 +421,32 @@ namespace VDF.Core {
 						else
 							DatabaseUtils.Database.Add(fEntry);
 					}
-					else if (fEntry.DateCreated != dbEntry.DateCreated ||
-							fEntry.DateModified != dbEntry.DateModified ||
-							fEntry.FileSize != dbEntry.FileSize) {
-						// -> Modified or different file
+					else if (fEntry.FileSize != dbEntry.FileSize) {
+						// Size changed -> content genuinely changed: drop stale analysis and re-decode.
 						DatabaseUtils.Database.Remove(dbEntry);
 						DatabaseUtils.Database.Add(fEntry);
+					}
+					else if (fEntry.DateCreated != dbEntry.DateCreated ||
+							fEntry.DateModified != dbEntry.DateModified) {
+						// Same size, only the timestamp moved. Could be a container-only rewrite
+						// (faststart), a touch/copy/restore with identical bytes, or a rare same-size
+						// content swap. Verify with the oshash before discarding phash/mediaInfo.
+						string? os = OsHashUtils.TryCompute(fEntry.Path);
+						if (os != null && dbEntry.OsHash != null && os != dbEntry.OsHash) {
+							// Fingerprint differs -> different content at the same path -> re-analyze.
+							DatabaseUtils.Database.Remove(dbEntry);
+							DatabaseUtils.Database.Add(fEntry);
+						}
+						else {
+							// Same (or unverifiable) fingerprint: same file, just re-dated. Keep the
+							// cached analysis; only refresh timestamps so it won't re-trigger next scan.
+							// ponytail: null oshash (pre-oshash entry or read fail) treated as same file to
+							// stay append-only; ceiling is a same-size content swap on such an entry.
+							dbEntry.DateCreated = fEntry.DateCreated;
+							dbEntry.DateModified = fEntry.DateModified;
+							if (dbEntry.OsHash == null && os != null)
+								dbEntry.OsHash = os;
+						}
 					}
 				}
 			}
