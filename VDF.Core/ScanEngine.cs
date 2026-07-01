@@ -618,6 +618,24 @@ namespace VDF.Core {
 		public static Task<bool> LoadDatabase() => Task.Run(DatabaseUtils.LoadDatabase);
 		public static void SaveDatabase() => DatabaseUtils.SaveDatabase();
 		public static bool RemoveFromDatabase(FileEntry dbEntry) => DatabaseUtils.Database.Remove(dbEntry);
+		// A DB entry can outlive its file. We tell an intentional deletion from a temporarily
+		// offline drive by the file's ROOT: drive mounted but file gone = the user deleted it
+		// (a "tombstone" whose fingerprint we keep so a re-download is recognized); drive itself
+		// absent (USB unplugged, letter reassigned) = merely offline, must NOT count as deleted.
+		// See TOMBSTONE-DESIGN.md.
+		public static bool IsDriveReady(string path) {
+			try {
+				string? root = Path.GetPathRoot(path);
+				if (string.IsNullOrEmpty(root))
+					return false;                       // UNC / unrooted -> conservative: treat as offline
+				return new DriveInfo(root).IsReady;
+			}
+			catch {
+				return false;
+			}
+		}
+		public static bool PathIsTombstone(string path) => !File.Exists(path) && IsDriveReady(path);
+		public static bool PathIsOffline(string path) => !File.Exists(path) && !IsDriveReady(path);
 		public static void UpdateFilePathInDatabase(string newPath, FileEntry dbEntry) => DatabaseUtils.UpdateFilePath(newPath, dbEntry);
 #pragma warning disable CS8601 // Possible null reference assignment
 		public static bool GetFromDatabase(string path, out FileEntry? dbEntry) {
@@ -745,6 +763,15 @@ namespace VDF.Core {
 							}
 						}
 
+						// Tombstone/offline safety: the file is gone (deleted, or its drive is unmounted).
+						// A fully-cached entry was already kept above; one with incomplete cached data cannot
+						// be (re)analysed without the file, so exclude it from this scan instead of spawning
+						// ffprobe/ffmpeg on a missing path (which only errors).
+						if (!File.Exists(entry.Path)) {
+							entry.invalid = true;
+							IncrementProgress(entry.Path);
+							return ValueTask.CompletedTask;
+						}
 						if (entry.mediaInfo == null && !entry.IsImage) {
 							ReportStage(entry.Path, T("Scan.Stage.Probing"));
 							MediaInfo? info = FFProbeEngine.GetMediaInfo(entry.Path, Settings.ExtendedFFToolsLogging);

@@ -148,15 +148,11 @@ namespace VDF.Core.Utils {
 			SaveDatabase();
 		}
 		internal static void CleanupDatabase() {
-			int oldCount = Database.Count;
-			var st = Stopwatch.StartNew();
-
-			Database.RemoveWhere(a => !File.Exists(a.Path) || a.Flags.Any(EntryFlags.MetadataError | EntryFlags.ThumbnailError));
-
-			st.Stop();
-			Logger.Instance.Info(
-				$"Database cleanup has finished in: {st.Elapsed}, {oldCount - Database.Count} entries have been removed");
-			SaveDatabase();
+			// Disabled by the tombstone policy: every non-existent entry is either an intentionally
+			// deleted file (a fingerprint we keep so a re-download is caught) or a temporarily offline
+			// drive. Pruning them would destroy that memory, so this no longer removes anything.
+			// See TOMBSTONE-DESIGN.md.
+			Logger.Instance.Info("Database cleanup is disabled: fingerprints are preserved as tombstones.");
 		}
 		internal static void SaveDatabase() {
 			Logger.Instance.Info($"Save scanned files to disk ({Database.Count:N0} files).");
