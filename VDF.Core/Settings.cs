@@ -59,6 +59,8 @@ namespace VDF.Core {
 		/// <summary>Maximum width in pixels for display thumbnails (0 = original resolution).</summary>
 		public int ThumbnailMaxWidth = 100;
 		public int MaxDegreeOfParallelism = 1;
+		// Concurrency for spindle HDDs (per-drive); fast SSD/NVMe drives use MaxDegreeOfParallelism instead.
+		public int HddMaxDegreeOfParallelism = 2;
 
 		public string CustomFFArguments = string.Empty;
 		public string CustomDatabaseFolder = string.Empty;

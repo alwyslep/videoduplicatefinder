@@ -116,6 +116,38 @@ namespace VDF.Core {
 			return arr;
 		}
 
+		// Per-drive concurrency: probe each drive's seek latency once; this threshold splits fast
+		// (SSD/NVMe) from slow (spindle HDD). The DOP each drive gets is decided inline in GatherInfos.
+		const double SsdHddLatencyThresholdMs = 3.0;
+		// Median latency of a few random 64KB reads from one representative file on the drive. Random offsets
+		// make it seek-bound so a spindle HDD separates cleanly from SSD/NVMe. null if nothing readable to probe.
+		static double? ProbeSeekLatencyMs(System.Collections.Generic.IReadOnlyList<FileEntry> entries) {
+			string? path = null;
+			foreach (var e in entries) { if (e.FileSize > (1 << 20) && System.IO.File.Exists(e.Path)) { path = e.Path; break; } }
+			if (path == null) return null;
+			try {
+				const int block = 64 * 1024, reads = 6;
+				using var fs = new System.IO.FileStream(path, System.IO.FileMode.Open, System.IO.FileAccess.Read, System.IO.FileShare.ReadWrite, block, System.IO.FileOptions.None);
+				long len = fs.Length;
+				if (len <= block) return null;
+				var buf = new byte[block];
+				var times = new System.Collections.Generic.List<double>(reads);
+				var rnd = new Random(0x5eed);
+				var sw = new System.Diagnostics.Stopwatch();
+				for (int i = 0; i < reads; i++) {
+					long off = (long)(rnd.NextDouble() * (len - block)) & ~4095L;
+					fs.Seek(off, System.IO.SeekOrigin.Begin);
+					sw.Restart();
+					int n = fs.Read(buf, 0, block);
+					sw.Stop();
+					if (n > 0) times.Add(sw.Elapsed.TotalMilliseconds);
+				}
+				if (times.Count == 0) return null;
+				times.Sort();
+				return times[times.Count / 2];
+			} catch { return null; }
+		}
+
 		string T(string key, params object[] args) =>
 			LanguageService.Instance.Get(Settings.LanguageCode, key, args);
 
@@ -733,7 +765,7 @@ namespace VDF.Core {
 				currentStageLabel = string.Empty;
 				InitProgress(DatabaseUtils.Database.Count);
 				BuildDriveCounters();
-				await Parallel.ForEachAsync(DatabaseUtils.Database, new ParallelOptions { CancellationToken = cancelationTokenSource.Token, MaxDegreeOfParallelism = Settings.MaxDegreeOfParallelism }, (entry, token) => {
+				ValueTask ProcessEntry(FileEntry entry, CancellationToken token) {
 					pauseTokenSource.WaitWhilePaused(token);
 
 					try {
@@ -875,7 +907,48 @@ namespace VDF.Core {
 						IncrementProgress(entry.Path, entry.FileSize);
 						return ValueTask.CompletedTask;
 					}
-				});
+				}
+
+				// Group the DB by drive, probe each drive's seek latency once, then process each group at a concurrency
+				// matched to its storage. Fast SSD/NVMe drives SHARE one CPU budget (= configured DOP, or
+				// Environment.ProcessorCount when that is -1) split across them, so N fast drives don't spawn
+				// N x ProcessorCount blocking decoders; each spindle HDD gets the low HDD DOP. Groups run concurrently
+				// so a fast drive isn't blocked by a slow one — except at DOP=1, where we stay strictly serial.
+				var byDrive = new Dictionary<string, List<FileEntry>>(StringComparer.OrdinalIgnoreCase);
+				foreach (var e in DatabaseUtils.Database) {
+					var r = DriveRootOf(e.Path);
+					if (!byDrive.TryGetValue(r, out var lst)) { lst = new List<FileEntry>(); byDrive[r] = lst; }
+					lst.Add(e);
+				}
+				int ssdDop = Settings.MaxDegreeOfParallelism;                       // -1, or a positive total CPU budget
+				int hddDop = Settings.HddMaxDegreeOfParallelism > 0 ? Settings.HddMaxDegreeOfParallelism : 2;
+				bool forceSerial = ssdDop == 1;                                     // user pinned single-thread -> honour globally
+				var groups = new List<(string Root, List<FileEntry> Entries, double? Lat)>();
+				foreach (var kv in byDrive)
+					groups.Add((kv.Key, kv.Value, forceSerial ? (double?)null : ProbeSeekLatencyMs(kv.Value)));
+				int fastCount = 0;
+				foreach (var g in groups) if (g.Lat != null && g.Lat.Value < SsdHddLatencyThresholdMs) fastCount++;
+				int fastBudget = ssdDop < 0 ? Environment.ProcessorCount : ssdDop;
+				int fastPerGroup = fastCount > 0 ? Math.Max(1, fastBudget / fastCount) : Math.Max(1, fastBudget);
+				int DopFor(double? lat) {
+					if (forceSerial) return 1;
+					if (lat == null) return 4;                                     // unprobeable -> safe moderate
+					return lat.Value >= SsdHddLatencyThresholdMs ? hddDop : fastPerGroup;
+				}
+				if (forceSerial) {
+					// preserve the pre-stage-3 single-thread guarantee: one drive, one file at a time
+					foreach (var g in groups)
+						await Parallel.ForEachAsync(g.Entries, new ParallelOptions { CancellationToken = cancelationTokenSource.Token, MaxDegreeOfParallelism = 1 }, ProcessEntry);
+				}
+				else {
+					var driveTasks = new List<Task>(groups.Count);
+					foreach (var g in groups) {
+						int dop = DopFor(g.Lat);
+						Logger.Instance.Info($"Drive {g.Root}: {g.Entries.Count:N0} file(s), concurrency = {dop}" + (g.Lat != null ? $" (seek {g.Lat.Value:0.0}ms)" : " (unprobed)"));
+						driveTasks.Add(Parallel.ForEachAsync(g.Entries, new ParallelOptions { CancellationToken = cancelationTokenSource.Token, MaxDegreeOfParallelism = dop }, ProcessEntry));
+					}
+					await Task.WhenAll(driveTasks);
+				}
 			}
 			catch (OperationCanceledException) { }
 			finally {
