@@ -29,5 +29,17 @@ namespace VDF.Core {
 		/// <summary>Progress within the current stage (e.g. sample 2 of 5). Both zero when stage progress isn't tracked.</summary>
 		public int StageCurrent;
 		public int StageMax;
+		/// <summary>Per-physical-drive scan progress (bytes/files) for the segmented status bar. Null outside the file-reading (GatherInfos) phase.</summary>
+		public DriveProgress[]? Drives;
+	}
+
+	/// <summary>One drive's scan progress. Root is Path.GetPathRoot (e.g. "I:\\"); the segment's width is
+	/// proportional to TotalBytes and its fill to DoneBytes/TotalBytes.</summary>
+	public struct DriveProgress {
+		public string Root;
+		public long TotalBytes;
+		public long DoneBytes;
+		public int TotalFiles;
+		public int DoneFiles;
 	}
 }

@@ -1239,7 +1239,32 @@
                                     </Border>
                                 </Grid>
                             </Grid>
-                            <WrapPanel Grid.Row="2" Margin="0,2,0,0">
+                            <StackPanel Grid.Row="2" Margin="0,2,0,0">
+                                <!-- Per-drive segmented scan progress: one colour per drive, each segment's width proportional to that drive's total bytes, spanning the window width; "|" dividers between drives. -->
+                                <Border IsVisible="{Binding ShowDriveProgress}"
+                                    Margin="0,0,0,3"
+                                    BorderBrush="{actipro:ThemeResource ButtonForegroundBrush}"
+                                    BorderThickness="0,0,1,0">
+                                    <ItemsControl ItemsSource="{Binding DriveSegments}" Height="16" HorizontalAlignment="Stretch">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <local:WeightedStackPanel />
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate x:DataType="vm:DriveProgressVM">
+                                                <Border BorderBrush="{actipro:ThemeResource ButtonForegroundBrush}"
+                                                    BorderThickness="1,0,0,0"
+                                                    ToolTip.Tip="{Binding Label}"
+                                                    local:WeightedStackPanel.Weight="{Binding Weight}">
+                                                    <ProgressBar Minimum="0" Maximum="1" Value="{Binding Fraction}"
+                                                        Foreground="{Binding Fill}" Height="16" MinWidth="0" />
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </Border>
+                                <WrapPanel>
                                 <!-- Statistics -->
                                 <StackPanel Orientation="Horizontal"
                                     IsVisible="{Binding !!Duplicates.Count}" VerticalAlignment="Center"
@@ -1309,6 +1334,7 @@
                                         TextTrimming="CharacterEllipsis" MaxWidth="500" />
                                 </StackPanel>
                             </WrapPanel>
+                            </StackPanel>
                             <Grid
                                 x:Name="BusyIndicator"
                                 Grid.RowSpan="3"

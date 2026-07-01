@@ -32,6 +32,7 @@ using Avalonia.Input.Platform;
 using Avalonia.Platform;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
+using Avalonia.Media;
 using FFmpeg.AutoGen;
 using ReactiveUI;
 using VDF.Core;
@@ -43,6 +44,41 @@ using VDF.GUI.Views;
 namespace VDF.GUI.ViewModels {
 	public partial class MainWindowVM : ReactiveObject {
 		public ScanEngine Scanner { get; } = new();
+
+		// ── Per-drive segmented scan progress (status bar). Built once per scan; Fraction/Label update live. ──
+		public ObservableCollection<DriveProgressVM> DriveSegments { get; } = new();
+		bool _ShowDriveProgress;
+		public bool ShowDriveProgress {
+			get => _ShowDriveProgress;
+			set => this.RaiseAndSetIfChanged(ref _ShowDriveProgress, value);
+		}
+		static readonly IBrush[] _drivePalette = {
+			new SolidColorBrush(Color.Parse("#4FC3F7")), new SolidColorBrush(Color.Parse("#81C784")),
+			new SolidColorBrush(Color.Parse("#FFB74D")), new SolidColorBrush(Color.Parse("#BA68C8")),
+			new SolidColorBrush(Color.Parse("#E57373")), new SolidColorBrush(Color.Parse("#4DD0E1")),
+			new SolidColorBrush(Color.Parse("#FFF176")), new SolidColorBrush(Color.Parse("#A1887F")),
+		};
+		static IBrush DriveBrush(int i) => _drivePalette[((i % _drivePalette.Length) + _drivePalette.Length) % _drivePalette.Length];
+		// Rebuild segments only when the drive set changes; otherwise just refresh each fraction/label.
+		void UpdateDriveSegments(DriveProgress[]? drives) {
+			if (drives == null || drives.Length == 0) return;
+			bool sameSet = DriveSegments.Count == drives.Length;
+			if (sameSet)
+				for (int i = 0; i < drives.Length; i++)
+					if (!string.Equals(DriveSegments[i].Root, drives[i].Root, System.StringComparison.OrdinalIgnoreCase)) { sameSet = false; break; }
+			if (!sameSet) {
+				DriveSegments.Clear();
+				for (int i = 0; i < drives.Length; i++)
+					DriveSegments.Add(new DriveProgressVM(drives[i].Root, DriveBrush(i), drives[i].TotalBytes));
+			}
+			for (int i = 0; i < drives.Length; i++) {
+				var d = drives[i];
+				var seg = DriveSegments[i];
+				seg.Fraction = d.TotalBytes > 0 ? (double)d.DoneBytes / d.TotalBytes : 0;
+				seg.Label = $"{d.Root}  {seg.Fraction * 100:0}%  ({d.DoneFiles:N0}/{d.TotalFiles:N0})";
+			}
+			ShowDriveProgress = true;
+		}
 		public ObservableCollection<string> LogItems { get; } = new();
 		List<HashSet<string>> GroupBlacklist = new();
 		public string BackupScanResultsFile =>
@@ -471,6 +507,8 @@ namespace VDF.GUI.ViewModels {
 			ScanProgressMaxValue = 100;
 			ThumbnailRetrievalProgressText = string.Empty;
 			ShowThumbnailRetrievalProgressBar = false;
+			DriveSegments.Clear();
+			ShowDriveProgress = false;
 #pragma warning disable CS4014
 			if (SettingsFile.Instance.BackupAfterListChanged)
 				ExportScanResults(BackupScanResultsFile);
@@ -585,6 +623,7 @@ namespace VDF.GUI.ViewModels {
 				ScanProgressCount = $"{e.CurrentPosition:N0} / {e.MaxPosition:N0}";
 				TimeElapsed = e.Elapsed.Format();
 				ScanProgressMaxValue = e.MaxPosition;
+				UpdateDriveSegments(e.Drives);
 			});
 
 		void Scanner_ScanAborted(object? sender, EventArgs e) =>
@@ -606,6 +645,7 @@ namespace VDF.GUI.ViewModels {
 				RemainingTime = TimeSpan.Zero.Format();
 				ScanProgressValue = 0;
 				RefreshDirectoryTree();   // directory-selection tab: DB changed, refresh unscanned counts
+				ShowDriveProgress = false;
 				var completedScheduledScan = scheduledScanInProgress;
 				scheduledScanInProgress = false;
 

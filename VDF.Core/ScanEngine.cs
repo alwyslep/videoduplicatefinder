@@ -87,6 +87,34 @@ namespace VDF.Core {
 			CoreUtils.IsWindows ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
 		DateTime lastCheckpointTime = DateTime.MinValue;
 		readonly object checkpointLock = new();
+		
+		// ── Per-drive scan progress (segmented status bar) ──
+		// Built once at GatherInfos start (file-reading phase); left null during compare phases so their
+		// IncrementProgress calls don't touch it. DoneBytes/DoneFiles mutate via Interlocked (parallel loop).
+		sealed class DriveCounter { public long TotalBytes; public int TotalFiles; public long DoneBytes; public int DoneFiles; }
+		Dictionary<string, DriveCounter>? driveCounters;
+		string[]? driveOrder;
+		static string DriveRootOf(string path) { try { return System.IO.Path.GetPathRoot(path) ?? "?"; } catch { return "?"; } }
+		void BuildDriveCounters() {
+			var groups = new Dictionary<string, DriveCounter>(StringComparer.OrdinalIgnoreCase);
+			foreach (var e in DatabaseUtils.Database) {
+				var root = DriveRootOf(e.Path);
+				if (!groups.TryGetValue(root, out var dc)) { dc = new DriveCounter(); groups[root] = dc; }
+				dc.TotalBytes += e.FileSize; dc.TotalFiles++;
+			}
+			var keys = new List<string>(groups.Keys); keys.Sort(StringComparer.OrdinalIgnoreCase);
+			driveCounters = groups; driveOrder = keys.ToArray();
+		}
+		DriveProgress[]? DriveSnapshot() {
+			var dc = driveCounters; var order = driveOrder;
+			if (dc == null || order == null) return null;
+			var arr = new DriveProgress[order.Length];
+			for (int i = 0; i < order.Length; i++) {
+				var c = dc[order[i]];
+				arr[i] = new DriveProgress { Root = order[i], TotalBytes = c.TotalBytes, DoneBytes = c.DoneBytes, TotalFiles = c.TotalFiles, DoneFiles = c.DoneFiles };
+			}
+			return arr;
+		}
 
 		string T(string key, params object[] args) =>
 			LanguageService.Instance.Get(Settings.LanguageCode, key, args);
@@ -103,6 +131,8 @@ namespace VDF.Core {
 		void InitProgress(int count) {
 			startTime = DateTime.UtcNow;
 			scanProgressMaxValue = count;
+			driveCounters = null;
+			driveOrder = null;
 			processedFiles = 0;
 			lastProgressUpdate = DateTime.MinValue;
 			lastCheckpointTime = DateTime.UtcNow;
@@ -133,8 +163,15 @@ namespace VDF.Core {
 				Logger.Instance.Info(T("Log.ExcludedFilesSummaryItem", reason.Key, reason.Value, suppressionText));
 			}
 		}
-		void IncrementProgress(string path) {
+		void IncrementProgress(string path, long fileSize = 0) {
 			processedFiles++;
+			if (fileSize != 0) {
+				var __dc = driveCounters;
+				if (__dc != null && __dc.TryGetValue(DriveRootOf(path), out var __c)) {
+					System.Threading.Interlocked.Add(ref __c.DoneBytes, fileSize);
+					System.Threading.Interlocked.Increment(ref __c.DoneFiles);
+				}
+			}
 			var pushUpdate = processedFiles == scanProgressMaxValue ||
 								lastProgressUpdate + progressUpdateIntervall < DateTime.UtcNow;
 			if (!pushUpdate) return;
@@ -149,6 +186,7 @@ namespace VDF.Core {
 								Remaining = timeRemaining,
 								MaxPosition = scanProgressMaxValue,
 								CurrentStage = currentStageLabel,
+								Drives = DriveSnapshot(),
 							});
 			TryDatabaseCheckpoint();
 		}
@@ -171,6 +209,7 @@ namespace VDF.Core {
 								CurrentStage = stage,
 								StageCurrent = stageCurrent,
 								StageMax = stageMax,
+								Drives = DriveSnapshot(),
 							});
 		}
 
@@ -693,6 +732,7 @@ namespace VDF.Core {
 			try {
 				currentStageLabel = string.Empty;
 				InitProgress(DatabaseUtils.Database.Count);
+				BuildDriveCounters();
 				await Parallel.ForEachAsync(DatabaseUtils.Database, new ParallelOptions { CancellationToken = cancelationTokenSource.Token, MaxDegreeOfParallelism = Settings.MaxDegreeOfParallelism }, (entry, token) => {
 					pauseTokenSource.WaitWhilePaused(token);
 
@@ -720,7 +760,7 @@ namespace VDF.Core {
 							if (!wasInvalid && skipReason != null)
 								LogExcludedFile(entry, skipReason);
 							if (reportProgress)
-								IncrementProgress(entry.Path);
+								IncrementProgress(entry.Path, entry.FileSize);
 							return ValueTask.CompletedTask;
 						}
 
@@ -758,7 +798,7 @@ namespace VDF.Core {
 									ExtractAudioFingerprint(entry, cancelationTokenSource.Token,
 										onProgress: p => ReportStage(cachedAudioPath, audioStageLabel, (int)(p * 100), 100));
 								}
-								IncrementProgress(entry.Path);
+								IncrementProgress(entry.Path, entry.FileSize);
 								return ValueTask.CompletedTask;
 							}
 						}
@@ -769,7 +809,7 @@ namespace VDF.Core {
 						// ffprobe/ffmpeg on a missing path (which only errors).
 						if (!File.Exists(entry.Path)) {
 							entry.invalid = true;
-							IncrementProgress(entry.Path);
+							IncrementProgress(entry.Path, entry.FileSize);
 							return ValueTask.CompletedTask;
 						}
 						if (entry.mediaInfo == null && !entry.IsImage) {
@@ -778,7 +818,7 @@ namespace VDF.Core {
 							if (info == null) {
 								entry.invalid = true;
 								entry.Flags.Set(EntryFlags.MetadataError);
-								IncrementProgress(entry.Path);
+								IncrementProgress(entry.Path, entry.FileSize);
 								return ValueTask.CompletedTask;
 							}
 
@@ -819,7 +859,7 @@ namespace VDF.Core {
 								onProgress: p => ReportStage(audioPath, audioLabel, (int)(p * 100), 100));
 						}
 
-						IncrementProgress(entry.Path);
+						IncrementProgress(entry.Path, entry.FileSize);
 						return ValueTask.CompletedTask;
 					}
 					catch (OperationCanceledException) {
@@ -832,7 +872,7 @@ namespace VDF.Core {
 						Logger.Instance.Info($"Unhandled error processing '{entry.Path}': {ex}");
 						entry.invalid = true;
 						entry.Flags.Set(EntryFlags.ThumbnailError);
-						IncrementProgress(entry.Path);
+						IncrementProgress(entry.Path, entry.FileSize);
 						return ValueTask.CompletedTask;
 					}
 				});
