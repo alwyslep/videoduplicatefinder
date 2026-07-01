@@ -138,12 +138,20 @@ today's `-1` model, and it's the most visible quality-of-life win. It only needs
 
 0. **Design doc** — this file. ✅
 1. **Shared foundation + data model** — `DriveGroup` partition at scan start; per-drive totals;
-   `DriveProgress[]` on the progress event. (Enables both A and B.)
+   `DriveProgress[]` on the progress event. (Enables both A and B.) ✅ (`7e96ddc`)
 2. **Part B UI** — segmented per-drive progress bar (ships on current `-1`; highest visible value).
+   ✅ (`7e96ddc`; deployed 2026-07-02). `WeightedStackPanel` + `DriveProgressVM` + `MainWindowVM.DriveSegments`.
 3. **Part A #2** — per-device static concurrency (one `Parallel.ForEachAsync` per drive group; SSD high /
-   HDD low via a settings override map).
+   HDD low via a settings override map). ← next
 4. **Part A #1** — DOP measurement on an uncached subset; confirm low-concurrency wins on I:.
 5. **Part A #3** — adaptive AIMD controller (custom per-group limiter), only if #2 is insufficient.
+
+### Related: Stop/Pause semantics (observed while building)
+`Stop()` is the graceful shutdown: cooperative cancel → `GatherInfos` swallows the cancel → an
+unconditional atomic `SaveDatabase()` flush → scan ends; fingerprints are cached so a later rescan
+resumes (skips done). `Pause()` only freezes (no flush) and, under `-1` parallelism, has a long drain
+tail (dozens of in-flight files must finish before parking) — another symptom that per-device low
+concurrency (#2) fixes. A clean "pause = safe suspend + flush" is best folded into #2/#3, not bolted on.
 
 ## Open decisions
 - Drive-type source: settings override map (recommended) vs latency probe vs both.
