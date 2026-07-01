@@ -141,9 +141,15 @@ today's `-1` model, and it's the most visible quality-of-life win. It only needs
    `DriveProgress[]` on the progress event. (Enables both A and B.) ✅ (`7e96ddc`)
 2. **Part B UI** — segmented per-drive progress bar (ships on current `-1`; highest visible value).
    ✅ (`7e96ddc`; deployed 2026-07-02). `WeightedStackPanel` + `DriveProgressVM` + `MainWindowVM.DriveSegments`.
-3. **Part A #2** — per-device static concurrency (one `Parallel.ForEachAsync` per drive group; SSD high /
-   HDD low via a settings override map). ← next
-4. **Part A #1** — DOP measurement on an uncached subset; confirm low-concurrency wins on I:.
+3. **Part A #2** — per-device concurrency. ✅ (`9785617`; deployed 2026-07-02). Drive-grouped `GatherInfos`
+   (`ProcessEntry` local fn + one `Parallel.ForEachAsync` per drive, `Task.WhenAll`). Drive type via a
+   seek-latency probe (`ProbeSeekLatencyMs`, 3ms threshold) rather than a settings map. Fast drives share
+   one CPU budget (configured DOP / `Environment.ProcessorCount`) split across them; HDD =
+   `HddMaxDegreeOfParallelism` (default 2, serialized in Settings.json); DOP=1 stays strictly serial.
+   Adversarial review (7 agents) caught + fixed the `-1 == ProcessorCount` oversubscription and the DOP=1
+   cross-group race before commit.
+4. **Part A #1** — DOP measurement on an uncached subset; confirm low-concurrency wins on I:. ← next
+   (tune `HddMaxDegreeOfParallelism` in Settings.json to 1/2/4, rescan an uncached folder, compare I: rate).
 5. **Part A #3** — adaptive AIMD controller (custom per-group limiter), only if #2 is insufficient.
 
 ### Related: Stop/Pause semantics (observed while building)
