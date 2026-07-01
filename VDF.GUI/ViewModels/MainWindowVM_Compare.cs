@@ -24,6 +24,7 @@ using System.Text;
 using System.Text.Json.Nodes;
 using Avalonia.Threading;
 using ReactiveUI;
+using VDF.Core;
 using VDF.Core.Utils;
 using VDF.GUI.Views;
 
@@ -141,17 +142,29 @@ namespace VDF.GUI.ViewModels {
 		void ApplyExternalRemoval(string path) {
 			if (File.Exists(path))
 				return;
-			bool changed = false;
+			// The user deleted this copy in GridPlayer because its content is redundant — a
+			// surviving copy in the group still carries the same phash. Drop this copy's DB
+			// entry too so the database keeps exactly one fingerprint per unique content: a
+			// future re-download still matches the survivor and gets flagged, and the deleted
+			// path never resurfaces as a phantom on a compare-only rescan.
+			bool dbRemoved = ScanEngine.RemoveFromDatabase(new FileEntry { Path = path });
+			bool rowRemoved = false;
 			for (int i = Duplicates.Count - 1; i >= 0; i--)
 				if (string.Equals(Duplicates[i].ItemInfo.Path, path, StringComparison.OrdinalIgnoreCase)) {
-					Duplicates.RemoveAt(i);
-					changed = true;
+				Duplicates.RemoveAt(i);
+				rowRemoved = true;
 				}
-			if (!changed)
+			if (!dbRemoved && !rowRemoved)
 				return;
-			DropSingletonGroups();
-			RefreshGroupStats();
-			view?.Refresh();
+			if (rowRemoved) {
+				DropSingletonGroups();
+				RefreshGroupStats();
+				view?.Refresh();
+			}
+			// ponytail: full serialize per external delete. GridPlayer deletes arrive
+			// interactively (seconds apart) so this is fine; debounce if a bulk purge janks.
+			if (dbRemoved)
+				ScanEngine.SaveDatabase();
 		}
 
 		// 순수 로직 자가검증용(빌드와 별개): 그룹핑 규칙이 깨지면 실패. 호출부에서 직접 쓸 수 있음.
