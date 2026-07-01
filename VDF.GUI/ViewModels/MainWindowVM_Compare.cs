@@ -142,19 +142,36 @@ namespace VDF.GUI.ViewModels {
 		void ApplyExternalRemoval(string path) {
 			if (File.Exists(path))
 				return;
-			// The user deleted this copy in GridPlayer because its content is redundant — a
-			// surviving copy in the group still carries the same phash. Drop this copy's DB
-			// entry too so the database keeps exactly one fingerprint per unique content: a
-			// future re-download still matches the survivor and gets flagged, and the deleted
-			// path never resurfaces as a phantom on a compare-only rescan.
-			bool dbRemoved = ScanEngine.RemoveFromDatabase(new FileEntry { Path = path });
+
+			// Which duplicate group does this deleted file belong to? Capture it before its row goes.
+			var row = Duplicates.FirstOrDefault(d =>
+				string.Equals(d.ItemInfo.Path, path, StringComparison.OrdinalIgnoreCase));
+
+			// A duplicate deletion -- a live copy still survives in the group -- drops this entry: the
+			// survivor already carries the content's fingerprint, so no tombstone is needed. But deleting
+			// the WHOLE group with no copy left (GridPlayer Ctrl+DEL) is a content rejection: keep exactly
+			// ONE fingerprint as a tombstone so a future re-download is still caught. Keep it on the LAST
+			// group member processed -- by then the earlier ones are already dropped. See TOMBSTONE-DESIGN.md.
+			bool keepAsTombstone = false;
+			if (row is not null) {
+				var others = Duplicates.Where(d =>
+					d.ItemInfo.GroupId == row.ItemInfo.GroupId &&
+					!string.Equals(d.ItemInfo.Path, path, StringComparison.OrdinalIgnoreCase)).ToList();
+				bool aliveSurvivor = others.Any(d => File.Exists(d.ItemInfo.Path));
+				keepAsTombstone = !aliveSurvivor && others.Count == 0;
+			}
+
+			bool dbRemoved = false;
+			if (!keepAsTombstone)
+				dbRemoved = ScanEngine.RemoveFromDatabase(new FileEntry { Path = path });
+
 			bool rowRemoved = false;
 			for (int i = Duplicates.Count - 1; i >= 0; i--)
 				if (string.Equals(Duplicates[i].ItemInfo.Path, path, StringComparison.OrdinalIgnoreCase)) {
-				Duplicates.RemoveAt(i);
-				rowRemoved = true;
+					Duplicates.RemoveAt(i);
+					rowRemoved = true;
 				}
-			if (!dbRemoved && !rowRemoved)
+			if (!dbRemoved && !rowRemoved && !keepAsTombstone)
 				return;
 			if (rowRemoved) {
 				DropSingletonGroups();
@@ -163,7 +180,7 @@ namespace VDF.GUI.ViewModels {
 			}
 			// ponytail: full serialize per external delete. GridPlayer deletes arrive
 			// interactively (seconds apart) so this is fine; debounce if a bulk purge janks.
-			if (dbRemoved)
+			if (dbRemoved || keepAsTombstone)
 				ScanEngine.SaveDatabase();
 		}
 
