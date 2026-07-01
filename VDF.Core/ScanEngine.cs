@@ -91,6 +91,15 @@ namespace VDF.Core {
 		string T(string key, params object[] args) =>
 			LanguageService.Instance.Get(Settings.LanguageCode, key, args);
 
+		// Status-bar label for the current phase. Empty during per-file analysis (which reports its
+		// own sub-stages via ReportStage); set by the compare phases so the UI shows "comparing …"
+		// instead of leaving a stale file path on screen.
+		string currentStageLabel = string.Empty;
+
+		// ParallelOptions rejects 0 and treats -1 as "unlimited"; the -1 default must pass through as
+		// -1 (all cores). Math.Max(1, -1) was silently clamping it to 1 = single-threaded.
+		int ParallelDegree => Settings.MaxDegreeOfParallelism == 0 ? -1 : Settings.MaxDegreeOfParallelism;
+
 		void InitProgress(int count) {
 			startTime = DateTime.UtcNow;
 			scanProgressMaxValue = count;
@@ -139,7 +148,7 @@ namespace VDF.Core {
 								Elapsed = ElapsedTimer.Elapsed,
 								Remaining = timeRemaining,
 								MaxPosition = scanProgressMaxValue,
-								CurrentStage = string.Empty,
+								CurrentStage = currentStageLabel,
 							});
 			TryDatabaseCheckpoint();
 		}
@@ -644,6 +653,7 @@ namespace VDF.Core {
 
 		async Task GatherInfos() {
 			try {
+				currentStageLabel = string.Empty;
 				InitProgress(DatabaseUtils.Database.Count);
 				await Parallel.ForEachAsync(DatabaseUtils.Database, new ParallelOptions { CancellationToken = cancelationTokenSource.Token, MaxDegreeOfParallelism = Settings.MaxDegreeOfParallelism }, (entry, token) => {
 					pauseTokenSource.WaitWhilePaused(token);
@@ -1000,6 +1010,7 @@ namespace VDF.Core {
 			Logger.Instance.Info($"Scanning for duplicates in {ScanList.Count:N0} files");
 
 			InitProgress(ScanList.Count);
+			currentStageLabel = T("Scan.Stage.ComparingDuplicates");
 
 			// Duration buckets are keyed by whole seconds to keep percent-based tolerance intact.
 			const int bucketSizeSeconds = 1;
@@ -1366,6 +1377,8 @@ namespace VDF.Core {
 			Logger.Instance.Info($"Partial clip detection: comparing {videos.Count} video(s) (fingerprint blocks: min={videos.Min(e => e.AudioFingerprint!.Length)}, max={videos.Max(e => e.AudioFingerprint!.Length)})...");
 
 			float simThreshold = (float)Settings.PartialClipSimilarityThreshold;
+			currentStageLabel = T("Scan.Stage.PartialCompare");
+			InitProgress(videos.Count - 1);
 
 			// --- Parallel phase: compute all matches without mutating shared state ---
 			var matches = new ConcurrentBag<(int sourceIdx, int clipIdx, float sim, int offsetSec)>();
@@ -1374,10 +1387,11 @@ namespace VDF.Core {
 			Parallel.For(0, videos.Count - 1,
 				new ParallelOptions {
 					CancellationToken = cancelationTokenSource.Token,
-					MaxDegreeOfParallelism = Math.Max(1, Settings.MaxDegreeOfParallelism)
+					MaxDegreeOfParallelism = ParallelDegree
 				},
 				i => {
 					FileEntry source = videos[i];
+					IncrementProgress(Path.GetFileName(source.Path));
 					double sourceSec = (source.mediaInfo?.Duration ?? TimeSpan.Zero).TotalSeconds;
 					if (sourceSec < 1.0) return;
 
@@ -1422,7 +1436,7 @@ namespace VDF.Core {
 				try {
 					Parallel.ForEach(assignments, new ParallelOptions {
 						CancellationToken = cancelationTokenSource.Token,
-						MaxDegreeOfParallelism = Math.Max(1, Settings.MaxDegreeOfParallelism)
+						MaxDegreeOfParallelism = ParallelDegree
 					}, a => {
 						bool pass = VerifyPartialClipVisually(videos[a.sourceIdx], videos[a.clipIdx], a.offsetSec, out float visualSim);
 						if (pass) {
