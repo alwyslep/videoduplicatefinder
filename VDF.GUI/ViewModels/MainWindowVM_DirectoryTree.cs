@@ -266,7 +266,10 @@ namespace VDF.GUI.ViewModels {
 				var opts = new EnumerationOptions {
 					RecurseSubdirectories = true,
 					IgnoreInaccessible = true,
-					AttributesToSkip = FileAttributes.ReparsePoint
+					// Skip Hidden|System (EnumerationOptions' own default, which is lost once AttributesToSkip
+					// is set) so $RECYCLE.BIN / System Volume Information don't count deleted files as
+					// "unscanned" or inflate the size; plus ReparsePoint to avoid junction loops.
+					AttributesToSkip = FileAttributes.Hidden | FileAttributes.System | FileAttributes.ReparsePoint
 				};
 				var db = _dbPaths;
 				foreach (var fi in new DirectoryInfo(path).EnumerateFiles("*", opts)) {
