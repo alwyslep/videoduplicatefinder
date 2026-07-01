@@ -272,6 +272,7 @@
 	"MainWindow.Settings.Scanning": "Scanning",
 	"MainWindow.Settings.Directories": "Directories",
 	"MainWindow.Settings.DirTree.Unscanned": "{0} unscanned",
+	"MainWindow.Settings.DirTree.Refresh": "Refresh",
 	"MainWindow.Settings.ThumbnailMaxWidth": "Preview thumbnail width (px)",
 	"MainWindow.Settings.ThumbnailMaxWidthTooltip": "Width of the preview thumbnails shown in the results list. Display size only — does not affect detection accuracy.",
 	"MainWindow.Settings.DirectorySelection": "Directory selection",

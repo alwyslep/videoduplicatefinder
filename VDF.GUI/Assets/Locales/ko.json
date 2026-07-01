@@ -272,6 +272,7 @@
 	"MainWindow.Settings.Scanning": "스캔",
 	"MainWindow.Settings.Directories": "디렉터리",
 	"MainWindow.Settings.DirTree.Unscanned": "미스캔 {0}",
+	"MainWindow.Settings.DirTree.Refresh": "새로고침",
 	"MainWindow.Settings.ThumbnailMaxWidth": "미리보기 썸네일 너비 (px)",
 	"MainWindow.Settings.ThumbnailMaxWidthTooltip": "결과 목록에 표시되는 미리보기 썸네일의 너비입니다. 탐지 정확도와는 무관하며 표시 크기만 바꿉니다.",
 	"MainWindow.Settings.DirectorySelection": "디렉터리 선택",

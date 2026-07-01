@@ -22,6 +22,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Media;
 using Avalonia.Threading;
+using System.Reactive;
 using ReactiveUI;
 using VDF.Core.Utils;
 using VDF.GUI.Data;
@@ -58,6 +59,17 @@ namespace VDF.GUI.ViewModels {
 				return _directoryTreeRoots;
 			}
 		}
+
+		// Reload the DB index and recompute every materialised node — invoked by the toolbar refresh
+		// button and automatically when a scan finishes (so the tree's counts stay current).
+		void RefreshDirectoryTree() {
+			if (_directoryTreeRoots == null) return;
+			DirectoryTreeNodeVM.RefreshDatabaseIndex();
+			foreach (var n in _directoryTreeRoots)
+				n.RefreshStatsRecursive();
+		}
+
+		public ReactiveCommand<Unit, Unit> RefreshDirectoryTreeCommand => ReactiveCommand.Create(RefreshDirectoryTree);
 
 		static string DriveDisplayName(DriveInfo d) {
 			try {
@@ -132,8 +144,13 @@ namespace VDF.GUI.ViewModels {
 			get => _isExpanded;
 			set {
 				this.RaiseAndSetIfChanged(ref _isExpanded, value);
-				if (value)
-					LoadChildren();
+				if (value) {
+					if (!_loaded)
+						LoadChildren();
+					else
+						foreach (var c in Children)
+							c.RefreshStats();   // re-expand → recompute what we're looking at
+				}
 			}
 		}
 
@@ -259,6 +276,32 @@ namespace VDF.GUI.ViewModels {
 			});
 		}
 
+		// Recompute this node's size + unscanned count (drives read instantly; folders re-walk).
+		public void RefreshStats() {
+			if (_isPlaceholder) return;
+			if (IsDrive) {
+				try {
+					var d = new DriveInfo(Path);
+					long total = d.TotalSize;
+					SizeText = $"{FormatSize(total - d.TotalFreeSpace)} / {FormatSize(total)}";
+				}
+				catch { }
+				return;
+			}
+			SizeText = "…";
+			MissingText = string.Empty;
+			ComputeFolderStats();
+		}
+
+		// Refresh this node and every already-loaded descendant.
+		public void RefreshStatsRecursive() {
+			if (_isPlaceholder) return;
+			RefreshStats();
+			if (_loaded)
+				foreach (var c in Children)
+					c.RefreshStatsRecursive();
+		}
+
 		static (long size, int missing) WalkFolder(string path) {
 			long size = 0;
 			int missing = 0;
@@ -281,6 +324,10 @@ namespace VDF.GUI.ViewModels {
 			catch { /* best-effort */ }
 			return (size, missing);
 		}
+
+		// Reload the DB path index after the database changes (e.g. a scan finished) so the next
+		// stat recompute reflects the new "unscanned" set. Re-snapshots the current in-memory DB.
+		internal static void RefreshDatabaseIndex() => DbIndexTask = Task.Run(LoadDbIndex);
 
 		internal static void LoadDbIndex() {
 			var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

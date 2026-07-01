@@ -605,6 +605,7 @@ namespace VDF.GUI.ViewModels {
 				ScanProgressText = string.Empty;
 				RemainingTime = TimeSpan.Zero.Format();
 				ScanProgressValue = 0;
+				RefreshDirectoryTree();   // directory-selection tab: DB changed, refresh unscanned counts
 				var completedScheduledScan = scheduledScanInProgress;
 				scheduledScanInProgress = false;
 
