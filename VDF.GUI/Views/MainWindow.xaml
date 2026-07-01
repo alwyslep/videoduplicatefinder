@@ -2255,22 +2255,18 @@
                                 ScrollViewer.HorizontalScrollBarVisibility="Visible" />
                         </Grid>
                     </TabItem>
-                    <TabItem Name="TabItemTools">
-                        <TabItem.Header>
-                            <TextBlock
-                                VerticalAlignment="Center"
-                                FontSize="12"
-                                Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Tab.Tools]}" />
-                        </TabItem.Header>
-                        <Grid Margin="0,0,0,10">
-                            <Menu MinHeight="30" VerticalAlignment="Top"
-                                Background="{actipro:ThemeResource Container2BackgroundBrush}"
-                                BorderBrush="{actipro:ThemeResource Container2BorderBrush}">
-                                <Menu.ItemsPanel>
-                                    <ItemsPanelTemplate>
-                                        <WrapPanel />
-                                    </ItemsPanelTemplate>
-                                </Menu.ItemsPanel>
+                </TabControl>
+                <!-- Tools dropdown: utility actions not tied to the duplicate list; floats at the right of the tab bar -->
+                <Menu HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,2,8,0" Background="Transparent">
+                    <MenuItem>
+                        <MenuItem.Header>
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock VerticalAlignment="Center" FontSize="12"
+                                    Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Tab.Tools]}" />
+                                <Path Margin="4,2,0,0" VerticalAlignment="Center" Data="M 0 0 L 6 6 L 12 0 Z"
+                                    Fill="{actipro:ThemeResource ButtonForegroundBrush}" />
+                            </StackPanel>
+                        </MenuItem.Header>
                                 <MenuItem Command="{Binding OpenBlacklistManagerCommand}">
                                     <MenuItem.Header>
                                         <StackPanel Orientation="Horizontal">
@@ -2309,10 +2305,8 @@
                                             Text="{Binding Source={x:Static local:App.Lang}, Path=[Dialog.OpenFolder]}" />
                                     </MenuItem.Header>
                                 </MenuItem>
-                            </Menu>
-                        </Grid>
-                    </TabItem>
-                </TabControl>
+                    </MenuItem>
+                </Menu>
             </Grid>
         </Grid>
     </Border>
