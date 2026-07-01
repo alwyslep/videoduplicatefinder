@@ -17,6 +17,22 @@ The DB accumulates **one fingerprint per unique content**. Two distinct deletion
 Deleting a duplicate is fine because the unique fingerprint survives via the kept copy.
 Deleting the last copy keeps the fingerprint so a future re-download still matches.
 
+### Two deletion intents (must be handled differently)
+
+- **(A) Duplicate deletion — happens ONLY inside VDF.** You delete redundant copies of a
+  comparison group while keeping at least one (the survivor). The deleted copies' entries are
+  **removed**; the survivor already carries the content's fingerprint, so no tombstone is made.
+- **(B) Content rejection — everything else.** You reject the content itself: an external
+  delete (Explorer/Opus), or a VDF delete that removes the WHOLE group (GridPlayer `Ctrl+DEL`,
+  or checking every item in a group). Here **exactly one fingerprint is kept as a tombstone**,
+  even though every video file is gone, so a re-download of that rejected content is caught.
+
+Because duplicate-judgment only ever happens in VDF, any deletion that leaves no surviving copy
+is treated as rejection. Whole-group VDF deletes keep the **last** member as the tombstone
+(GridPlayer: `ApplyExternalRemoval`; checked-delete: `DeleteInternal` via `keepByGroup==null`);
+partial deletes (a live survivor remains) drop every deleted entry. An unmounted drive is never
+a deletion — it is offline (fingerprint kept, never auto-targeted).
+
 ## Tombstone detection — drive-presence heuristic (agreed)
 
 A tombstone is **not** a stored flag driven by intercepting deletes (external Explorer/Opus
