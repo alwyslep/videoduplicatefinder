@@ -1729,6 +1729,9 @@ Non-Windows setup:
 				   );
 
 			var actuallyDeleted = new HashSet<DuplicateItemVM>(toDelete.Count, ReferenceEqualityComparer<DuplicateItemVM>.Instance);
+			// Whole-group checked-delete (no unchecked survivor) is a content rejection: keep exactly
+			// one fingerprint as a tombstone. This set records the groups that already kept theirs.
+			var tombstonedGroups = new HashSet<Guid>();
 			long freedBytes = 0;
 			int total = toDelete.Count;
 			IsBusy = true;
@@ -1828,8 +1831,14 @@ Non-Windows setup:
 
 							if (blackList)
 								ScanEngine.BlackListFileEntry(dub.ItemInfo.Path);
-							else
-								ScanEngine.RemoveFromDatabase(fe);
+							else {
+								// A checked-delete that removes an ENTIRE group (no unchecked survivor) is a content
+								// rejection: keep exactly one fingerprint as a tombstone so a re-download is caught. A
+								// partial delete leaves a live survivor, so every deleted entry is dropped. TOMBSTONE-DESIGN.md.
+								bool wholeGroupDeleted = !keepByGroup.TryGetValue(dub.ItemInfo.GroupId, out var survivor) || survivor == null;
+								if (!(wholeGroupDeleted && tombstonedGroups.Add(dub.ItemInfo.GroupId)))
+									ScanEngine.RemoveFromDatabase(fe);
+							}
 
 							actuallyDeleted.Add(dub);
 						}
