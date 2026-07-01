@@ -73,6 +73,15 @@ namespace VDF.GUI.ViewModels {
 		}
 		public DuplicateItem ItemInfo { get; set; }
 
+		// A row whose file is gone. Tombstone = intentionally deleted (drive mounted): its fingerprint
+		// is kept so this "already deleted" content is recognized on a re-download. Offline = drive
+		// unmounted (unplugged USB / reassigned letter): shown but never auto-targeted. Computed live,
+		// so a rescan or a replugged drive re-evaluates. See TOMBSTONE-DESIGN.md.
+		[JsonIgnore]
+		public bool IsTombstone => ItemInfo != null && VDF.Core.ScanEngine.PathIsTombstone(ItemInfo.Path);
+		[JsonIgnore]
+		public bool IsOffline => ItemInfo != null && VDF.Core.ScanEngine.PathIsOffline(ItemInfo.Path);
+
 		[JsonInclude]
 		public string ThumbnailKey { get; set; }
 

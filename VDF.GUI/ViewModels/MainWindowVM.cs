@@ -640,6 +640,8 @@ namespace VDF.GUI.ViewModels {
 					}
 				}
 
+				AutoCheckTombstoneMatches();
+
 				if (completedScheduledScan && SettingsFile.Instance.NotifyOnScheduledScanComplete) {
 					_ = MessageBoxService.Show(App.Lang["Message.ScheduledScanCompleted"]);
 				}
@@ -650,6 +652,28 @@ namespace VDF.GUI.ViewModels {
 						string.Format(App.Lang["Notification.ScanComplete.Message"], TotalDuplicateGroups));
 				}
 			});
+
+		// Groups that contain a tombstone (a fingerprint of content the user already deleted) mean any
+		// LIVE member is a re-download of rejected content -- pre-check it for deletion so the user only
+		// has to confirm. Offline members (unplugged drive) are shown but never targeted. TOMBSTONE-DESIGN.md.
+		void AutoCheckTombstoneMatches() {
+			var tombstoneGroups = Duplicates
+				.Where(d => d.IsTombstone)
+				.Select(d => d.ItemInfo.GroupId)
+				.ToHashSet();
+			if (tombstoneGroups.Count == 0)
+				return;
+			int autoChecked = 0;
+			foreach (var d in Duplicates)
+				if (!d.IsTombstone && !d.IsOffline &&
+					tombstoneGroups.Contains(d.ItemInfo.GroupId) &&
+					File.Exists(d.ItemInfo.Path)) {
+					d.Checked = true;
+					autoChecked++;
+				}
+			if (autoChecked > 0)
+				Logger.Instance.Info($"Auto-checked {autoChecked} re-download(s) matching previously deleted content.");
+		}
 
 		void BuildDuplicatesView() {
 			view = new DataGridCollectionView(Duplicates);

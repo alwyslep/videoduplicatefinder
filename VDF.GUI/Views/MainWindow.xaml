@@ -734,10 +734,28 @@
                                                 IsVisible="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=ShowPathColumn}">
                                                 <DataGridTemplateColumn.CellTemplate>
                                                     <DataTemplate x:DataType="vm:DuplicateItemVM">
-                                                        <TextBlock
-                                                            Margin="10,0,0,0"
-                                                            Text="{Binding ItemInfo.Path, TargetNullValue=''}"
-                                                            TextWrapping="Wrap" />
+                                                        <StackPanel Orientation="Horizontal" Margin="10,0,0,0">
+                                                            <!-- Tombstone: content the user already deleted; its fingerprint was kept -->
+                                                            <Border IsVisible="{Binding IsTombstone}"
+                                                                    Background="#B33A2E" CornerRadius="3" Padding="5,1" Margin="0,0,6,0"
+                                                                    VerticalAlignment="Center"
+                                                                    ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[DupList.AlreadyDeletedTooltip]}">
+                                                                <TextBlock Text="{Binding Source={x:Static local:App.Lang}, Path=[DupList.AlreadyDeleted]}"
+                                                                           FontSize="10" FontWeight="Bold" Foreground="White" />
+                                                            </Border>
+                                                            <!-- Offline: the file's drive is not currently mounted -->
+                                                            <Border IsVisible="{Binding IsOffline}"
+                                                                    Background="#555555" CornerRadius="3" Padding="5,1" Margin="0,0,6,0"
+                                                                    VerticalAlignment="Center"
+                                                                    ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[DupList.OfflineTooltip]}">
+                                                                <TextBlock Text="{Binding Source={x:Static local:App.Lang}, Path=[DupList.Offline]}"
+                                                                           FontSize="10" FontWeight="Bold" Foreground="#DDDDDD" />
+                                                            </Border>
+                                                            <TextBlock
+                                                                Text="{Binding ItemInfo.Path, TargetNullValue=''}"
+                                                                TextWrapping="Wrap"
+                                                                VerticalAlignment="Center" />
+                                                        </StackPanel>
                                                     </DataTemplate>
                                                 </DataGridTemplateColumn.CellTemplate>
                                             </DataGridTemplateColumn>
