@@ -280,44 +280,6 @@
                                         </MenuItem.Header>
                                     </MenuItem>
                                 </MenuItem>
-                                <MenuItem Command="{Binding OpenBlacklistManagerCommand}">
-                                    <MenuItem.Header>
-                                        <StackPanel Orientation="Horizontal">
-                                            <Viewbox Width="16" Height="16">
-                                                <Canvas Width="24" Height="24">
-                                                    <Path Data="M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22A10,10 0 0,1 2,12A10,10 0 0,1 12,2M12,4A8,8 0 0,0 4,12C4,13.85 4.63,15.55 5.68,16.91L16.91,5.68C15.55,4.63 13.85,4 12,4M12,20A8,8 0 0,0 20,12C20,10.15 19.37,8.45 18.32,7.09L7.09,18.32C8.45,19.37 10.15,20 12,20Z" Fill="{actipro:ThemeResource ButtonForegroundBrush}" />
-                                                </Canvas>
-                                            </Viewbox>
-                                            <TextBlock
-                                                Margin="5,0,0,0"
-                                                VerticalAlignment="Center"
-                                                Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Menu.ManageBlacklist]}" />
-                                        </StackPanel>
-                                    </MenuItem.Header>
-                                </MenuItem>
-                                <MenuItem Command="{Binding LatestReleaseCommand}">
-                                    <MenuItem.Header>
-                                        <StackPanel Orientation="Horizontal">
-                                            <Viewbox Width="16" Height="16">
-                                                <Canvas Width="64" Height="64">
-                                                    <Path Data="M32.029,8.345c-13.27,0 -24.029,10.759 -24.029,24.033c0,10.617 6.885,19.624 16.435,22.803c1.202,0.22 1.64,-0.522 1.64,-1.16c0,-0.569 -0.02,-2.081 -0.032,-4.086c-6.685,1.452 -8.095,-3.222 -8.095,-3.222c-1.093,-2.775 -2.669,-3.514 -2.669,-3.514c-2.182,-1.492 0.165,-1.462 0.165,-1.462c2.412,0.171 3.681,2.477 3.681,2.477c2.144,3.672 5.625,2.611 6.994,1.997c0.219,-1.553 0.838,-2.612 1.526,-3.213c-5.336,-0.606 -10.947,-2.669 -10.947,-11.877c0,-2.623 0.937,-4.769 2.474,-6.449c-0.247,-0.608 -1.072,-3.051 0.235,-6.36c0,0 2.018,-0.646 6.609,2.464c1.917,-0.533 3.973,-0.8 6.016,-0.809c2.041,0.009 4.097,0.276 6.017,0.809c4.588,-3.11 6.602,-2.464 6.602,-2.464c1.311,3.309 0.486,5.752 0.239,6.36c1.54,1.68 2.471,3.826 2.471,6.449c0,9.232 -5.62,11.263 -10.974,11.858c0.864,0.742 1.632,2.208 1.632,4.451c0,3.212 -0.029,5.804 -0.029,6.591c0,0.644 0.432,1.392 1.652,1.157c9.542,-3.185 16.421,-12.186 16.421,-22.8c0,-13.274 -10.76,-24.033 -24.034,-24.033" Fill="{actipro:ThemeResource ButtonForegroundBrush}" />
-                                                </Canvas>
-                                            </Viewbox>
-                                            <TextBlock
-                                                Margin="5,0,0,0"
-                                                VerticalAlignment="Center"
-                                                Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Menu.LatestRelease]}" />
-                                        </StackPanel>
-                                    </MenuItem.Header>
-                                </MenuItem>
-                                <MenuItem Command="{Binding OpenOwnFolderCommand}" IsVisible="{Binding IsDebug}">
-                                    <MenuItem.Header>
-                                        <TextBlock
-                                            Margin="5,0,0,0"
-                                            VerticalAlignment="Center"
-                                            Text="{Binding Source={x:Static local:App.Lang}, Path=[Dialog.OpenFolder]}" />
-                                    </MenuItem.Header>
-                                </MenuItem>
                                 <MenuItem IsVisible="{Binding !!Duplicates.Count}">
                                     <MenuItem.Header>
                                         <StackPanel Orientation="Horizontal">
@@ -400,7 +362,6 @@
                                         </MenuItem.Header>
                                     </MenuItem>
                                 </MenuItem>
-                                <MenuItem Header="|" IsHitTestVisible="False" />
                                 <MenuItem>
                                     <MenuItem.Header>
                                         <StackPanel Orientation="Horizontal">
@@ -530,7 +491,6 @@
                                             </MenuItem.Header>
                                         </MenuItem>
                                     </MenuItem>
-                                    <MenuItem Header="|" />
                                     <CheckBox Margin="5,0,0,0" IsChecked="{Binding IsFilterEnabled}">
                                         <StackPanel Orientation="Horizontal">
                                             <Viewbox
@@ -553,7 +513,6 @@
                                                 Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Filter.Title]}" />
                                         </StackPanel>
                                     </CheckBox>
-                                    <MenuItem Header="|" />
                                     <MenuItem
                                         Command="{Binding CompareInPlayerCommand}"
                                         ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Tooltip.CompareInPlayer]}">
@@ -2294,6 +2253,63 @@
                                 ItemsSource="{Binding LogItems}"
                                 SelectionMode="Multiple"
                                 ScrollViewer.HorizontalScrollBarVisibility="Visible" />
+                        </Grid>
+                    </TabItem>
+                    <TabItem Name="TabItemTools">
+                        <TabItem.Header>
+                            <TextBlock
+                                VerticalAlignment="Center"
+                                FontSize="12"
+                                Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Tab.Tools]}" />
+                        </TabItem.Header>
+                        <Grid Margin="0,0,0,10">
+                            <Menu MinHeight="30" VerticalAlignment="Top"
+                                Background="{actipro:ThemeResource Container2BackgroundBrush}"
+                                BorderBrush="{actipro:ThemeResource Container2BorderBrush}">
+                                <Menu.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <WrapPanel />
+                                    </ItemsPanelTemplate>
+                                </Menu.ItemsPanel>
+                                <MenuItem Command="{Binding OpenBlacklistManagerCommand}">
+                                    <MenuItem.Header>
+                                        <StackPanel Orientation="Horizontal">
+                                            <Viewbox Width="16" Height="16">
+                                                <Canvas Width="24" Height="24">
+                                                    <Path Data="M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22A10,10 0 0,1 2,12A10,10 0 0,1 12,2M12,4A8,8 0 0,0 4,12C4,13.85 4.63,15.55 5.68,16.91L16.91,5.68C15.55,4.63 13.85,4 12,4M12,20A8,8 0 0,0 20,12C20,10.15 19.37,8.45 18.32,7.09L7.09,18.32C8.45,19.37 10.15,20 12,20Z" Fill="{actipro:ThemeResource ButtonForegroundBrush}" />
+                                                </Canvas>
+                                            </Viewbox>
+                                            <TextBlock
+                                                Margin="5,0,0,0"
+                                                VerticalAlignment="Center"
+                                                Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Menu.ManageBlacklist]}" />
+                                        </StackPanel>
+                                    </MenuItem.Header>
+                                </MenuItem>
+                                <MenuItem Command="{Binding LatestReleaseCommand}">
+                                    <MenuItem.Header>
+                                        <StackPanel Orientation="Horizontal">
+                                            <Viewbox Width="16" Height="16">
+                                                <Canvas Width="64" Height="64">
+                                                    <Path Data="M32.029,8.345c-13.27,0 -24.029,10.759 -24.029,24.033c0,10.617 6.885,19.624 16.435,22.803c1.202,0.22 1.64,-0.522 1.64,-1.16c0,-0.569 -0.02,-2.081 -0.032,-4.086c-6.685,1.452 -8.095,-3.222 -8.095,-3.222c-1.093,-2.775 -2.669,-3.514 -2.669,-3.514c-2.182,-1.492 0.165,-1.462 0.165,-1.462c2.412,0.171 3.681,2.477 3.681,2.477c2.144,3.672 5.625,2.611 6.994,1.997c0.219,-1.553 0.838,-2.612 1.526,-3.213c-5.336,-0.606 -10.947,-2.669 -10.947,-11.877c0,-2.623 0.937,-4.769 2.474,-6.449c-0.247,-0.608 -1.072,-3.051 0.235,-6.36c0,0 2.018,-0.646 6.609,2.464c1.917,-0.533 3.973,-0.8 6.016,-0.809c2.041,0.009 4.097,0.276 6.017,0.809c4.588,-3.11 6.602,-2.464 6.602,-2.464c1.311,3.309 0.486,5.752 0.239,6.36c1.54,1.68 2.471,3.826 2.471,6.449c0,9.232 -5.62,11.263 -10.974,11.858c0.864,0.742 1.632,2.208 1.632,4.451c0,3.212 -0.029,5.804 -0.029,6.591c0,0.644 0.432,1.392 1.652,1.157c9.542,-3.185 16.421,-12.186 16.421,-22.8c0,-13.274 -10.76,-24.033 -24.034,-24.033" Fill="{actipro:ThemeResource ButtonForegroundBrush}" />
+                                                </Canvas>
+                                            </Viewbox>
+                                            <TextBlock
+                                                Margin="5,0,0,0"
+                                                VerticalAlignment="Center"
+                                                Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Menu.LatestRelease]}" />
+                                        </StackPanel>
+                                    </MenuItem.Header>
+                                </MenuItem>
+                                <MenuItem Command="{Binding OpenOwnFolderCommand}" IsVisible="{Binding IsDebug}">
+                                    <MenuItem.Header>
+                                        <TextBlock
+                                            Margin="5,0,0,0"
+                                            VerticalAlignment="Center"
+                                            Text="{Binding Source={x:Static local:App.Lang}, Path=[Dialog.OpenFolder]}" />
+                                    </MenuItem.Header>
+                                </MenuItem>
+                            </Menu>
                         </Grid>
                     </TabItem>
                 </TabControl>

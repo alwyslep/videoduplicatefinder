@@ -335,6 +335,7 @@
 	"GroupHeader.Summary": "{0} files · {1}",
 	"MainWindow.Stats.SizeRemoved": "Size Removed: ",
 	"MainWindow.Tab.Log": "Log",
+	"MainWindow.Tab.Tools": "Tools",
 	"MainWindow.Tab.Scanner": "Scanner",
 	"MainWindow.Tab.Settings": "Settings",
 	"MainWindow.Tooltip.CleanDatabase": "Removes entries which file no longer exists or which failed on ffmpeg/ffprobe",

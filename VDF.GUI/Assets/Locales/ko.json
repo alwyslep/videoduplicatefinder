@@ -335,6 +335,7 @@
 	"GroupHeader.Summary": "{0}개 파일 · {1}",
 	"MainWindow.Stats.SizeRemoved": "제거된 크기: ",
 	"MainWindow.Tab.Log": "로그",
+	"MainWindow.Tab.Tools": "도구",
 	"MainWindow.Tab.Scanner": "스캐너",
 	"MainWindow.Tab.Settings": "설정",
 	"MainWindow.Tooltip.CleanDatabase": "파일이 더 이상 존재하지 않거나 ffmpeg/ffprobe에서 실패한 항목을 제거합니다",
