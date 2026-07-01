@@ -66,21 +66,23 @@ When a compare group contains a tombstone member:
 
 ## Implementation stages
 
-1. **Core detection + retention**
-   - `IsTombstone(entry)` / `IsOffline(entry)` helpers (drive-presence heuristic).
-   - BuildFileList already never removes non-existent entries — keep it that way.
-   - Compare path (`InvalidEntryForDuplicateCheck`, `InvalidEntry`) must keep tombstones valid
-     and included; offline entries preserved but excluded from auto-check.
-   - Neuter `CleanupDatabase` so it never removes tombstones.
-2. **GUI**
-   - `DuplicateItemVM.IsTombstone` / `IsOffline`.
-   - "이미 삭제함" badge in the compare list.
-   - Auto-check live members of any group containing a tombstone.
-3. **Bloat control**
-   - Trim grayBytes to a single representative thumbnail when a tombstone is first detected;
-     keep phash. Ensure pHash matching stays effective.
-4. **Settings defaults**
-   - `IncludeNonExistingFiles` default ON; hide "사라진 항목 정리".
+1. **Core detection + retention** — DONE (`2d3ac31`)
+   - `ScanEngine.IsDriveReady` / `PathIsTombstone` / `PathIsOffline` (drive-presence heuristic).
+   - GatherInfos guards analysis with `File.Exists` — never ffprobe/ffmpeg a missing path. This
+     is what makes `IncludeNonExistingFiles=ON` safe (no more ffprobe-on-missing errors).
+   - `CleanupDatabase` neutered to a logged no-op so it never destroys tombstones.
+2. **GUI** — DONE (`1348f00`)
+   - `DuplicateItemVM.IsTombstone` / `IsOffline` (computed from the heuristic).
+   - "이미 삭제함 / Already deleted" and "오프라인 / Offline" badges in the compare list Path column.
+   - `AutoCheckTombstoneMatches` pre-checks live members of any group containing a tombstone.
+3. **Bloat control** — SKIPPED (deliberate)
+   - Trimming grayBytes would drop a tombstone below `InvalidEntryForDuplicateCheck`'s
+     `grayBytes.Count >= ThumbnailCount` gate, so it would be excluded from comparison and never
+     match a re-download — i.e. it breaks the feature. The saving is only a few KB per file, so
+     tombstones keep their full grayBytes (already computed; matching stays robust). Known ceiling:
+     revisit only if the DB genuinely bloats, and then also relax the compare gate for tombstones.
+4. **Settings defaults** — DONE (`8857ba0`)
+   - `IncludeNonExistingFiles` default ON; "사라진 항목 정리" menu item hidden (`IsVisible="False"`).
 
 ## Already shipped (this line of work)
 
