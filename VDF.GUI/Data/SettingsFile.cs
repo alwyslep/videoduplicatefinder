@@ -260,7 +260,10 @@ namespace VDF.GUI.Data {
 			get => _AskToSaveResultsOnExit;
 			set => this.RaiseAndSetIfChanged(ref _AskToSaveResultsOnExit, value);
 		}
-		bool _IncludeNonExistingFiles;
+		// Default ON: non-existent entries are tombstones (deleted content whose fingerprint we
+		// keep to catch re-downloads) or offline-drive files — both must stay in the comparison.
+		// See TOMBSTONE-DESIGN.md.
+		bool _IncludeNonExistingFiles = true;
 		[JsonPropertyName("IncludeNonExistingFiles")]
 		public bool IncludeNonExistingFiles {
 			get => _IncludeNonExistingFiles;

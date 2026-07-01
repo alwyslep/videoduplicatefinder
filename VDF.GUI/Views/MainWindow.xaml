@@ -204,7 +204,9 @@
                                                 Fill="{actipro:ThemeResource ButtonForegroundBrush}" />
                                         </StackPanel>
                                     </MenuItem.Header>
-                                    <MenuItem Command="{Binding CleanDatabaseCommand}" ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Tooltip.CleanDatabase]}">
+                                    <!-- Hidden by the tombstone policy: removing missing-file entries would destroy
+                                         the deleted-content fingerprints we deliberately keep. See TOMBSTONE-DESIGN.md. -->
+                                    <MenuItem IsVisible="False" Command="{Binding CleanDatabaseCommand}" ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Tooltip.CleanDatabase]}">
                                         <MenuItem.Header>
                                             <StackPanel Orientation="Horizontal">
                                                 <Viewbox Width="16" Height="16">
