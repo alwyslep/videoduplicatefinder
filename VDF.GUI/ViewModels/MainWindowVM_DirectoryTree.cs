@@ -95,6 +95,13 @@ namespace VDF.GUI.ViewModels {
 
 		// Throttle the recursive size/unscanned walks so expanding a drive doesn't hammer the disk.
 		static readonly SemaphoreSlim WalkGate = new(2);
+		// Directory listing for the tree: skip Hidden|System (so $RECYCLE.BIN / System Volume
+		// Information / hidden OS folders never appear — VDF only ever scans media folders) and
+		// ReparsePoint (junction loops). Mirrors WalkFolder's file policy so tree + stats stay consistent.
+		static readonly EnumerationOptions DirEnumOptions = new() {
+			IgnoreInaccessible = true,
+			AttributesToSkip = FileAttributes.Hidden | FileAttributes.System | FileAttributes.ReparsePoint
+		};
 		// Set of file paths already in the VDF database, for the per-folder "unscanned" count. null until loaded.
 		static volatile HashSet<string>? _dbPaths;
 		internal static Task? DbIndexTask;
@@ -244,7 +251,7 @@ namespace VDF.GUI.ViewModels {
 			_loaded = true;
 			Children.Clear();   // drop the placeholder
 			try {
-				foreach (var dir in Directory.EnumerateDirectories(Path).OrderBy(d => d, StringComparer.OrdinalIgnoreCase)) {
+				foreach (var dir in Directory.EnumerateDirectories(Path, "*", DirEnumOptions).OrderBy(d => d, StringComparer.OrdinalIgnoreCase)) {
 					string leaf = System.IO.Path.GetFileName(dir);
 					if (string.IsNullOrEmpty(leaf)) leaf = dir;
 					Children.Add(new DirectoryTreeNodeVM(dir, leaf, _includes, isDrive: false, drive: null));
@@ -359,7 +366,7 @@ namespace VDF.GUI.ViewModels {
 		}
 
 		static bool HasSubDirectories(string path) {
-			try { return Directory.EnumerateDirectories(path).Any(); }
+			try { return Directory.EnumerateDirectories(path, "*", DirEnumOptions).Any(); }
 			catch { return false; }
 		}
 
