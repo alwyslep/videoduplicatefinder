@@ -86,6 +86,8 @@ namespace VDF.Core {
 		readonly ConcurrentDictionary<string, byte> missingPHashFiles = new(
 			CoreUtils.IsWindows ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
 		DateTime lastCheckpointTime = DateTime.MinValue;
+		DateTime lastDriveLog = DateTime.MinValue;
+		static readonly TimeSpan progressLogInterval = TimeSpan.FromSeconds(8);
 		readonly object checkpointLock = new();
 		
 		// ── Per-drive scan progress (segmented status bar) ──
@@ -202,6 +204,16 @@ namespace VDF.Core {
 				if (__dc != null && __dc.TryGetValue(DriveRootOf(path), out var __c)) {
 					System.Threading.Interlocked.Add(ref __c.DoneBytes, fileSize);
 					System.Threading.Interlocked.Increment(ref __c.DoneFiles);
+				}
+			}
+			// Periodic per-drive progress line so files/sec per drive can be read off the log (measurement/telemetry).
+			if (driveCounters != null && lastDriveLog + progressLogInterval < DateTime.UtcNow) {
+				lastDriveLog = DateTime.UtcNow;   // ponytail: racy across worker threads, worst case a duplicate line
+				var __order = driveOrder;
+				if (__order != null) {
+					var __sb = new System.Text.StringBuilder("progress:");
+					foreach (var __r in __order) { var __c2 = driveCounters[__r]; __sb.Append(' ').Append(__r).Append('=').Append(__c2.DoneFiles).Append('/').Append(__c2.TotalFiles); }
+					Logger.Instance.Info(__sb.ToString());
 				}
 			}
 			var pushUpdate = processedFiles == scanProgressMaxValue ||
