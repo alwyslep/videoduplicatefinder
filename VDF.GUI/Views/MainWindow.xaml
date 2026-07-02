@@ -1222,14 +1222,23 @@
                                                         <!-- Always-visible per-drive label directly on the bar (root, %, files, files/sec, concurrency):
                                                              white bold text with a black halo (DropShadowEffect, no offset) so it stays readable over
                                                              both the coloured fill and the dark empty area — no backing box, bar colour stays visible. -->
-                                                        <TextBlock Text="{Binding Label}" FontSize="10" FontWeight="Bold"
-                                                            HorizontalAlignment="Center" VerticalAlignment="Center" Margin="4,0"
-                                                            Foreground="#FFB74D" TextTrimming="CharacterEllipsis">
-                                                            <!-- 밝은 주황 글자 + 진한 검은 헤일로(blur 넓힘·불투명 최대)로 채움/빈공간 어디서든 대비 확보 -->
-                                                            <TextBlock.Effect>
-                                                                <DropShadowEffect BlurRadius="4" OffsetX="0" OffsetY="0" Color="Black" Opacity="1" />
-                                                            </TextBlock.Effect>
-                                                        </TextBlock>
+                                                        <!-- 밝은 채움 위 가독성: 검은 헤일로를 2겹으로. 동일 라벨 2장을 겹쳐 각각의 DropShadow가
+                                                             합성되며 헤일로 농도가 ~2배(Opacity/색은 이미 최대라 한 겹으론 더 못 짙게 함). 주황 글자는
+                                                             완전 불투명이라 겹쳐도 그대로. -->
+                                                        <Panel HorizontalAlignment="Center" VerticalAlignment="Center" Margin="4,0">
+                                                            <TextBlock Text="{Binding Label}" FontSize="10" FontWeight="Bold"
+                                                                Foreground="#FFB74D" TextTrimming="CharacterEllipsis">
+                                                                <TextBlock.Effect>
+                                                                    <DropShadowEffect BlurRadius="4" OffsetX="0" OffsetY="0" Color="Black" Opacity="1" />
+                                                                </TextBlock.Effect>
+                                                            </TextBlock>
+                                                            <TextBlock Text="{Binding Label}" FontSize="10" FontWeight="Bold"
+                                                                Foreground="#FFB74D" TextTrimming="CharacterEllipsis">
+                                                                <TextBlock.Effect>
+                                                                    <DropShadowEffect BlurRadius="4" OffsetX="0" OffsetY="0" Color="Black" Opacity="1" />
+                                                                </TextBlock.Effect>
+                                                            </TextBlock>
+                                                        </Panel>
                                                     </Grid>
                                                 </Border>
                                             </DataTemplate>
