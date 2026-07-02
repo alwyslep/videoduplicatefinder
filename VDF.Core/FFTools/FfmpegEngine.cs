@@ -541,13 +541,17 @@ namespace VDF.Core.FFTools {
 				});
 				process.BeginErrorReadLine();
 				using var ms = new MemoryStream();
-				process.StandardOutput.BaseStream.CopyTo(ms);
-
+				// Read stdout asynchronously: a synchronous CopyTo here blocks forever if ffmpeg hangs with stdout held
+				// open (no data, no exit) — the WaitForExit timeout below would then never be reached, which stalled a
+				// whole drive on broken files. Async read + WaitForExit(timeout) + Kill bounds it to TimeoutDuration.
+				var readTask = process.StandardOutput.BaseStream.CopyToAsync(ms);
 				if (!process.WaitForExit(TimeoutDuration)) {
+					try { if (!process.HasExited) process.Kill(); } catch { }
+					try { readTask.Wait(2000); } catch { }
 					throw new TimeoutException($"FFmpeg timed out on file: {settings.File}");
 				}
-				else
-					process.WaitForExit(); // Because of asynchronous event handlers, see: https://github.com/dotnet/runtime/issues/18789
+				process.WaitForExit(); // flush asynchronous event handlers, see: https://github.com/dotnet/runtime/issues/18789
+				try { readTask.Wait(TimeoutDuration); } catch { }
 
 				if (process.ExitCode != 0)
 					throw new FFInvalidExitCodeException($"FFmpeg exited with: {process.ExitCode}");
