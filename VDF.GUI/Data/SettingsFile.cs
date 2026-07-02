@@ -188,6 +188,24 @@ namespace VDF.GUI.Data {
 			get => _HddMaxDegreeOfParallelism;
 			set => this.RaiseAndSetIfChanged(ref _HddMaxDegreeOfParallelism, value);
 		}
+		bool _AdaptiveConcurrency = true;
+		[JsonPropertyName("AdaptiveConcurrency")]
+		public bool AdaptiveConcurrency {
+			get => _AdaptiveConcurrency;
+			set => this.RaiseAndSetIfChanged(ref _AdaptiveConcurrency, value);
+		}
+		int _AdaptiveMaxPerDrive = 8;
+		[JsonPropertyName("AdaptiveMaxPerDrive")]
+		public int AdaptiveMaxPerDrive {
+			get => _AdaptiveMaxPerDrive;
+			set => this.RaiseAndSetIfChanged(ref _AdaptiveMaxPerDrive, value);
+		}
+		int _AdaptiveWindowSeconds = 120;
+		[JsonPropertyName("AdaptiveWindowSeconds")]
+		public int AdaptiveWindowSeconds {
+			get => _AdaptiveWindowSeconds;
+			set => this.RaiseAndSetIfChanged(ref _AdaptiveWindowSeconds, value);
+		}
 		Core.FFTools.FFHardwareAccelerationMode _HardwareAccelerationMode = Core.FFTools.FFHardwareAccelerationMode.auto;
 		[JsonPropertyName("HardwareAccelerationMode")]
 		public Core.FFTools.FFHardwareAccelerationMode HardwareAccelerationMode {

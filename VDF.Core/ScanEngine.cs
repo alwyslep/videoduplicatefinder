@@ -772,6 +772,62 @@ namespace VDF.Core {
 			});
 		}
 
+		// Adaptive per-drive concurrency: a fixed pool of AdaptiveMaxPerDrive workers drains this drive's files;
+		// a resizable per-drive throttle caps how many run at once, a shared global gate caps total decodes at
+		// Environment.ProcessorCount, and an AIMD controller nudges the throttle from the drive's measured files/sec.
+		async Task RunDriveAdaptive(string root, List<FileEntry> entries, Func<FileEntry, CancellationToken, ValueTask> process, System.Threading.SemaphoreSlim globalGate) {
+			var token = cancelationTokenSource.Token;
+			int maxPer = Settings.AdaptiveMaxPerDrive > 0 ? Settings.AdaptiveMaxPerDrive : 8;
+			double windowSec = Settings.AdaptiveWindowSeconds > 0 ? Settings.AdaptiveWindowSeconds : 120;
+			double? seedLat = ProbeSeekLatencyMs(entries);   // seed near a good value so we don't crawl up from 2
+			int startC = seedLat == null ? Math.Min(4, maxPer) : (seedLat.Value >= SsdHddLatencyThresholdMs ? Math.Min(4, maxPer) : maxPer);
+			int idx = -1;
+			long done = 0;
+			int target = startC;
+			using var throttle = new System.Threading.SemaphoreSlim(startC, maxPer);
+			using var driveCts = System.Threading.CancellationTokenSource.CreateLinkedTokenSource(token);
+			var workers = new List<Task>(maxPer);
+			for (int w = 0; w < maxPer; w++) {
+				workers.Add(Task.Run(async () => {
+					while (!token.IsCancellationRequested) {
+						int i = System.Threading.Interlocked.Increment(ref idx);
+						if (i >= entries.Count) break;
+						await throttle.WaitAsync(token).ConfigureAwait(false);
+						try {
+							await globalGate.WaitAsync(token).ConfigureAwait(false);
+							try { await process(entries[i], token).ConfigureAwait(false); }
+							finally { globalGate.Release(); }
+						}
+						finally { throttle.Release(); }
+						System.Threading.Interlocked.Increment(ref done);
+					}
+				}, token));
+			}
+			var control = Task.Run(async () => {
+				double prev = -1;
+				while (!driveCts.IsCancellationRequested) {
+					long before = System.Threading.Interlocked.Read(ref done);
+					try { await Task.Delay(TimeSpan.FromSeconds(windowSec), driveCts.Token).ConfigureAwait(false); }
+					catch (OperationCanceledException) { break; }
+					if (System.Threading.Volatile.Read(ref idx) >= entries.Count) break;
+					if (pauseTokenSource.IsPaused) { prev = -1; continue; }
+					long after = System.Threading.Interlocked.Read(ref done);
+					double rate = (after - before) / windowSec;
+					int newTarget = target;
+					if (prev < 0) newTarget = Math.Min(maxPer, target + 1);
+					else if (rate > prev * 1.25) newTarget = Math.Min(maxPer, target + 2);   // strong improvement -> climb faster
+					else if (rate > prev * 1.08) newTarget = Math.Min(maxPer, target + 1);
+					else if (rate < prev * 0.92) newTarget = Math.Max(1, target - 1);
+					while (target < newTarget) { throttle.Release(); target++; }
+					while (target > newTarget) { try { await throttle.WaitAsync(driveCts.Token).ConfigureAwait(false); target--; } catch (OperationCanceledException) { break; } }
+					Logger.Instance.Info($"[adaptive] {root}: {rate:0.000} files/s -> concurrency {target}");
+					prev = rate;
+				}
+			}, driveCts.Token);
+			try { await Task.WhenAll(workers).ConfigureAwait(false); }
+			finally { driveCts.Cancel(); try { await control.ConfigureAwait(false); } catch { } }
+		}
+
 		async Task GatherInfos() {
 			try {
 				currentStageLabel = string.Empty;
@@ -932,6 +988,17 @@ namespace VDF.Core {
 					if (!byDrive.TryGetValue(r, out var lst)) { lst = new List<FileEntry>(); byDrive[r] = lst; }
 					lst.Add(e);
 				}
+				// Adaptive path: each drive self-tunes its concurrency from live files/sec (global CPU-capped). Static
+				// per-device split is the fallback (AdaptiveConcurrency off, or DOP=1 which stays strictly serial).
+				if (Settings.AdaptiveConcurrency && Settings.MaxDegreeOfParallelism != 1 && byDrive.Count > 0) {
+					int cpuCap = Environment.ProcessorCount;
+					using var globalGate = new System.Threading.SemaphoreSlim(cpuCap, cpuCap);
+					Logger.Instance.Info($"Adaptive per-drive concurrency: CPU cap {cpuCap}, per-drive [1..{(Settings.AdaptiveMaxPerDrive > 0 ? Settings.AdaptiveMaxPerDrive : 8)}], window {(Settings.AdaptiveWindowSeconds > 0 ? Settings.AdaptiveWindowSeconds : 120)}s");
+					var adaptiveTasks = new List<Task>(byDrive.Count);
+					foreach (var akv in byDrive) adaptiveTasks.Add(RunDriveAdaptive(akv.Key, akv.Value, ProcessEntry, globalGate));
+					await Task.WhenAll(adaptiveTasks);
+				}
+				else {
 				int ssdDop = Settings.MaxDegreeOfParallelism;                       // -1, or a positive total CPU budget
 				int hddDop = Settings.HddMaxDegreeOfParallelism > 0 ? Settings.HddMaxDegreeOfParallelism : 2;
 				bool forceSerial = ssdDop == 1;                                     // user pinned single-thread -> honour globally
@@ -960,6 +1027,7 @@ namespace VDF.Core {
 						driveTasks.Add(Parallel.ForEachAsync(g.Entries, new ParallelOptions { CancellationToken = cancelationTokenSource.Token, MaxDegreeOfParallelism = dop }, ProcessEntry));
 					}
 					await Task.WhenAll(driveTasks);
+				}
 				}
 			}
 			catch (OperationCanceledException) { }

@@ -1548,6 +1548,9 @@ Non-Windows setup:
 			Scanner.Settings.MaxSamplingDurationSeconds = SettingsFile.Instance.MaxSamplingDurationSeconds;
 			Scanner.Settings.MaxDegreeOfParallelism = SettingsFile.Instance.MaxDegreeOfParallelism;
 			Scanner.Settings.HddMaxDegreeOfParallelism = SettingsFile.Instance.HddMaxDegreeOfParallelism;
+			Scanner.Settings.AdaptiveConcurrency = SettingsFile.Instance.AdaptiveConcurrency;
+			Scanner.Settings.AdaptiveMaxPerDrive = SettingsFile.Instance.AdaptiveMaxPerDrive;
+			Scanner.Settings.AdaptiveWindowSeconds = SettingsFile.Instance.AdaptiveWindowSeconds;
 			Scanner.Settings.ThumbnailCount = SettingsFile.Instance.Thumbnails;
 			Scanner.Settings.ThumbnailMaxWidth = SettingsFile.Instance.ThumbnailMaxWidth;
 			Scanner.Settings.ExtendedFFToolsLogging = SettingsFile.Instance.ExtendedFFToolsLogging;
