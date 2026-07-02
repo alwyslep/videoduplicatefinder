@@ -41,5 +41,9 @@ namespace VDF.Core {
 		public long DoneBytes;
 		public int TotalFiles;
 		public int DoneFiles;
+		/// <summary>Adaptive controller's last measured files/sec for this drive (0 in static mode).</summary>
+		public double FilesPerSec;
+		/// <summary>Adaptive controller's current worker concurrency for this drive (0 in static mode).</summary>
+		public int Concurrency;
 	}
 }

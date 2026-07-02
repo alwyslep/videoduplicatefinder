@@ -93,7 +93,7 @@ namespace VDF.Core {
 		// ── Per-drive scan progress (segmented status bar) ──
 		// Built once at GatherInfos start (file-reading phase); left null during compare phases so their
 		// IncrementProgress calls don't touch it. DoneBytes/DoneFiles mutate via Interlocked (parallel loop).
-		sealed class DriveCounter { public long TotalBytes; public int TotalFiles; public long DoneBytes; public int DoneFiles; }
+		sealed class DriveCounter { public long TotalBytes; public int TotalFiles; public long DoneBytes; public int DoneFiles; public double Rate; public int Concurrency; }
 		Dictionary<string, DriveCounter>? driveCounters;
 		string[]? driveOrder;
 		static string DriveRootOf(string path) { try { return System.IO.Path.GetPathRoot(path) ?? "?"; } catch { return "?"; } }
@@ -113,7 +113,7 @@ namespace VDF.Core {
 			var arr = new DriveProgress[order.Length];
 			for (int i = 0; i < order.Length; i++) {
 				var c = dc[order[i]];
-				arr[i] = new DriveProgress { Root = order[i], TotalBytes = c.TotalBytes, DoneBytes = c.DoneBytes, TotalFiles = c.TotalFiles, DoneFiles = c.DoneFiles };
+				arr[i] = new DriveProgress { Root = order[i], TotalBytes = c.TotalBytes, DoneBytes = c.DoneBytes, TotalFiles = c.TotalFiles, DoneFiles = c.DoneFiles, FilesPerSec = c.Rate, Concurrency = c.Concurrency };
 			}
 			return arr;
 		}
@@ -840,6 +840,7 @@ namespace VDF.Core {
 					else newTarget = Math.Min(ceiling, target + 1);                                      // else climb toward the (possibly risen) fair-share ceiling
 					while (target < newTarget) { throttle.Release(); target++; }
 					while (target > newTarget && throttle.Wait(0)) target--;
+					if (driveCounters != null && driveCounters.TryGetValue(root, out var __rc)) { __rc.Rate = rate; __rc.Concurrency = target; }
 					Logger.Instance.Info($"[adaptive] {root}: {rate:0.000} files/s -> concurrency {target}/{ceiling} (active drives {System.Threading.Volatile.Read(ref activeDrives[0])})");
 					prev = rate;
 				}

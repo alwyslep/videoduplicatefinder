@@ -75,7 +75,7 @@ namespace VDF.GUI.ViewModels {
 				var d = drives[i];
 				var seg = DriveSegments[i];
 				seg.Fraction = d.TotalBytes > 0 ? (double)d.DoneBytes / d.TotalBytes : 0;
-				seg.Label = $"{d.Root}  {seg.Fraction * 100:0}%  ({d.DoneFiles:N0}/{d.TotalFiles:N0})";
+				seg.Label = $"{d.Root}  {seg.Fraction * 100:0}%  {d.DoneFiles:N0}/{d.TotalFiles:N0}" + (d.Concurrency > 0 ? $"  ·  {d.FilesPerSec:0.0} f/s  ·  x{d.Concurrency}" : "");
 			}
 			ShowDriveProgress = true;
 		}
