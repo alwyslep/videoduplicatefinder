@@ -33,6 +33,18 @@ using VDF.Core.Utils;
 using VDF.Core.ViewModels;
 
 namespace VDF.Core {
+	/// <summary>
+	/// One stage of the full-scan pipeline, for driving the stages individually (in this
+	/// execution order) via <see cref="ScanEngine.StartStage"/>. Running all four in order is
+	/// equivalent to a full scan.
+	/// </summary>
+	public enum ScanStage {
+		BuildFileList,
+		GatherInfos,
+		Compare,
+		PartialCompare,
+	}
+
 	public sealed partial class ScanEngine {
 		public HashSet<DuplicateItem> Duplicates { get; set; } = new HashSet<DuplicateItem>();
 		public Settings Settings { get; set; } = new Settings();
@@ -343,26 +355,102 @@ namespace VDF.Core {
 			}
 		}
 
-		public async void StartCompare() {
-			PrepareCompare();
-			SearchTimer.Start();
-			ElapsedTimer.Start();
-			Logger.Instance.Info(T("Log.ScanForDuplicates"));
-			if (!cancelationTokenSource.IsCancellationRequested)
-				await Task.Run(ScanForDuplicates, cancelationTokenSource.Token);
-			if (!cancelationTokenSource.IsCancellationRequested && Settings.EnablePartialClipDetection)
-				await Task.Run(ScanForPartialDuplicates, cancelationTokenSource.Token);
-			SearchTimer.Stop();
-			ElapsedTimer.Stop();
-			Logger.Instance.Info(T("Log.FinishedScanForDuplicates", SearchTimer.Elapsed));
-			LogGroupStatistics();
-			Logger.Instance.Info(T("Log.HighlightingBestResults"));
-			HighlightBestMatches();
+		public async void StartCompare() =>
+			await RunCompare(runPHashCompare: true, runPartialCompare: Settings.EnablePartialClipDetection, clearDuplicates: true);
+
+		/// <summary>
+		/// Runs a single pipeline stage so the full scan can be driven one step at a time.
+		/// BuildFileList/GatherInfos signal completion via <see cref="BuildingHashesDone"/>
+		/// (the search-side "done" event, same as a searchAndCompare:false StartSearch);
+		/// the compare stages via <see cref="ScanDone"/>. PartialCompare keeps the
+		/// Duplicates found by a previous Compare stage — same accumulation as StartCompare
+		/// running both phases in one go — so ①→②→③→④ reproduces a full scan.
+		/// </summary>
+		public async void StartStage(ScanStage stage) {
+			switch (stage) {
+				case ScanStage.BuildFileList:
+					PrepareSearch();
+					SearchTimer.Start();
+					ElapsedTimer.Start();
+					Logger.Instance.InsertSeparator('-');
+					Logger.Instance.Info(T("Log.BuildingFileList"));
+					await BuildFileList(cancelationTokenSource.Token);
+					Logger.Instance.Info(T("Log.FinishedBuildingFileList", SearchTimer.StopGetElapsedAndRestart()));
+					FilesEnumerated?.Invoke(this, new EventArgs());
+					FinishSearchSideStage();
+					break;
+				case ScanStage.GatherInfos:
+					PrepareSearch();
+					SearchTimer.Start();
+					ElapsedTimer.Start();
+					Logger.Instance.InsertSeparator('-');
+					// Standalone stage: BuildFileList (which normally loads the DB) may never have
+					// run in this process — same fresh-process concern PrepareCompare handles (#790).
+					if (DatabaseUtils.Database.Count == 0)
+						DatabaseUtils.LoadDatabase();
+					Logger.Instance.Info(T("Log.GatheringMediaInfo"));
+					if (!cancelationTokenSource.IsCancellationRequested)
+						await GatherInfos();
+					Logger.Instance.Info(T("Log.FinishedGatheringHashes", SearchTimer.StopGetElapsedAndRestart()));
+					FinishSearchSideStage();
+					break;
+				case ScanStage.Compare:
+					await RunCompare(runPHashCompare: true, runPartialCompare: false, clearDuplicates: true);
+					break;
+				case ScanStage.PartialCompare:
+					await RunCompare(runPHashCompare: false, runPartialCompare: true, clearDuplicates: false);
+					break;
+				default:
+					// Unreachable from the UI; fail visibly instead of leaving callers busy forever.
+					ScanAborted?.Invoke(this, new EventArgs());
+					break;
+			}
+		}
+
+		// Shared tail of the search-side stages — mirrors StartSearch's searchAndCompare:false path.
+		void FinishSearchSideStage() {
 			// Save before signaling completion — see the matching comment in StartSearch.
 			DatabaseUtils.SaveDatabase();
+			if (cancelationTokenSource.IsCancellationRequested) {
+				ScanAborted?.Invoke(this, new EventArgs());
+				Logger.Instance.Info(T("Log.ScanAborted"));
+			}
+			else
+				BuildingHashesDone?.Invoke(this, new EventArgs());
 			isScanning = false;
-			ScanDone?.Invoke(this, new EventArgs());
-			Logger.Instance.Info(T("Log.ScanDone"));
+		}
+
+		async Task RunCompare(bool runPHashCompare, bool runPartialCompare, bool clearDuplicates) {
+			try {
+				PrepareCompare(clearDuplicates);
+				SearchTimer.Start();
+				ElapsedTimer.Start();
+				Logger.Instance.Info(T("Log.ScanForDuplicates"));
+				if (runPHashCompare && !cancelationTokenSource.IsCancellationRequested)
+					await Task.Run(ScanForDuplicates, cancelationTokenSource.Token);
+				if (runPartialCompare && !cancelationTokenSource.IsCancellationRequested)
+					await Task.Run(ScanForPartialDuplicates, cancelationTokenSource.Token);
+				SearchTimer.Stop();
+				ElapsedTimer.Stop();
+				Logger.Instance.Info(T("Log.FinishedScanForDuplicates", SearchTimer.Elapsed));
+				LogGroupStatistics();
+				Logger.Instance.Info(T("Log.HighlightingBestResults"));
+				HighlightBestMatches();
+				// Save before signaling completion — see the matching comment in StartSearch.
+				DatabaseUtils.SaveDatabase();
+				isScanning = false;
+				ScanDone?.Invoke(this, new EventArgs());
+				Logger.Instance.Info(T("Log.ScanDone"));
+			}
+			catch (Exception e) {
+				// Callers are async void, so a throw here is swallowed by the global handler and
+				// the GUI would stay busy forever (e.g. PrepareCompare's thumbnail-count guard, or
+				// an OperationCanceledException when Stop lands mid-Parallel.For). Fail as an abort
+				// instead so subscribers restore their state.
+				Logger.Instance.Info($"Comparison aborted: {e.Message}");
+				isScanning = false;
+				ScanAborted?.Invoke(this, new EventArgs());
+			}
 		}
 
 		void PrepareSearch() {
@@ -429,7 +517,9 @@ namespace VDF.Core {
 		double GetGrayBytesIndex(FileEntry entry, float position) =>
 			entry.GetGrayBytesIndex(position, Settings.MaxSamplingDurationSeconds);
 
-		void PrepareCompare() {
+		// clearDuplicates:false = the partial-compare-only stage, which appends its groups to the
+		// visual-compare results already in Duplicates (also feeding its alreadyGrouped exclusion).
+		void PrepareCompare(bool clearDuplicates = true) {
 			if (positionList.Count == 0) {
 				// Fresh process running compare-only (CLI 'compare' on an existing database):
 				// the list is built during PrepareSearch, which never ran here (issue #790).
@@ -457,7 +547,8 @@ namespace VDF.Core {
 
 			CancelAllTasks();
 
-			Duplicates.Clear();
+			if (clearDuplicates)
+				Duplicates.Clear();
 			SearchTimer.Reset();
 			if (!ElapsedTimer.IsRunning)
 				ElapsedTimer.Reset();

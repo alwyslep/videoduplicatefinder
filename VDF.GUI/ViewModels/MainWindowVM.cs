@@ -138,6 +138,9 @@ namespace VDF.GUI.ViewModels {
 		readonly DispatcherTimer scheduledScanTimer = new();
 		DateTime lastScheduledScanDate = DateTime.MinValue;
 		bool scheduledScanInProgress;
+		// A search-side stage run (file list / fingerprint button) ends on BuildingHashesDone
+		// instead of ScanDone; this flag tells that handler the run is his to finish.
+		bool stageOnlyRunInProgress;
 		bool scheduleTimeInvalidNotified;
 
 		bool _IsScanning;
@@ -364,6 +367,7 @@ namespace VDF.GUI.ViewModels {
 			_FileType = TypeFilters[0];
 			Scanner.ScanAborted += Scanner_ScanAborted;
 			Scanner.ScanDone += Scanner_ScanDone;
+			Scanner.BuildingHashesDone += Scanner_BuildingHashesDone;
 			Scanner.Progress += Scanner_Progress;
 			Scanner.ThumbnailProgress += Scanner_ThumbnailProgress;
 			Scanner.ThumbnailsRetrieved += Scanner_ThumbnailsRetrieved;
@@ -639,6 +643,29 @@ namespace VDF.GUI.ViewModels {
 				IsReadyToCompare = false;
 				IsGathered = false;
 				scheduledScanInProgress = false;
+				stageOnlyRunInProgress = false;
+			});
+
+		// A full scan fires BuildingHashesDone too (right before it chains into compare) — only a
+		// stage-only run may reset the busy state here, otherwise the busy overlay would vanish
+		// while the full scan is still comparing.
+		void Scanner_BuildingHashesDone(object? sender, EventArgs e) =>
+			Dispatcher.UIThread.InvokeAsync(() => {
+				if (!stageOnlyRunInProgress)
+					return;
+				stageOnlyRunInProgress = false;
+				IsScanning = false;
+				IsBusy = false;
+				// File-list building ignores the pause token, so a stage run can complete while
+				// paused — clear it or the next scan starts with Resume/Pause swapped.
+				IsPaused = false;
+				IsReadyToCompare = true;
+				IsGathered = true;
+				ScanProgressText = string.Empty;
+				RemainingTime = TimeSpan.Zero.Format();
+				ScanProgressValue = 0;
+				ShowDriveProgress = false;
+				RefreshDirectoryTree();   // directory-selection tab: DB changed, refresh unscanned counts
 			});
 
 		void Scanner_ScanDone(object? sender, EventArgs e) =>
@@ -654,6 +681,7 @@ namespace VDF.GUI.ViewModels {
 				ShowDriveProgress = false;
 				var completedScheduledScan = scheduledScanInProgress;
 				scheduledScanInProgress = false;
+				stageOnlyRunInProgress = false;
 
 				var blacklistedGids = ComputeBlacklistedGroupIds(
 					Scanner.Duplicates.Select(d => (d.GroupId, d.Path)));
@@ -1487,6 +1515,7 @@ Non-Windows setup:
 				return;
 			}
 			bool isFreshScan = true;
+			Core.ScanStage? stageOnly = null;
 			switch (command) {
 			case "FullScan":
 				isFreshScan = true;
@@ -1496,9 +1525,27 @@ Non-Windows setup:
 				if (await MessageBoxService.Show(App.Lang["Message.RescanConfirm"], MessageBoxButtons.Yes | MessageBoxButtons.No) != MessageBoxButtons.Yes)
 					return;
 				break;
+			case "StageFileList":
+				stageOnly = Core.ScanStage.BuildFileList;
+				break;
+			case "StageGather":
+				stageOnly = Core.ScanStage.GatherInfos;
+				break;
+			case "StageCompare":
+				stageOnly = Core.ScanStage.Compare;
+				break;
+			case "StagePartialCompare":
+				// The stage compares audio fingerprints, which stage 2 only extracts while
+				// this setting is on — without it the run would silently find nothing.
+				if (!SettingsFile.Instance.EnablePartialClipDetection) {
+					await MessageBoxService.Show(App.Lang["Message.PartialStageNeedsSetting"]);
+					return;
+				}
+				stageOnly = Core.ScanStage.PartialCompare;
+				break;
 			default:
 				await MessageBoxService.Show(App.Lang["Message.CommandNotImplemented"]);
-				break;
+				return;
 			}
 
 			Duplicates.Clear();
@@ -1519,7 +1566,11 @@ Non-Windows setup:
 			ChangeIsBusyMessage();
 			IsBusy = true;
 
-			if (isFreshScan) {
+			if (stageOnly is Core.ScanStage stage) {
+				stageOnlyRunInProgress = stage is Core.ScanStage.BuildFileList or Core.ScanStage.GatherInfos;
+				Scanner.StartStage(stage);
+			}
+			else if (isFreshScan) {
 				Scanner.StartSearch();
 			}
 			else {
