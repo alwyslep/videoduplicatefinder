@@ -1222,11 +1222,12 @@
                                                         <!-- Always-visible per-drive label directly on the bar (root, %, files, files/sec, concurrency):
                                                              white bold text with a black halo (DropShadowEffect, no offset) so it stays readable over
                                                              both the coloured fill and the dark empty area — no backing box, bar colour stays visible. -->
-                                                        <TextBlock Text="{Binding Label}" FontSize="10" FontWeight="SemiBold"
+                                                        <TextBlock Text="{Binding Label}" FontSize="10" FontWeight="Bold"
                                                             HorizontalAlignment="Center" VerticalAlignment="Center" Margin="4,0"
-                                                            Foreground="White" TextTrimming="CharacterEllipsis">
+                                                            Foreground="#FFB74D" TextTrimming="CharacterEllipsis">
+                                                            <!-- 밝은 주황 글자 + 진한 검은 헤일로(blur 넓힘·불투명 최대)로 채움/빈공간 어디서든 대비 확보 -->
                                                             <TextBlock.Effect>
-                                                                <DropShadowEffect BlurRadius="3" OffsetX="0" OffsetY="0" Color="Black" Opacity="1" />
+                                                                <DropShadowEffect BlurRadius="4" OffsetX="0" OffsetY="0" Color="Black" Opacity="1" />
                                                             </TextBlock.Effect>
                                                         </TextBlock>
                                                     </Grid>
