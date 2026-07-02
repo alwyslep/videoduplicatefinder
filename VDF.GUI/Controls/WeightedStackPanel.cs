@@ -16,13 +16,28 @@ namespace VDF.GUI {
 		public static void SetWeight(Control c, double value) => c.SetValue(WeightProperty, value);
 
 		protected override Size MeasureOverride(Size availableSize) {
+			// Measure each child with ITS proportional slice width (same split as ArrangeOverride) so text
+			// children — the per-drive label — lay out + ellipsis-trim to the width they'll actually get.
+			// The old code measured with width 0, collapsing the label TextBlock to nothing (only the
+			// ProgressBar fill + tooltip survived) — which is why the on-bar label never rendered.
+			bool inf = double.IsInfinity(availableSize.Width);
+			double avail = inf ? 0 : availableSize.Width;
+			int n = Children.Count;
+			double total = 0;
+			foreach (var child in Children) {
+				double w = GetWeight(child);
+				if (w > 0) total += w;
+			}
 			double height = 0;
 			foreach (var child in Children) {
-				child.Measure(new Size(0, availableSize.Height));
+				double w = GetWeight(child);
+				double slice = inf ? double.PositiveInfinity
+					: total > 0 ? avail * (w > 0 ? w : 0) / total
+					: n > 0 ? avail / n : avail;
+				child.Measure(new Size(slice, availableSize.Height));
 				if (child.DesiredSize.Height > height) height = child.DesiredSize.Height;
 			}
-			double width = double.IsInfinity(availableSize.Width) ? 0 : availableSize.Width;
-			return new Size(width, height);
+			return new Size(avail, height);
 		}
 
 		protected override Size ArrangeOverride(Size finalSize) {
