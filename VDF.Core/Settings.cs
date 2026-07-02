@@ -65,7 +65,7 @@ namespace VDF.Core {
 		// from its measured files/sec; total decodes are capped at Environment.ProcessorCount. Falls back to the
 		// static per-device split when off.
 		public bool AdaptiveConcurrency = true;
-		public int AdaptiveMaxPerDrive = 8;
+		public int AdaptiveMaxPerDrive = 0;   // 0 = fair-share up to CPU budget (no hard per-drive cap); >0 = hard cap
 		public int AdaptiveWindowSeconds = 120;
 
 		public string CustomFFArguments = string.Empty;

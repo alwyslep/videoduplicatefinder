@@ -788,22 +788,26 @@ namespace VDF.Core {
 			});
 		}
 
-		// Adaptive per-drive concurrency: a fixed pool of AdaptiveMaxPerDrive workers drains this drive's files;
-		// a resizable per-drive throttle caps how many run at once, a shared global gate caps total decodes at
-		// Environment.ProcessorCount, and an AIMD controller nudges the throttle from the drive's measured files/sec.
-		async Task RunDriveAdaptive(string root, List<FileEntry> entries, Func<FileEntry, CancellationToken, ValueTask> process, System.Threading.SemaphoreSlim globalGate) {
+		// Adaptive per-drive concurrency with FAIR CPU-budget sharing. The bottleneck is CPU (decode), so total
+		// workers are balanced around Environment.ProcessorCount and split across drives still working: each drive's
+		// ceiling = ceil(cpuBudget / activeDrives), recomputed as drives finish so survivors absorb the freed CPU.
+		// A fixed worker pool is throttled to that ceiling, a shared global gate caps total decodes, and an AIMD
+		// controller climbs toward the ceiling and backs a drive off only when its throughput drops (disk-bound).
+		// AdaptiveMaxPerDrive, if > 0, is an optional hard per-drive cap; 0 means fair-share up to the whole budget.
+		async Task RunDriveAdaptive(string root, List<FileEntry> entries, Func<FileEntry, CancellationToken, ValueTask> process, System.Threading.SemaphoreSlim globalGate, int cpuBudget, int[] activeDrives) {
 			var token = cancelationTokenSource.Token;
-			int maxPer = Settings.AdaptiveMaxPerDrive > 0 ? Settings.AdaptiveMaxPerDrive : 8;
 			double windowSec = Settings.AdaptiveWindowSeconds > 0 ? Settings.AdaptiveWindowSeconds : 120;
-			double? seedLat = ProbeSeekLatencyMs(entries);   // seed near a good value so we don't crawl up from 2
-			int startC = seedLat == null ? Math.Min(4, maxPer) : (seedLat.Value >= SsdHddLatencyThresholdMs ? Math.Min(4, maxPer) : maxPer);
+			int hardCap = Settings.AdaptiveMaxPerDrive > 0 ? Settings.AdaptiveMaxPerDrive : cpuBudget;
+			int poolSize = Math.Max(1, Math.Min(cpuBudget, hardCap));
+			int FairCeiling() { int a = Math.Max(1, System.Threading.Volatile.Read(ref activeDrives[0])); return Math.Max(1, Math.Min(hardCap, (cpuBudget + a - 1) / a)); }
 			int idx = -1;
 			long done = 0;
+			int startC = Math.Max(1, Math.Min(FairCeiling(), 4));
 			int target = startC;
-			using var throttle = new System.Threading.SemaphoreSlim(startC, maxPer);
+			using var throttle = new System.Threading.SemaphoreSlim(startC, poolSize);
 			using var driveCts = System.Threading.CancellationTokenSource.CreateLinkedTokenSource(token);
-			var workers = new List<Task>(maxPer);
-			for (int w = 0; w < maxPer; w++) {
+			var workers = new List<Task>(poolSize);
+			for (int w = 0; w < poolSize; w++) {
 				workers.Add(Task.Run(async () => {
 					while (!token.IsCancellationRequested) {
 						int i = System.Threading.Interlocked.Increment(ref idx);
@@ -829,19 +833,23 @@ namespace VDF.Core {
 					if (pauseTokenSource.IsPaused) { prev = -1; continue; }
 					long after = System.Threading.Interlocked.Read(ref done);
 					double rate = (after - before) / windowSec;
-					int newTarget = target;
-					if (prev < 0) newTarget = Math.Min(maxPer, target + 1);
-					else if (rate > prev * 1.25) newTarget = Math.Min(maxPer, target + 2);   // strong improvement -> climb faster
-					else if (rate > prev * 1.08) newTarget = Math.Min(maxPer, target + 1);
-					else if (rate < prev * 0.92) newTarget = Math.Max(1, target - 1);
+					int ceiling = FairCeiling();
+					int newTarget;
+					if (prev >= 0 && rate < prev * 0.92) newTarget = Math.Max(1, target - 1);          // throughput dropped -> back off (disk-bound)
+					else if (prev >= 0 && rate > prev * 1.25) newTarget = Math.Min(ceiling, target + 2); // strong gain -> climb faster
+					else newTarget = Math.Min(ceiling, target + 1);                                      // else climb toward the (possibly risen) fair-share ceiling
 					while (target < newTarget) { throttle.Release(); target++; }
-					while (target > newTarget && throttle.Wait(0)) target--;   // non-blocking: never stall the controller when workers hold all permits (slow files); defer the shrink to a later window
-					Logger.Instance.Info($"[adaptive] {root}: {rate:0.000} files/s -> concurrency {target}");
+					while (target > newTarget && throttle.Wait(0)) target--;
+					Logger.Instance.Info($"[adaptive] {root}: {rate:0.000} files/s -> concurrency {target}/{ceiling} (active drives {System.Threading.Volatile.Read(ref activeDrives[0])})");
 					prev = rate;
 				}
 			}, driveCts.Token);
 			try { await Task.WhenAll(workers).ConfigureAwait(false); }
-			finally { driveCts.Cancel(); try { await control.ConfigureAwait(false); } catch { } }
+			finally {
+				System.Threading.Interlocked.Decrement(ref activeDrives[0]);   // release this drive's CPU share to the survivors
+				driveCts.Cancel();
+				try { await control.ConfigureAwait(false); } catch { }
+			}
 		}
 
 		async Task GatherInfos() {
@@ -1009,9 +1017,10 @@ namespace VDF.Core {
 				if (Settings.AdaptiveConcurrency && Settings.MaxDegreeOfParallelism != 1 && byDrive.Count > 0) {
 					int cpuCap = Environment.ProcessorCount;
 					using var globalGate = new System.Threading.SemaphoreSlim(cpuCap, cpuCap);
-					Logger.Instance.Info($"Adaptive per-drive concurrency: CPU cap {cpuCap}, per-drive [1..{(Settings.AdaptiveMaxPerDrive > 0 ? Settings.AdaptiveMaxPerDrive : 8)}], window {(Settings.AdaptiveWindowSeconds > 0 ? Settings.AdaptiveWindowSeconds : 120)}s");
+					int[] activeDrives = { byDrive.Count };
+					Logger.Instance.Info($"Adaptive per-drive concurrency (fair CPU share): budget {cpuCap} across {byDrive.Count} drive(s), window {(Settings.AdaptiveWindowSeconds > 0 ? Settings.AdaptiveWindowSeconds : 120)}s");
 					var adaptiveTasks = new List<Task>(byDrive.Count);
-					foreach (var akv in byDrive) adaptiveTasks.Add(RunDriveAdaptive(akv.Key, akv.Value, ProcessEntry, globalGate));
+					foreach (var akv in byDrive) adaptiveTasks.Add(RunDriveAdaptive(akv.Key, akv.Value, ProcessEntry, globalGate, cpuCap, activeDrives));
 					await Task.WhenAll(adaptiveTasks);
 				}
 				else {

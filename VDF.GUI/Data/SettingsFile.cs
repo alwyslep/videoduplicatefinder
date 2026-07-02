@@ -194,7 +194,7 @@ namespace VDF.GUI.Data {
 			get => _AdaptiveConcurrency;
 			set => this.RaiseAndSetIfChanged(ref _AdaptiveConcurrency, value);
 		}
-		int _AdaptiveMaxPerDrive = 8;
+		int _AdaptiveMaxPerDrive = 0;
 		[JsonPropertyName("AdaptiveMaxPerDrive")]
 		public int AdaptiveMaxPerDrive {
 			get => _AdaptiveMaxPerDrive;
