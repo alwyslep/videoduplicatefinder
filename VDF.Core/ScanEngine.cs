@@ -93,9 +93,15 @@ namespace VDF.Core {
 		// ── Per-drive scan progress (segmented status bar) ──
 		// Built once at GatherInfos start (file-reading phase); left null during compare phases so their
 		// IncrementProgress calls don't touch it. DoneBytes/DoneFiles mutate via Interlocked (parallel loop).
-		sealed class DriveCounter { public long TotalBytes; public int TotalFiles; public long DoneBytes; public int DoneFiles; public double Rate; public int Concurrency; }
+		sealed class DriveCounter { public long TotalBytes; public int TotalFiles; public long DoneBytes; public int DoneFiles; public double Rate; public int Concurrency; public int CapOverride; }
 		Dictionary<string, DriveCounter>? driveCounters;
 		string[]? driveOrder;
+		// Live per-drive parallelism override chosen from the status-bar dropdown (0 = auto). RunDriveAdaptive's
+		// FairCeiling reads it each ~3s control tick, so a change applies within seconds. No-op if that drive isn't scanning.
+		public void SetDriveCap(string root, int cap) {
+			var dc = driveCounters;
+			if (dc != null && dc.TryGetValue(root, out var c)) c.CapOverride = System.Math.Max(0, cap);
+		}
 		static string DriveRootOf(string path) { try { return System.IO.Path.GetPathRoot(path) ?? "?"; } catch { return "?"; } }
 		void BuildDriveCounters() {
 			var groups = new Dictionary<string, DriveCounter>(StringComparer.OrdinalIgnoreCase);
@@ -801,6 +807,9 @@ namespace VDF.Core {
 			// Fair-share ceiling, recomputed live each call so the user's per-drive cap (Settings.AdaptiveMaxPerDrive,
 			// 0 = fair-share up to the whole CPU budget) takes effect mid-scan within a few seconds.
 			int FairCeiling() {
+				int ov = 0;
+				if (driveCounters != null && driveCounters.TryGetValue(root, out var __cap)) ov = __cap.CapOverride;
+				if (ov > 0) return Math.Max(1, Math.Min(ov, cpuBudget));   // explicit per-drive override; total still capped by the global CPU gate
 				int hc = Settings.AdaptiveMaxPerDrive > 0 ? Settings.AdaptiveMaxPerDrive : cpuBudget;
 				int a = Math.Max(1, System.Threading.Volatile.Read(ref activeDrives[0]));
 				return Math.Max(1, Math.Min(hc, (cpuBudget + a - 1) / a));

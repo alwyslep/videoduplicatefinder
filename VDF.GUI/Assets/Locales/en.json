@@ -272,6 +272,7 @@
 	"MainWindow.Settings.LogExcludedFilesTooltip": "Log when files are excluded from the scan and why (limited to avoid log spam).",
 	"MainWindow.Settings.MaxDegreeOfParallelism": "Max Degree Of Parallelism:",
 	"MainWindow.Settings.MaxDegreeOfParallelismTooltip": "Limits the amount of concurrent tasks. A value of -1 leaves it up to the system to decide (takes full speed), a value of 1 is most stable (lets you interact with your system while scan runs in background). Maximum should be the amount of physical cores of your CPU.",
+	"MainWindow.DriveCap.Auto": "Auto",
 	"MainWindow.Settings.AdaptiveMaxPerDrive": "Max Parallelism Per Drive:",
 	"MainWindow.Settings.AdaptiveMaxPerDriveTooltip": "Adaptive mode only. Hard cap on concurrent decode tasks per drive; 0 = auto (fair CPU share). Lower to 1-2 for drives that share one bus (e.g. a multi-bay USB enclosure) to stop seek thrashing. Takes effect within a few seconds mid-scan.",
 	"MainWindow.Settings.Misc": "Misc",

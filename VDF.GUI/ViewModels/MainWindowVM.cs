@@ -69,7 +69,7 @@ namespace VDF.GUI.ViewModels {
 			if (!sameSet) {
 				DriveSegments.Clear();
 				for (int i = 0; i < drives.Length; i++)
-					DriveSegments.Add(new DriveProgressVM(drives[i].Root, DriveBrush(i), drives[i].TotalBytes));
+					DriveSegments.Add(new DriveProgressVM(drives[i].Root, DriveBrush(i), drives[i].TotalBytes) { SetCap = Scanner.SetDriveCap });
 			}
 			for (int i = 0; i < drives.Length; i++) {
 				var d = drives[i];

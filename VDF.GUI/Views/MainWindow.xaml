@@ -1245,6 +1245,33 @@
                                         </ItemsControl.ItemTemplate>
                                     </ItemsControl>
                                 </Border>
+                                <!-- Per-drive parallelism dropdowns: pick each drive's worker count live (Auto=fair share). Shared-bus drives (USB enclosure) want a low value; a fast NVMe can go higher — set each independently. -->
+                                <ItemsControl ItemsSource="{Binding DriveSegments}" IsVisible="{Binding ShowDriveProgress}" Margin="0,3,0,0">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <WrapPanel Orientation="Horizontal" />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:DriveProgressVM">
+                                            <Border Margin="0,0,8,3" Padding="5,1" CornerRadius="3" Background="#22FFFFFF">
+                                                <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Center">
+                                                    <Border Width="11" Height="11" CornerRadius="2" Background="{Binding Fill}" VerticalAlignment="Center" />
+                                                    <TextBlock Text="{Binding Root}" VerticalAlignment="Center" FontSize="11" />
+                                                    <ComboBox SelectedIndex="{Binding CapIndex}" FontSize="11" MinWidth="70" VerticalAlignment="Center">
+                                                        <ComboBoxItem Content="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.DriveCap.Auto]}" />
+                                                        <ComboBoxItem Content="1" />
+                                                        <ComboBoxItem Content="2" />
+                                                        <ComboBoxItem Content="3" />
+                                                        <ComboBoxItem Content="4" />
+                                                        <ComboBoxItem Content="6" />
+                                                        <ComboBoxItem Content="8" />
+                                                    </ComboBox>
+                                                </StackPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
                                 <WrapPanel>
                                 <!-- Statistics -->
                                 <StackPanel Orientation="Horizontal"

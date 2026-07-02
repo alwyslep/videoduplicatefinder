@@ -29,5 +29,19 @@ namespace VDF.GUI.ViewModels {
 			get => _Label;
 			set => this.RaiseAndSetIfChanged(ref _Label, value);
 		}
+
+		// Per-drive parallelism override, chosen live from the status-bar dropdown. CapIndex is the ComboBox
+		// selection; it maps to an actual worker cap (0 = auto) and is pushed to the running scan via SetCap.
+		static readonly int[] CapValues = { 0, 1, 2, 3, 4, 6, 8 };
+		public System.Action<string, int>? SetCap;
+		int _CapIndex;
+		public int CapIndex {
+			get => _CapIndex;
+			set {
+				this.RaiseAndSetIfChanged(ref _CapIndex, value);
+				int i = value < 0 || value >= CapValues.Length ? 0 : value;
+				SetCap?.Invoke(Root, CapValues[i]);
+			}
+		}
 	}
 }
