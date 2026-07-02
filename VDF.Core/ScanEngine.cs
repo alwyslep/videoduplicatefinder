@@ -797,9 +797,14 @@ namespace VDF.Core {
 		async Task RunDriveAdaptive(string root, List<FileEntry> entries, Func<FileEntry, CancellationToken, ValueTask> process, System.Threading.SemaphoreSlim globalGate, int cpuBudget, int[] activeDrives) {
 			var token = cancelationTokenSource.Token;
 			double windowSec = Settings.AdaptiveWindowSeconds > 0 ? Settings.AdaptiveWindowSeconds : 120;
-			int hardCap = Settings.AdaptiveMaxPerDrive > 0 ? Settings.AdaptiveMaxPerDrive : cpuBudget;
-			int poolSize = Math.Max(1, Math.Min(cpuBudget, hardCap));
-			int FairCeiling() { int a = Math.Max(1, System.Threading.Volatile.Read(ref activeDrives[0])); return Math.Max(1, Math.Min(hardCap, (cpuBudget + a - 1) / a)); }
+			int poolSize = Math.Max(1, cpuBudget);   // fixed worker pool; the live ceiling below throttles how many actually run
+			// Fair-share ceiling, recomputed live each call so the user's per-drive cap (Settings.AdaptiveMaxPerDrive,
+			// 0 = fair-share up to the whole CPU budget) takes effect mid-scan within a few seconds.
+			int FairCeiling() {
+				int hc = Settings.AdaptiveMaxPerDrive > 0 ? Settings.AdaptiveMaxPerDrive : cpuBudget;
+				int a = Math.Max(1, System.Threading.Volatile.Read(ref activeDrives[0]));
+				return Math.Max(1, Math.Min(hc, (cpuBudget + a - 1) / a));
+			}
 			int idx = -1;
 			long done = 0;
 			int startC = Math.Max(1, Math.Min(FairCeiling(), 4));
@@ -825,24 +830,34 @@ namespace VDF.Core {
 			}
 			var control = Task.Run(async () => {
 				double prev = -1;
+				long before = System.Threading.Interlocked.Read(ref done);
+				double elapsed = 0;
+				const double tick = 3.0;   // enforce a lowered cap within ~3s (live); measure throughput over a full window
 				while (!driveCts.IsCancellationRequested) {
-					long before = System.Threading.Interlocked.Read(ref done);
-					try { await Task.Delay(TimeSpan.FromSeconds(windowSec), driveCts.Token).ConfigureAwait(false); }
+					try { await Task.Delay(TimeSpan.FromSeconds(tick), driveCts.Token).ConfigureAwait(false); }
 					catch (OperationCanceledException) { break; }
 					if (System.Threading.Volatile.Read(ref idx) >= entries.Count) break;
-					if (pauseTokenSource.IsPaused) { prev = -1; continue; }
-					long after = System.Threading.Interlocked.Read(ref done);
-					double rate = (after - before) / windowSec;
+					if (pauseTokenSource.IsPaused) { prev = -1; before = System.Threading.Interlocked.Read(ref done); elapsed = 0; continue; }
 					int ceiling = FairCeiling();
-					int newTarget;
-					if (prev >= 0 && rate < prev * 0.92) newTarget = Math.Max(1, target - 1);          // throughput dropped -> back off (disk-bound)
-					else if (prev >= 0 && rate > prev * 1.25) newTarget = Math.Min(ceiling, target + 2); // strong gain -> climb faster
-					else newTarget = Math.Min(ceiling, target + 1);                                      // else climb toward the (possibly risen) fair-share ceiling
-					while (target < newTarget) { throttle.Release(); target++; }
-					while (target > newTarget && throttle.Wait(0)) target--;
-					if (driveCounters != null && driveCounters.TryGetValue(root, out var __rc)) { __rc.Rate = rate; __rc.Concurrency = target; }
-					Logger.Instance.Info($"[adaptive] {root}: {rate:0.000} files/s -> concurrency {target}/{ceiling} (active drives {System.Threading.Volatile.Read(ref activeDrives[0])})");
-					prev = rate;
+					// Live cap: user lowered AdaptiveMaxPerDrive (or fair share dropped) -> shed workers now, don't wait a window.
+					bool shed = false;
+					while (target > ceiling && throttle.Wait(0)) { target--; shed = true; }
+					elapsed += tick;
+					if (elapsed + 1e-9 >= windowSec) {
+						long after = System.Threading.Interlocked.Read(ref done);
+						double rate = (after - before) / elapsed;
+						int newTarget;
+						if (prev >= 0 && rate < prev * 0.92) newTarget = target - 1;          // throughput dropped -> back off
+						else if (prev >= 0 && rate > prev * 1.25) newTarget = target + 2;      // strong gain -> climb faster
+						else newTarget = target + 1;                                           // else creep toward the ceiling
+						newTarget = Math.Max(1, Math.Min(newTarget, ceiling));                 // never exceed the live ceiling
+						while (target < newTarget) { throttle.Release(); target++; }
+						while (target > newTarget && throttle.Wait(0)) target--;
+						if (driveCounters != null && driveCounters.TryGetValue(root, out var __rc)) { __rc.Rate = rate; __rc.Concurrency = target; }
+						Logger.Instance.Info($"[adaptive] {root}: {rate:0.000} files/s -> concurrency {target}/{ceiling} (active drives {System.Threading.Volatile.Read(ref activeDrives[0])})");
+						prev = rate; before = after; elapsed = 0;
+					}
+					else if (shed && driveCounters != null && driveCounters.TryGetValue(root, out var __rc2)) { __rc2.Concurrency = target; }
 				}
 			}, driveCts.Token);
 			try { await Task.WhenAll(workers).ConfigureAwait(false); }

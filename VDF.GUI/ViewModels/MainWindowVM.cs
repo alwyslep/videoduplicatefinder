@@ -354,6 +354,12 @@ namespace VDF.GUI.ViewModels {
 		[System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026", Justification = WhenAnyValueTrimJustification)]
 		public MainWindowVM() {
 			MigrateLegacyBlacklistLocation();
+			// Live per-drive concurrency cap: push UI changes to the running scan so lowering the per-drive
+			// max parallelism takes effect mid-scan (the adaptive controller re-reads it every few seconds).
+			SettingsFile.Instance.PropertyChanged += (_, e) => {
+				if (e.PropertyName == nameof(SettingsFile.AdaptiveMaxPerDrive))
+					Scanner.Settings.AdaptiveMaxPerDrive = SettingsFile.Instance.AdaptiveMaxPerDrive;
+			};
 			GroupBlacklist = BlacklistStore.Load(BlacklistedGroupsFile, msg => Logger.Instance.Info(msg));
 			_FileType = TypeFilters[0];
 			Scanner.ScanAborted += Scanner_ScanAborted;

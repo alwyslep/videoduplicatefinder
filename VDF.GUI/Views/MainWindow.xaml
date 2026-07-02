@@ -1467,6 +1467,11 @@
                                                                    Maximum="100" Minimum="-1"
                                                                    ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.MaxDegreeOfParallelismTooltip]}"
                                                                    Value="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=MaxDegreeOfParallelism}" />
+                                                    <TextBlock Margin="0,4,0,0" Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.AdaptiveMaxPerDrive]}" />
+                                                    <NumericUpDown Width="200" HorizontalAlignment="Left"
+                                                                   Maximum="64" Minimum="0"
+                                                                   ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.AdaptiveMaxPerDriveTooltip]}"
+                                                                   Value="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=AdaptiveMaxPerDrive}" />
                                                     <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
                                                         <TextBlock VerticalAlignment="Center"
                                                                    Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.OnlySameFolderDuplicates]}"
