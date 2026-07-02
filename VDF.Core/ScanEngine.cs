@@ -279,6 +279,22 @@ namespace VDF.Core {
 			}
 		}
 
+		// Explicit flush for a safe suspend point (Pause): persist completed work so the user can close/redeploy
+		// and resume later via the fingerprint cache. Shares checkpointLock so it never races a periodic checkpoint
+		// over the temp DB file. Best-effort; in-flight files finishing during the pause land in the next save.
+		void FlushDatabase() {
+			lock (checkpointLock) {
+				lastCheckpointTime = DateTime.UtcNow;
+				try {
+					DatabaseUtils.SaveDatabase();
+					Logger.Instance.Info("Paused: database flushed - safe to close (a later rescan resumes from the cache).");
+				}
+				catch (Exception ex) {
+					Logger.Instance.Info($"Pause flush failed (the scan continues): {ex}");
+				}
+			}
+		}
+
 		public static bool FFmpegExists => !string.IsNullOrEmpty(FfmpegEngine.FFmpegPath);
 		public static bool FFprobeExists => !string.IsNullOrEmpty(FFProbeEngine.FFprobePath);
 		public static bool NativeFFmpegExists => FFTools.FFmpegNative.FFmpegHelper.DoFFmpegLibraryFilesExist;
@@ -2462,6 +2478,9 @@ namespace VDF.Core {
 			ElapsedTimer.Stop();
 			SearchTimer.Stop();
 			pauseTokenSource.IsPaused = true;
+			// Safe suspend point: flush completed work off the UI thread so closing/redeploying now loses nothing
+			// (a later rescan resumes from the cache). In-flight files that finish during the pause land in the next save.
+			System.Threading.Tasks.Task.Run(FlushDatabase);
 
 		}
 
