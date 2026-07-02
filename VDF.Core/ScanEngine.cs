@@ -835,7 +835,7 @@ namespace VDF.Core {
 					else if (rate > prev * 1.08) newTarget = Math.Min(maxPer, target + 1);
 					else if (rate < prev * 0.92) newTarget = Math.Max(1, target - 1);
 					while (target < newTarget) { throttle.Release(); target++; }
-					while (target > newTarget) { try { await throttle.WaitAsync(driveCts.Token).ConfigureAwait(false); target--; } catch (OperationCanceledException) { break; } }
+					while (target > newTarget && throttle.Wait(0)) target--;   // non-blocking: never stall the controller when workers hold all permits (slow files); defer the shrink to a later window
 					Logger.Instance.Info($"[adaptive] {root}: {rate:0.000} files/s -> concurrency {target}");
 					prev = rate;
 				}
