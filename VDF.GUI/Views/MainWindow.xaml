@@ -90,6 +90,142 @@
                 Text="{Binding #MainWindow.Title}" />
             <Grid x:Name="MainContentGrid" Margin="2,30,2,2">
                 <TabControl x:Name="TabControl">
+                    <TabItem Name="TabItemDirectories">
+                        <TabItem.Header>
+                            <TextBlock
+                                VerticalAlignment="Center"
+                                FontSize="12"
+                                Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.DirectorySelection]}" />
+                        </TabItem.Header>
+                        <Grid Margin="12,12,12,10" ColumnDefinitions="2*,12,*" RowDefinitions="Auto,*"
+                              IsEnabled="{Binding !IsScanning}">
+                            <!-- ═══════ search directories (folder tree) ═══════ -->
+                            <DockPanel Grid.Row="0" Grid.Column="0" Margin="0,0,0,6">
+                                <Button DockPanel.Dock="Right" VerticalAlignment="Top" Padding="7,3" Margin="8,0,0,0"
+                                        Command="{Binding RefreshDirectoryTreeCommand}"
+                                        ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.DirTree.Refresh]}">
+                                    <StackPanel Orientation="Horizontal" Spacing="4">
+                                        <Viewbox Width="14" Height="14">
+                                            <Canvas Width="24" Height="24">
+                                                <Path Fill="#66BB6A" Data="M17.65,6.35C16.2,4.9 14.21,4 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20C15.73,20 18.84,17.45 19.73,14H17.65C16.83,16.33 14.61,18 12,18A6,6 0 0,1 6,12A6,6 0 0,1 12,6C13.66,6 15.14,6.69 16.22,7.78L13,11H20V4L17.65,6.35Z" />
+                                            </Canvas>
+                                        </Viewbox>
+                                        <TextBlock FontSize="11" VerticalAlignment="Center"
+                                                   Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.DirTree.Refresh]}" />
+                                    </StackPanel>
+                                </Button>
+                                <TextBlock Opacity="0.6" FontSize="11" TextWrapping="Wrap" VerticalAlignment="Center"
+                                           Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.DirectorySelectionHint]}" />
+                            </DockPanel>
+                            <Border Grid.Row="1" Grid.Column="0" BorderThickness="1" CornerRadius="4"
+                                    BorderBrush="{actipro:ThemeResource Container1BorderBrush}">
+                                <TreeView ItemsSource="{Binding DirectoryTreeRoots}">
+                                    <TreeView.Styles>
+                                        <Style Selector="TreeViewItem" x:DataType="vm:DirectoryTreeNodeVM">
+                                            <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
+                                        </Style>
+                                    </TreeView.Styles>
+                                    <TreeView.ItemTemplate>
+                                        <TreeDataTemplate x:DataType="vm:DirectoryTreeNodeVM" ItemsSource="{Binding Children}">
+                                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                                <CheckBox IsThreeState="True" IsChecked="{Binding CheckState, Mode=TwoWay}" VerticalAlignment="Center" />
+                                                <!-- folder icon -->
+                                                <Viewbox Width="17" Height="17" VerticalAlignment="Center" IsVisible="{Binding !IsDrive}">
+                                                    <Canvas Width="24" Height="24">
+                                                        <Path Fill="{Binding IconBrush}" Data="M10,4H4C2.89,4 2,4.89 2,6V18A2,2 0 0,0 4,20H20A2,2 0 0,0 22,18V8C22,6.89 21.1,6 20,6H12L10,4Z" />
+                                                    </Canvas>
+                                                </Viewbox>
+                                                <!-- drive icon -->
+                                                <Viewbox Width="17" Height="17" VerticalAlignment="Center" IsVisible="{Binding IsDrive}">
+                                                    <Canvas Width="24" Height="24">
+                                                        <Path Fill="{Binding IconBrush}" Data="M6,2H18A2,2 0 0,1 20,4V20A2,2 0 0,1 18,22H6A2,2 0 0,1 4,20V4A2,2 0 0,1 6,2M12,4A4,4 0 0,0 8,8A4,4 0 0,0 12,12A4,4 0 0,0 16,8A4,4 0 0,0 12,4M12,17.5C13.38,17.5 14.5,16.71 14.5,15.75C14.5,14.79 13.38,14 12,14C10.62,14 9.5,14.79 9.5,15.75C9.5,16.71 10.62,17.5 12,17.5Z" />
+                                                    </Canvas>
+                                                </Viewbox>
+                                                <TextBlock Text="{Binding Name}" VerticalAlignment="Center"
+                                                           Foreground="{Binding NameBrush}" FontWeight="{Binding NameWeight}" />
+                                                <TextBlock Text="{Binding SizeText}" VerticalAlignment="Center" FontSize="11"
+                                                           Foreground="#7FD1E0" Opacity="0.85" />
+                                                <Border IsVisible="{Binding HasMissing}" VerticalAlignment="Center" CornerRadius="3"
+                                                        Background="#33FF9800" Padding="5,1" Margin="2,0,0,0">
+                                                    <TextBlock Text="{Binding MissingText}" FontSize="11" FontWeight="SemiBold" Foreground="#FFB74D" />
+                                                </Border>
+                                            </StackPanel>
+                                        </TreeDataTemplate>
+                                    </TreeView.ItemTemplate>
+                                </TreeView>
+                            </Border>
+                            <!-- ═══════ exclude directories (blacklist + wildcard patterns) ═══════ -->
+                            <StackPanel Grid.Row="0" Grid.Column="2" Margin="0,0,0,4">
+                                <TextBlock FontWeight="Bold"
+                                           Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.ExcludeDirectories]}" />
+                                <TextBlock Opacity="0.6" FontSize="11" TextWrapping="Wrap" Margin="0,2,0,0"
+                                           Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.ExcludeDirectoriesHint]}" />
+                            </StackPanel>
+                            <Grid Grid.Row="1" Grid.Column="2" RowDefinitions="Auto,*,Auto,Auto">
+                                <Menu Grid.Row="0" MinHeight="30">
+                                    <MenuItem Command="{Binding AddBlacklistToListCommand}">
+                                        <MenuItem.Header>
+                                            <StackPanel Orientation="Horizontal">
+                                                <Viewbox Width="16" Height="16">
+                                                    <Canvas Width="24" Height="24">
+                                                        <Path Data="M12 2C6.49 2 2 6.49 2 12C2 17.51 6.49 22 12 22C17.51 22 22 17.51 22 12C22 6.49 17.51 2 12 2ZM16 12.75H12.75V16C12.75 16.41 12.41 16.75 12 16.75C11.59 16.75 11.25 16.41 11.25 16V12.75H8C7.59 12.75 7.25 12.41 7.25 12C7.25 11.59 7.59 11.25 8 11.25H11.25V8C11.25 7.59 11.59 7.25 12 7.25C12.41 7.25 12.75 7.59 12.75 8V11.25H16C16.41 11.25 16.75 11.59 16.75 12C16.75 12.41 16.41 12.75 16 12.75Z" Fill="LimeGreen" />
+                                                    </Canvas>
+                                                </Viewbox>
+                                                <TextBlock Margin="5,0,0,0" VerticalAlignment="Center"
+                                                           Text="{Binding Source={x:Static local:App.Lang}, Path=[Dialog.Add]}" />
+                                            </StackPanel>
+                                        </MenuItem.Header>
+                                    </MenuItem>
+                                    <MenuItem Command="{Binding AddBlacklistPatternToListCommand}">
+                                        <MenuItem.Header>
+                                            <StackPanel Orientation="Horizontal">
+                                                <Viewbox Width="16" Height="16">
+                                                    <Canvas Width="24" Height="24">
+                                                        <Path Data="M12 2C6.49 2 2 6.49 2 12C2 17.51 6.49 22 12 22C17.51 22 22 17.51 22 12C22 6.49 17.51 2 12 2ZM16 12.75H12.75V16C12.75 16.41 12.41 16.75 12 16.75C11.59 16.75 11.25 16.41 11.25 16V12.75H8C7.59 12.75 7.25 12.41 7.25 12C7.25 11.59 7.59 11.25 8 11.25H11.25V8C11.25 7.59 11.59 7.25 12 7.25C12.41 7.25 12.75 7.59 12.75 8V11.25H16C16.41 11.25 16.75 11.59 16.75 12C16.75 12.41 16.41 12.75 16 12.75Z" Fill="LimeGreen" />
+                                                    </Canvas>
+                                                </Viewbox>
+                                                <TextBlock Margin="5,0,0,0" VerticalAlignment="Center"
+                                                           Text="{Binding Source={x:Static local:App.Lang}, Path=[Dialog.AddPattern]}" />
+                                            </StackPanel>
+                                        </MenuItem.Header>
+                                    </MenuItem>
+                                    <MenuItem Command="{Binding RemoveBlacklistFromListCommand}" CommandParameter="{Binding ElementName=ListboxBlacklist}">
+                                        <MenuItem.Header>
+                                            <StackPanel Orientation="Horizontal">
+                                                <Viewbox Width="16" Height="16">
+                                                    <Canvas Width="24" Height="24">
+                                                        <Path Data="M12 21C16.9706 21 21 16.9706 21 12C21 7.02944 16.9706 3 12 3C7.02944 3 3 7.02944 3 12C3 16.9706 7.02944 21 12 21ZM7 13H17V11H7V13Z" Fill="Red" />
+                                                    </Canvas>
+                                                </Viewbox>
+                                                <TextBlock Margin="5,0,0,0" VerticalAlignment="Center"
+                                                           Text="{Binding Source={x:Static local:App.Lang}, Path=[Dialog.Remove]}" />
+                                            </StackPanel>
+                                        </MenuItem.Header>
+                                    </MenuItem>
+                                    <MenuItem Command="{Binding ClearBlacklistListCommand}">
+                                        <MenuItem.Header>
+                                            <StackPanel Orientation="Horizontal">
+                                                <Viewbox Width="16" Height="16">
+                                                    <Canvas Width="24" Height="24">
+                                                        <Path Data="M12 21C16.9706 21 21 16.9706 21 12C21 7.02944 16.9706 3 12 3C7.02944 3 3 7.02944 3 12C3 16.9706 7.02944 21 12 21ZM7 13H17V11H7V13Z" Fill="Red" />
+                                                    </Canvas>
+                                                </Viewbox>
+                                                <TextBlock Margin="5,0,0,0" VerticalAlignment="Center"
+                                                           Text="{Binding Source={x:Static local:App.Lang}, Path=[Dialog.ClearAll]}" />
+                                            </StackPanel>
+                                        </MenuItem.Header>
+                                    </MenuItem>
+                                </Menu>
+                                <ListBox Name="ListboxBlacklist" Grid.Row="1" BorderThickness="1"
+                                         DragDrop.AllowDrop="True"
+                                         ItemsSource="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=Blacklists}" />
+                                <TextBlock Grid.Row="2" Margin="5" TextWrapping="Wrap" Foreground="{actipro:ThemeResource ControlBackgroundBrushSolidWarning}"
+                                           Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.DragDropHint]}" />
+                                <TextBlock Grid.Row="3" Margin="5" TextWrapping="Wrap" Foreground="{actipro:ThemeResource ControlBackgroundBrushSolidWarning}"
+                                           Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.WildcardNote]}" />
+                            </Grid>
+                        </Grid>
+                    </TabItem>
                     <TabItem Name="TabItemScanner">
                         <TabItem.Header>
                             <TextBlock
@@ -1422,12 +1558,21 @@
                                 IsVisible="{Binding IsBusy}"
                                 Opacity="0.8">
                                 <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                                    <StackPanel.Styles>
+                                        <!-- paused = frozen bar with an orange border; a sweeping animation implies work is running -->
+                                        <Style Selector="ProgressBar">
+                                            <Setter Property="BorderBrush" Value="LimeGreen" />
+                                        </Style>
+                                        <Style Selector="ProgressBar.paused">
+                                            <Setter Property="BorderBrush" Value="Orange" />
+                                        </Style>
+                                    </StackPanel.Styles>
                                     <ProgressBar
                                         Height="10"
                                         MaxWidth="200"
-                                        BorderBrush="LimeGreen"
                                         BorderThickness="1"
-                                        IsIndeterminate="{Binding IsBusy}" />
+                                        Classes.paused="{Binding IsPaused}"
+                                        IsIndeterminate="{Binding !IsPaused}" />
                                     <TextBlock
                                         Margin="0,10,0,0"
                                         HorizontalAlignment="Center"
@@ -1716,207 +1861,6 @@
                                             </Border>
                                         </StackPanel>
                                     </ScrollViewer>
-                                </TabItem>
-
-                                <!-- ═══════════════ DIRECTORIES ═══════════════ -->
-                                <TabItem>
-                                    <TabItem.Header>
-                                        <TextBlock VerticalAlignment="Center" FontSize="12"
-                                                   Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.Directories]}" />
-                                    </TabItem.Header>
-                                    <Grid Margin="12,12,12,10" ColumnDefinitions="*,*" ColumnSpacing="10" RowDefinitions="Auto,*,Auto">
-                                        <StackPanel Grid.Row="0" Grid.Column="0" Margin="0,0,0,4">
-                                            <TextBlock FontWeight="Bold"
-                                                       Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.SearchDirectories]}" />
-                                            <TextBlock Opacity="0.6" FontSize="11" TextWrapping="Wrap" Margin="0,2,0,0"
-                                                       Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.SearchDirectoriesHint]}" />
-                                        </StackPanel>
-                                        <Grid Grid.Row="1" Grid.Column="0" RowDefinitions="Auto,*,Auto">
-                                            <Menu Grid.Row="0" MinHeight="30">
-                                                <MenuItem Command="{Binding AddIncludesToListCommand}">
-                                                    <MenuItem.Header>
-                                                        <StackPanel Orientation="Horizontal">
-                                                            <Viewbox Width="16" Height="16">
-                                                                <Canvas Width="24" Height="24">
-                                                                    <Path Data="M12 2C6.49 2 2 6.49 2 12C2 17.51 6.49 22 12 22C17.51 22 22 17.51 22 12C22 6.49 17.51 2 12 2ZM16 12.75H12.75V16C12.75 16.41 12.41 16.75 12 16.75C11.59 16.75 11.25 16.41 11.25 16V12.75H8C7.59 12.75 7.25 12.41 7.25 12C7.25 11.59 7.59 11.25 8 11.25H11.25V8C11.25 7.59 11.59 7.25 12 7.25C12.41 7.25 12.75 7.59 12.75 8V11.25H16C16.41 11.25 16.75 11.59 16.75 12C16.75 12.41 16.41 12.75 16 12.75Z" Fill="LimeGreen" />
-                                                                </Canvas>
-                                                            </Viewbox>
-                                                            <TextBlock Margin="5,0,0,0" VerticalAlignment="Center"
-                                                                       Text="{Binding Source={x:Static local:App.Lang}, Path=[Dialog.Add]}" />
-                                                        </StackPanel>
-                                                    </MenuItem.Header>
-                                                </MenuItem>
-                                                <MenuItem Command="{Binding RemoveIncludesFromListCommand}" CommandParameter="{Binding ElementName=ListboxIncludelist}">
-                                                    <MenuItem.Header>
-                                                        <StackPanel Orientation="Horizontal">
-                                                            <Viewbox Width="16" Height="16">
-                                                                <Canvas Width="24" Height="24">
-                                                                    <Path Data="M12 21C16.9706 21 21 16.9706 21 12C21 7.02944 16.9706 3 12 3C7.02944 3 3 7.02944 3 12C3 16.9706 7.02944 21 12 21ZM7 13H17V11H7V13Z" Fill="Red" />
-                                                                </Canvas>
-                                                            </Viewbox>
-                                                            <TextBlock Margin="5,0,0,0" VerticalAlignment="Center"
-                                                                       Text="{Binding Source={x:Static local:App.Lang}, Path=[Dialog.Remove]}" />
-                                                        </StackPanel>
-                                                    </MenuItem.Header>
-                                                </MenuItem>
-                                                <MenuItem Command="{Binding ClearIncludesListCommand}">
-                                                    <MenuItem.Header>
-                                                        <StackPanel Orientation="Horizontal">
-                                                            <Viewbox Width="16" Height="16">
-                                                                <Canvas Width="24" Height="24">
-                                                                    <Path Data="M12 21C16.9706 21 21 16.9706 21 12C21 7.02944 16.9706 3 12 3C7.02944 3 3 7.02944 3 12C3 16.9706 7.02944 21 12 21ZM7 13H17V11H7V13Z" Fill="Red" />
-                                                                </Canvas>
-                                                            </Viewbox>
-                                                            <TextBlock Margin="5,0,0,0" VerticalAlignment="Center"
-                                                                       Text="{Binding Source={x:Static local:App.Lang}, Path=[Dialog.ClearAll]}" />
-                                                        </StackPanel>
-                                                    </MenuItem.Header>
-                                                </MenuItem>
-                                            </Menu>
-                                            <ListBox Name="ListboxIncludelist" Grid.Row="1" BorderThickness="1"
-                                                     DragDrop.AllowDrop="True"
-                                                     ItemsSource="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=Includes}" />
-                                            <StackPanel Grid.Row="2">
-                                                <TextBlock Margin="5" TextWrapping="Wrap" Foreground="{actipro:ThemeResource ControlBackgroundBrushSolidWarning}"
-                                                           Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.DragDropHint]}" />
-                                                <TextBlock Margin="5" TextWrapping="Wrap" Foreground="{actipro:ThemeResource ControlBackgroundBrushSolidWarning}"
-                                                           Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.WildcardNote]}" />
-                                            </StackPanel>
-                                        </Grid>
-                                        <StackPanel Grid.Row="0" Grid.Column="1" Margin="0,0,0,4">
-                                            <TextBlock FontWeight="Bold"
-                                                       Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.ExcludeDirectories]}" />
-                                            <TextBlock Opacity="0.6" FontSize="11" TextWrapping="Wrap" Margin="0,2,0,0"
-                                                       Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.ExcludeDirectoriesHint]}" />
-                                        </StackPanel>
-                                        <Grid Grid.Row="1" Grid.Column="1" RowDefinitions="Auto,*,Auto,Auto">
-                                            <Menu Grid.Row="0" MinHeight="30">
-                                                <MenuItem Command="{Binding AddBlacklistToListCommand}">
-                                                    <MenuItem.Header>
-                                                        <StackPanel Orientation="Horizontal">
-                                                            <Viewbox Width="16" Height="16">
-                                                                <Canvas Width="24" Height="24">
-                                                                    <Path Data="M12 2C6.49 2 2 6.49 2 12C2 17.51 6.49 22 12 22C17.51 22 22 17.51 22 12C22 6.49 17.51 2 12 2ZM16 12.75H12.75V16C12.75 16.41 12.41 16.75 12 16.75C11.59 16.75 11.25 16.41 11.25 16V12.75H8C7.59 12.75 7.25 12.41 7.25 12C7.25 11.59 7.59 11.25 8 11.25H11.25V8C11.25 7.59 11.59 7.25 12 7.25C12.41 7.25 12.75 7.59 12.75 8V11.25H16C16.41 11.25 16.75 11.59 16.75 12C16.75 12.41 16.41 12.75 16 12.75Z" Fill="LimeGreen" />
-                                                                </Canvas>
-                                                            </Viewbox>
-                                                            <TextBlock Margin="5,0,0,0" VerticalAlignment="Center"
-                                                                       Text="{Binding Source={x:Static local:App.Lang}, Path=[Dialog.Add]}" />
-                                                        </StackPanel>
-                                                    </MenuItem.Header>
-                                                </MenuItem>
-                                                <MenuItem Command="{Binding AddBlacklistPatternToListCommand}">
-                                                    <MenuItem.Header>
-                                                        <StackPanel Orientation="Horizontal">
-                                                            <Viewbox Width="16" Height="16">
-                                                                <Canvas Width="24" Height="24">
-                                                                    <Path Data="M12 2C6.49 2 2 6.49 2 12C2 17.51 6.49 22 12 22C17.51 22 22 17.51 22 12C22 6.49 17.51 2 12 2ZM16 12.75H12.75V16C12.75 16.41 12.41 16.75 12 16.75C11.59 16.75 11.25 16.41 11.25 16V12.75H8C7.59 12.75 7.25 12.41 7.25 12C7.25 11.59 7.59 11.25 8 11.25H11.25V8C11.25 7.59 11.59 7.25 12 7.25C12.41 7.25 12.75 7.59 12.75 8V11.25H16C16.41 11.25 16.75 11.59 16.75 12C16.75 12.41 16.41 12.75 16 12.75Z" Fill="LimeGreen" />
-                                                                </Canvas>
-                                                            </Viewbox>
-                                                            <TextBlock Margin="5,0,0,0" VerticalAlignment="Center"
-                                                                       Text="{Binding Source={x:Static local:App.Lang}, Path=[Dialog.AddPattern]}" />
-                                                        </StackPanel>
-                                                    </MenuItem.Header>
-                                                </MenuItem>
-                                                <MenuItem Command="{Binding RemoveBlacklistFromListCommand}" CommandParameter="{Binding ElementName=ListboxBlacklist}">
-                                                    <MenuItem.Header>
-                                                        <StackPanel Orientation="Horizontal">
-                                                            <Viewbox Width="16" Height="16">
-                                                                <Canvas Width="24" Height="24">
-                                                                    <Path Data="M12 21C16.9706 21 21 16.9706 21 12C21 7.02944 16.9706 3 12 3C7.02944 3 3 7.02944 3 12C3 16.9706 7.02944 21 12 21ZM7 13H17V11H7V13Z" Fill="Red" />
-                                                                </Canvas>
-                                                            </Viewbox>
-                                                            <TextBlock Margin="5,0,0,0" VerticalAlignment="Center"
-                                                                       Text="{Binding Source={x:Static local:App.Lang}, Path=[Dialog.Remove]}" />
-                                                        </StackPanel>
-                                                    </MenuItem.Header>
-                                                </MenuItem>
-                                                <MenuItem Command="{Binding ClearBlacklistListCommand}">
-                                                    <MenuItem.Header>
-                                                        <StackPanel Orientation="Horizontal">
-                                                            <Viewbox Width="16" Height="16">
-                                                                <Canvas Width="24" Height="24">
-                                                                    <Path Data="M12 21C16.9706 21 21 16.9706 21 12C21 7.02944 16.9706 3 12 3C7.02944 3 3 7.02944 3 12C3 16.9706 7.02944 21 12 21ZM7 13H17V11H7V13Z" Fill="Red" />
-                                                                </Canvas>
-                                                            </Viewbox>
-                                                            <TextBlock Margin="5,0,0,0" VerticalAlignment="Center"
-                                                                       Text="{Binding Source={x:Static local:App.Lang}, Path=[Dialog.ClearAll]}" />
-                                                        </StackPanel>
-                                                    </MenuItem.Header>
-                                                </MenuItem>
-                                            </Menu>
-                                            <ListBox Name="ListboxBlacklist" Grid.Row="1" BorderThickness="1"
-                                                     DragDrop.AllowDrop="True"
-                                                     ItemsSource="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=Blacklists}" />
-                                            <TextBlock Grid.Row="2" Margin="5" TextWrapping="Wrap" Foreground="{actipro:ThemeResource ControlBackgroundBrushSolidWarning}"
-                                                       Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.DragDropHint]}" />
-                                            <TextBlock Grid.Row="3" Margin="5" TextWrapping="Wrap" Foreground="{actipro:ThemeResource ControlBackgroundBrushSolidWarning}"
-                                                       Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.WildcardNote]}" />
-                                        </Grid>
-                                    </Grid>
-                                </TabItem>
-
-                                <!-- ═══════ DIRECTORY SELECTION (folder tree) ═══════ -->
-                                <TabItem>
-                                    <TabItem.Header>
-                                        <TextBlock VerticalAlignment="Center" FontSize="12"
-                                                   Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.DirectorySelection]}" />
-                                    </TabItem.Header>
-                                    <Grid Margin="12,12,12,10" RowDefinitions="Auto,*">
-                                        <DockPanel Grid.Row="0" Margin="0,0,0,6">
-                                            <Button DockPanel.Dock="Right" VerticalAlignment="Top" Padding="7,3" Margin="8,0,0,0"
-                                                    Command="{Binding RefreshDirectoryTreeCommand}"
-                                                    ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.DirTree.Refresh]}">
-                                                <StackPanel Orientation="Horizontal" Spacing="4">
-                                                    <Viewbox Width="14" Height="14">
-                                                        <Canvas Width="24" Height="24">
-                                                            <Path Fill="#66BB6A" Data="M17.65,6.35C16.2,4.9 14.21,4 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20C15.73,20 18.84,17.45 19.73,14H17.65C16.83,16.33 14.61,18 12,18A6,6 0 0,1 6,12A6,6 0 0,1 12,6C13.66,6 15.14,6.69 16.22,7.78L13,11H20V4L17.65,6.35Z" />
-                                                        </Canvas>
-                                                    </Viewbox>
-                                                    <TextBlock FontSize="11" VerticalAlignment="Center"
-                                                               Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.DirTree.Refresh]}" />
-                                                </StackPanel>
-                                            </Button>
-                                            <TextBlock Opacity="0.6" FontSize="11" TextWrapping="Wrap" VerticalAlignment="Center"
-                                                       Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.DirectorySelectionHint]}" />
-                                        </DockPanel>
-                                        <Border Grid.Row="1" BorderThickness="1" CornerRadius="4"
-                                                BorderBrush="{actipro:ThemeResource Container1BorderBrush}">
-                                            <TreeView ItemsSource="{Binding DirectoryTreeRoots}">
-                                                <TreeView.Styles>
-                                                    <Style Selector="TreeViewItem" x:DataType="vm:DirectoryTreeNodeVM">
-                                                        <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
-                                                    </Style>
-                                                </TreeView.Styles>
-                                                <TreeView.ItemTemplate>
-                                                    <TreeDataTemplate x:DataType="vm:DirectoryTreeNodeVM" ItemsSource="{Binding Children}">
-                                                        <StackPanel Orientation="Horizontal" Spacing="6">
-                                                            <CheckBox IsThreeState="True" IsChecked="{Binding CheckState, Mode=TwoWay}" VerticalAlignment="Center" />
-                                                            <!-- folder icon -->
-                                                            <Viewbox Width="17" Height="17" VerticalAlignment="Center" IsVisible="{Binding !IsDrive}">
-                                                                <Canvas Width="24" Height="24">
-                                                                    <Path Fill="{Binding IconBrush}" Data="M10,4H4C2.89,4 2,4.89 2,6V18A2,2 0 0,0 4,20H20A2,2 0 0,0 22,18V8C22,6.89 21.1,6 20,6H12L10,4Z" />
-                                                                </Canvas>
-                                                            </Viewbox>
-                                                            <!-- drive icon -->
-                                                            <Viewbox Width="17" Height="17" VerticalAlignment="Center" IsVisible="{Binding IsDrive}">
-                                                                <Canvas Width="24" Height="24">
-                                                                    <Path Fill="{Binding IconBrush}" Data="M6,2H18A2,2 0 0,1 20,4V20A2,2 0 0,1 18,22H6A2,2 0 0,1 4,20V4A2,2 0 0,1 6,2M12,4A4,4 0 0,0 8,8A4,4 0 0,0 12,12A4,4 0 0,0 16,8A4,4 0 0,0 12,4M12,17.5C13.38,17.5 14.5,16.71 14.5,15.75C14.5,14.79 13.38,14 12,14C10.62,14 9.5,14.79 9.5,15.75C9.5,16.71 10.62,17.5 12,17.5Z" />
-                                                                </Canvas>
-                                                            </Viewbox>
-                                                            <TextBlock Text="{Binding Name}" VerticalAlignment="Center"
-                                                                       Foreground="{Binding NameBrush}" FontWeight="{Binding NameWeight}" />
-                                                            <TextBlock Text="{Binding SizeText}" VerticalAlignment="Center" FontSize="11"
-                                                                       Foreground="#7FD1E0" Opacity="0.85" />
-                                                            <Border IsVisible="{Binding HasMissing}" VerticalAlignment="Center" CornerRadius="3"
-                                                                    Background="#33FF9800" Padding="5,1" Margin="2,0,0,0">
-                                                                <TextBlock Text="{Binding MissingText}" FontSize="11" FontWeight="SemiBold" Foreground="#FFB74D" />
-                                                            </Border>
-                                                        </StackPanel>
-                                                    </TreeDataTemplate>
-                                                </TreeView.ItemTemplate>
-                                            </TreeView>
-                                        </Border>
-                                    </Grid>
                                 </TabItem>
 
                                 <!-- ═══════════════ FILES ═══════════════ -->

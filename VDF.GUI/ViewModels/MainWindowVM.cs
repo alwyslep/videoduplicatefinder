@@ -588,6 +588,9 @@ namespace VDF.GUI.ViewModels {
 				await MessageBoxService.Show(App.Lang["Message.LoadDatabaseFailed"]);
 				Environment.Exit(-1);
 			}
+			// The directory tab is the startup tab, so its tree may have indexed an empty DB while
+			// this load was still running — re-snapshot now that the real database is in memory.
+			RefreshDirectoryTree();
 		}
 
 		void CheckScheduledScan() {

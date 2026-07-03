@@ -53,8 +53,6 @@ namespace VDF.GUI.Views {
 
 
 
-			this.FindControl<ListBox>("ListboxIncludelist")!.AddHandler(DragDrop.DropEvent, DropInclude);
-			this.FindControl<ListBox>("ListboxIncludelist")!.AddHandler(DragDrop.DragOverEvent, DragOver);
 			this.FindControl<ListBox>("ListboxBlacklist")!.AddHandler(DragDrop.DropEvent, DropBlacklist);
 			this.FindControl<ListBox>("ListboxBlacklist")!.AddHandler(DragDrop.DragOverEvent, DragOver);
 
@@ -260,18 +258,6 @@ namespace VDF.GUI.Views {
 				e.DragEffects = DragDropEffects.None;
 		}
 
-		private void DropInclude(object? sender, DragEventArgs e) {
-			if (!e.DataTransfer.Contains(DataFormat.File)) return;
-
-			foreach (var path in e.DataTransfer.GetItems(DataFormat.File) ?? Array.Empty<IDataTransferItem>()) {
-				IStorageItem? fold = path.TryGetFile();
-				if (fold == null)
-					continue;
-				string? localPath = fold.TryGetLocalPath();
-				if (!string.IsNullOrEmpty(localPath) && !SettingsFile.Instance.Includes.Contains(localPath))
-					SettingsFile.Instance.Includes.Add(localPath);
-			}
-		}
 		private void DropBlacklist(object? sender, DragEventArgs e) {
 			if (!e.DataTransfer.Contains(DataFormat.File)) return;
 
