@@ -61,11 +61,10 @@ namespace VDF.Core {
 		public int MaxDegreeOfParallelism = 1;
 		// Concurrency for spindle HDDs (per-drive); fast SSD/NVMe drives use MaxDegreeOfParallelism instead.
 		public int HddMaxDegreeOfParallelism = 2;
-		// Adaptive per-drive concurrency: each drive AIMD-tunes its worker count in [1, AdaptiveMaxPerDrive]
+		// Adaptive per-drive concurrency: each drive AIMD-tunes its worker count in [1, fair-share ceiling]
 		// from its measured files/sec; total decodes are capped at Environment.ProcessorCount. Falls back to the
-		// static per-device split when off.
+		// static per-device split when off. Per-drive hard caps come live from the status-bar dropdowns (SetDriveCap).
 		public bool AdaptiveConcurrency = true;
-		public int AdaptiveMaxPerDrive = 0;   // 0 = fair-share up to CPU budget (no hard per-drive cap); >0 = hard cap
 		public int AdaptiveWindowSeconds = 120;
 
 		public string CustomFFArguments = string.Empty;

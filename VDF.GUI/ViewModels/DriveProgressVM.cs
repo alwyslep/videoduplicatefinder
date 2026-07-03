@@ -1,5 +1,6 @@
 using Avalonia.Media;
 using ReactiveUI;
+using VDF.GUI.Data;
 
 namespace VDF.GUI.ViewModels {
 	/// <summary>
@@ -30,9 +31,14 @@ namespace VDF.GUI.ViewModels {
 			set => this.RaiseAndSetIfChanged(ref _Label, value);
 		}
 
-		// Per-drive parallelism override, chosen live from the status-bar dropdown. CapIndex is the ComboBox
-		// selection; it maps to an actual worker cap (0 = auto) and is pushed to the running scan via SetCap.
+		// Per-drive parallelism override, chosen live from the in-bar dropdown. CapIndex is the ComboBox
+		// selection; it maps to an actual worker cap (0 = auto), is pushed to the running scan via SetCap
+		// and persisted per drive root so the choice survives across scans and sessions.
 		static readonly int[] CapValues = { 0, 1, 2, 3, 4, 6, 8 };
+		public static int CapIndexFor(int cap) {
+			for (int i = 0; i < CapValues.Length; i++) if (CapValues[i] == cap) return i;
+			return 0;
+		}
 		public System.Action<string, int>? SetCap;
 		int _CapIndex;
 		public int CapIndex {
@@ -40,7 +46,10 @@ namespace VDF.GUI.ViewModels {
 			set {
 				this.RaiseAndSetIfChanged(ref _CapIndex, value);
 				int i = value < 0 || value >= CapValues.Length ? 0 : value;
-				SetCap?.Invoke(Root, CapValues[i]);
+				int cap = CapValues[i];
+				SetCap?.Invoke(Root, cap);
+				var caps = SettingsFile.Instance.DriveParallelismCaps;
+				if (cap == 0) caps.Remove(Root); else caps[Root] = cap;
 			}
 		}
 	}

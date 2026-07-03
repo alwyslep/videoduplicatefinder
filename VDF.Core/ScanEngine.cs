@@ -890,20 +890,19 @@ namespace VDF.Core {
 		// ceiling = ceil(cpuBudget / activeDrives), recomputed as drives finish so survivors absorb the freed CPU.
 		// A fixed worker pool is throttled to that ceiling, a shared global gate caps total decodes, and an AIMD
 		// controller climbs toward the ceiling and backs a drive off only when its throughput drops (disk-bound).
-		// AdaptiveMaxPerDrive, if > 0, is an optional hard per-drive cap; 0 means fair-share up to the whole budget.
+		// A per-drive hard cap can be set live from the status-bar dropdown (SetDriveCap); 0 means fair-share up to the whole budget.
 		async Task RunDriveAdaptive(string root, List<FileEntry> entries, Func<FileEntry, CancellationToken, ValueTask> process, System.Threading.SemaphoreSlim globalGate, int cpuBudget, int[] activeDrives) {
 			var token = cancelationTokenSource.Token;
 			double windowSec = Settings.AdaptiveWindowSeconds > 0 ? Settings.AdaptiveWindowSeconds : 120;
 			int poolSize = Math.Max(1, cpuBudget);   // fixed worker pool; the live ceiling below throttles how many actually run
-			// Fair-share ceiling, recomputed live each call so the user's per-drive cap (Settings.AdaptiveMaxPerDrive,
+			// Fair-share ceiling, recomputed live each call so the user's per-drive dropdown cap (CapOverride,
 			// 0 = fair-share up to the whole CPU budget) takes effect mid-scan within a few seconds.
 			int FairCeiling() {
 				int ov = 0;
 				if (driveCounters != null && driveCounters.TryGetValue(root, out var __cap)) ov = __cap.CapOverride;
 				if (ov > 0) return Math.Max(1, Math.Min(ov, cpuBudget));   // explicit per-drive override; total still capped by the global CPU gate
-				int hc = Settings.AdaptiveMaxPerDrive > 0 ? Settings.AdaptiveMaxPerDrive : cpuBudget;
 				int a = Math.Max(1, System.Threading.Volatile.Read(ref activeDrives[0]));
-				return Math.Max(1, Math.Min(hc, (cpuBudget + a - 1) / a));
+				return Math.Max(1, (cpuBudget + a - 1) / a);
 			}
 			int idx = -1;
 			long done = 0;
@@ -939,7 +938,7 @@ namespace VDF.Core {
 					if (System.Threading.Volatile.Read(ref idx) >= entries.Count) break;
 					if (pauseTokenSource.IsPaused) { prev = -1; before = System.Threading.Interlocked.Read(ref done); elapsed = 0; continue; }
 					int ceiling = FairCeiling();
-					// Live cap: user lowered AdaptiveMaxPerDrive (or fair share dropped) -> shed workers now, don't wait a window.
+					// Live cap: user lowered the drive's dropdown cap (or fair share dropped) -> shed workers now, don't wait a window.
 					bool shed = false;
 					while (target > ceiling && throttle.Wait(0)) { target--; shed = true; }
 					elapsed += tick;

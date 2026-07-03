@@ -1302,7 +1302,7 @@
                                                         <!-- 밝은 채움 위 가독성: 검은 헤일로를 2겹으로. 동일 라벨 2장을 겹쳐 각각의 DropShadow가
                                                              합성되며 헤일로 농도가 ~2배(Opacity/색은 이미 최대라 한 겹으론 더 못 짙게 함). 주황 글자는
                                                              완전 불투명이라 겹쳐도 그대로. -->
-                                                        <Panel HorizontalAlignment="Center" VerticalAlignment="Center" Margin="4,0">
+                                                        <Panel HorizontalAlignment="Center" VerticalAlignment="Center" Margin="4,0,40,0">
                                                             <TextBlock Text="{Binding Label}" FontSize="10" FontWeight="Bold"
                                                                 Foreground="#FFB74D" TextTrimming="CharacterEllipsis">
                                                                 <TextBlock.Effect>
@@ -1316,39 +1316,26 @@
                                                                 </TextBlock.Effect>
                                                             </TextBlock>
                                                         </Panel>
+                                                        <!-- Ultra-narrow per-drive worker-cap dropdown, embedded in the segment itself
+                                                             (A = auto, else a hard cap). Replaces the old second-row dropdown strip. -->
+                                                        <ComboBox SelectedIndex="{Binding CapIndex}" HorizontalAlignment="Right" VerticalAlignment="Center"
+                                                            FontSize="10" MinWidth="0" Width="38" Height="20" Padding="5,0,0,0"
+                                                            Background="#66000000" BorderThickness="0"
+                                                            ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.DriveCap.Tooltip]}">
+                                                            <ComboBoxItem Content="A" />
+                                                            <ComboBoxItem Content="1" />
+                                                            <ComboBoxItem Content="2" />
+                                                            <ComboBoxItem Content="3" />
+                                                            <ComboBoxItem Content="4" />
+                                                            <ComboBoxItem Content="6" />
+                                                            <ComboBoxItem Content="8" />
+                                                        </ComboBox>
                                                     </Grid>
                                                 </Border>
                                             </DataTemplate>
                                         </ItemsControl.ItemTemplate>
                                     </ItemsControl>
                                 </Border>
-                                <!-- Per-drive parallelism dropdowns: pick each drive's worker count live (Auto=fair share). Shared-bus drives (USB enclosure) want a low value; a fast NVMe can go higher — set each independently. -->
-                                <ItemsControl ItemsSource="{Binding DriveSegments}" IsVisible="{Binding ShowDriveProgress}" Margin="0,3,0,0">
-                                    <ItemsControl.ItemsPanel>
-                                        <ItemsPanelTemplate>
-                                            <WrapPanel Orientation="Horizontal" />
-                                        </ItemsPanelTemplate>
-                                    </ItemsControl.ItemsPanel>
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate x:DataType="vm:DriveProgressVM">
-                                            <Border Margin="0,0,8,3" Padding="5,1" CornerRadius="3" Background="#22FFFFFF">
-                                                <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Center">
-                                                    <Border Width="11" Height="11" CornerRadius="2" Background="{Binding Fill}" VerticalAlignment="Center" />
-                                                    <TextBlock Text="{Binding Root}" VerticalAlignment="Center" FontSize="11" />
-                                                    <ComboBox SelectedIndex="{Binding CapIndex}" FontSize="11" MinWidth="70" VerticalAlignment="Center">
-                                                        <ComboBoxItem Content="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.DriveCap.Auto]}" />
-                                                        <ComboBoxItem Content="1" />
-                                                        <ComboBoxItem Content="2" />
-                                                        <ComboBoxItem Content="3" />
-                                                        <ComboBoxItem Content="4" />
-                                                        <ComboBoxItem Content="6" />
-                                                        <ComboBoxItem Content="8" />
-                                                    </ComboBox>
-                                                </StackPanel>
-                                            </Border>
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
                                 <WrapPanel>
                                 <!-- Statistics -->
                                 <StackPanel Orientation="Horizontal"
@@ -1571,11 +1558,6 @@
                                                                    Maximum="100" Minimum="-1"
                                                                    ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.MaxDegreeOfParallelismTooltip]}"
                                                                    Value="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=MaxDegreeOfParallelism}" />
-                                                    <TextBlock Margin="0,4,0,0" Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.AdaptiveMaxPerDrive]}" />
-                                                    <NumericUpDown Width="200" HorizontalAlignment="Left"
-                                                                   Maximum="64" Minimum="0"
-                                                                   ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.AdaptiveMaxPerDriveTooltip]}"
-                                                                   Value="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=AdaptiveMaxPerDrive}" />
                                                     <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
                                                         <TextBlock VerticalAlignment="Center"
                                                                    Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.OnlySameFolderDuplicates]}"

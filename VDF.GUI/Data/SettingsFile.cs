@@ -194,11 +194,14 @@ namespace VDF.GUI.Data {
 			get => _AdaptiveConcurrency;
 			set => this.RaiseAndSetIfChanged(ref _AdaptiveConcurrency, value);
 		}
-		int _AdaptiveMaxPerDrive = 0;
-		[JsonPropertyName("AdaptiveMaxPerDrive")]
-		public int AdaptiveMaxPerDrive {
-			get => _AdaptiveMaxPerDrive;
-			set => this.RaiseAndSetIfChanged(ref _AdaptiveMaxPerDrive, value);
+		// Per-drive worker caps chosen from the status-bar dropdowns (root -> cap; absent = auto).
+		// Persisted so each drive's choice survives across scans and sessions; supersedes the old
+		// global AdaptiveMaxPerDrive setting.
+		Dictionary<string, int> _DriveParallelismCaps = new(StringComparer.OrdinalIgnoreCase);
+		[JsonPropertyName("DriveParallelismCaps")]
+		public Dictionary<string, int> DriveParallelismCaps {
+			get => _DriveParallelismCaps;
+			set => this.RaiseAndSetIfChanged(ref _DriveParallelismCaps, value ?? new(StringComparer.OrdinalIgnoreCase));
 		}
 		int _AdaptiveWindowSeconds = 120;
 		[JsonPropertyName("AdaptiveWindowSeconds")]
