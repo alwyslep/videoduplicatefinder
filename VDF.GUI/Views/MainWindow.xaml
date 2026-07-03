@@ -1705,56 +1705,60 @@
                                             <Border Background="{actipro:ThemeResource Container1BackgroundBrush}"
                                                     BorderBrush="{actipro:ThemeResource Container1BorderBrush}"
                                                     BorderThickness="1" CornerRadius="6" Padding="12">
-                                                <StackPanel Spacing="6">
-                                                    <TextBlock Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.Percent]}" />
-                                                    <NumericUpDown Width="200" HorizontalAlignment="Left" FormatString="\{0\}%"
-                                                                   Increment="0.1" Maximum="100" Minimum="1"
-                                                                   ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.PercentTooltip]}"
-                                                                   Value="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=Percent}" />
-                                                    <TextBlock Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.DurationDifference]}" />
-                                                    <NumericUpDown Width="200" HorizontalAlignment="Left" FormatString="\{0\}%"
-                                                                   Increment="0.1" Maximum="100" Minimum="0"
-                                                                   ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.DurationDifferenceTooltip]}"
-                                                                   Value="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=PercentDurationDifference}" />
-                                                    <TextBlock Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.DurationDifferenceMinSeconds]}" />
-                                                    <NumericUpDown Width="200" HorizontalAlignment="Left"
-                                                                   Increment="1" Maximum="3600" Minimum="0"
-                                                                   ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.DurationDifferenceMinSecondsTooltip]}"
-                                                                   Value="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=DurationDifferenceMinSeconds}" />
-                                                    <TextBlock Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.DurationDifferenceMaxSeconds]}" />
-                                                    <NumericUpDown Width="200" HorizontalAlignment="Left"
-                                                                   Increment="1" Maximum="86400" Minimum="0"
-                                                                   ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.DurationDifferenceMaxSecondsTooltip]}"
-                                                                   Value="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=DurationDifferenceMaxSeconds}" />
-                                                    <TextBlock Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.MaxSamplingDurationSeconds]}" />
-                                                    <NumericUpDown Width="200" HorizontalAlignment="Left"
-                                                                   Increment="1" Maximum="86400" Minimum="0"
-                                                                   ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.MaxSamplingDurationSecondsTooltip]}"
-                                                                   Value="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=MaxSamplingDurationSeconds}" />
-                                                    <TextBlock Margin="0,4,0,0" Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.Thumbnails]}" />
-                                                    <NumericUpDown Width="200" HorizontalAlignment="Left"
-                                                                   Maximum="100" Minimum="1"
-                                                                   ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.ThumbnailsTooltip]}"
-                                                                   ValueChanged="Thumbnails_ValueChanged"
-                                                                   Value="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=Thumbnails}" />
-                                                    <TextBlock Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.MaxDegreeOfParallelism]}" />
-                                                    <NumericUpDown Width="200" HorizontalAlignment="Left"
-                                                                   Maximum="100" Minimum="-1"
-                                                                   ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.MaxDegreeOfParallelismTooltip]}"
-                                                                   Value="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=MaxDegreeOfParallelism}" />
-                                                    <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
-                                                        <TextBlock VerticalAlignment="Center"
-                                                                   Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.OnlySameFolderDuplicates]}"
-                                                                   ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.OnlySameFolderDuplicatesTooltip]}" />
-                                                        <ComboBox VerticalAlignment="Center"
-                                                                  ItemsSource="{Binding FolderMatchModes}"
-                                                                  SelectedItem="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=FolderMatchMode}"
-                                                                  ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.OnlySameFolderDuplicatesTooltip]}" />
-                                                        <NumericUpDown Width="70" VerticalAlignment="Center" Increment="1" Maximum="20" Minimum="1"
-                                                                       IsEnabled="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=IsFolderMatchModeActive}"
-                                                                       Value="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=SameFolderDepth}" />
+                                                <Grid ColumnDefinitions="*,*" ColumnSpacing="16">
+                                                    <StackPanel Grid.Column="0" Spacing="6">
+                                                        <TextBlock Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.Percent]}" />
+                                                        <NumericUpDown Width="200" HorizontalAlignment="Left" FormatString="\{0\}%"
+                                                                       Increment="0.1" Maximum="100" Minimum="1"
+                                                                       ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.PercentTooltip]}"
+                                                                       Value="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=Percent}" />
+                                                        <TextBlock Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.DurationDifference]}" />
+                                                        <NumericUpDown Width="200" HorizontalAlignment="Left" FormatString="\{0\}%"
+                                                                       Increment="0.1" Maximum="100" Minimum="0"
+                                                                       ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.DurationDifferenceTooltip]}"
+                                                                       Value="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=PercentDurationDifference}" />
+                                                        <TextBlock Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.DurationDifferenceMinSeconds]}" />
+                                                        <NumericUpDown Width="200" HorizontalAlignment="Left"
+                                                                       Increment="1" Maximum="3600" Minimum="0"
+                                                                       ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.DurationDifferenceMinSecondsTooltip]}"
+                                                                       Value="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=DurationDifferenceMinSeconds}" />
+                                                        <TextBlock Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.DurationDifferenceMaxSeconds]}" />
+                                                        <NumericUpDown Width="200" HorizontalAlignment="Left"
+                                                                       Increment="1" Maximum="86400" Minimum="0"
+                                                                       ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.DurationDifferenceMaxSecondsTooltip]}"
+                                                                       Value="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=DurationDifferenceMaxSeconds}" />
                                                     </StackPanel>
-                                                </StackPanel>
+                                                    <StackPanel Grid.Column="1" Spacing="6">
+                                                        <TextBlock Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.MaxSamplingDurationSeconds]}" />
+                                                        <NumericUpDown Width="200" HorizontalAlignment="Left"
+                                                                       Increment="1" Maximum="86400" Minimum="0"
+                                                                       ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.MaxSamplingDurationSecondsTooltip]}"
+                                                                       Value="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=MaxSamplingDurationSeconds}" />
+                                                        <TextBlock Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.Thumbnails]}" />
+                                                        <NumericUpDown Width="200" HorizontalAlignment="Left"
+                                                                       Maximum="100" Minimum="1"
+                                                                       ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.ThumbnailsTooltip]}"
+                                                                       ValueChanged="Thumbnails_ValueChanged"
+                                                                       Value="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=Thumbnails}" />
+                                                        <TextBlock Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.MaxDegreeOfParallelism]}" />
+                                                        <NumericUpDown Width="200" HorizontalAlignment="Left"
+                                                                       Maximum="100" Minimum="-1"
+                                                                       ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.MaxDegreeOfParallelismTooltip]}"
+                                                                       Value="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=MaxDegreeOfParallelism}" />
+                                                        <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
+                                                            <TextBlock VerticalAlignment="Center"
+                                                                       Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.OnlySameFolderDuplicates]}"
+                                                                       ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.OnlySameFolderDuplicatesTooltip]}" />
+                                                            <ComboBox VerticalAlignment="Center"
+                                                                      ItemsSource="{Binding FolderMatchModes}"
+                                                                      SelectedItem="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=FolderMatchMode}"
+                                                                      ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.OnlySameFolderDuplicatesTooltip]}" />
+                                                            <NumericUpDown Width="70" VerticalAlignment="Center" Increment="1" Maximum="20" Minimum="1"
+                                                                           IsEnabled="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=IsFolderMatchModeActive}"
+                                                                           Value="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=SameFolderDepth}" />
+                                                        </StackPanel>
+                                                    </StackPanel>
+                                                </Grid>
                                             </Border>
 
                                             <!-- Options (2-column checkboxes) -->
