@@ -1232,6 +1232,25 @@ namespace VDF.Core {
 					if (!byDrive.TryGetValue(r, out var lst)) { lst = new List<FileEntry>(); byDrive[r] = lst; }
 					lst.Add(e);
 				}
+				// Order each drive's queue by on-disk position (first-extent LCN) so a spindle drive's
+				// head sweeps the platter once instead of seeking randomly between consecutive files —
+				// concurrent workers then also read from neighbouring regions. Database iteration order
+				// is effectively random, the worst case for a mechanical drive. Wasted-but-harmless on
+				// SSDs; skipped off-Windows (GetFirstLcn is constant there and the sort is stable).
+				if (OperatingSystem.IsWindows()) {
+					var lcnSw = System.Diagnostics.Stopwatch.StartNew();
+					foreach (var kv in byDrive) {
+						var keyed = new List<(long Key, FileEntry E)>(kv.Value.Count);
+						foreach (var e in kv.Value) {
+							if (cancelationTokenSource.IsCancellationRequested) break;
+							keyed.Add((LcnUtils.GetFirstLcn(e.Path), e));
+						}
+						if (keyed.Count != kv.Value.Count) break;   // cancelled mid-walk: keep original order
+						keyed.Sort((a, b) => a.Key.CompareTo(b.Key));
+						for (int i = 0; i < keyed.Count; i++) kv.Value[i] = keyed[i].E;
+					}
+					Logger.Instance.Info($"[lcn] ordered {byDrive.Sum(k => k.Value.Count):N0} entries on {byDrive.Count} drive(s) by on-disk position in {lcnSw.ElapsedMilliseconds:N0}ms");
+				}
 				// Adaptive path: each drive self-tunes its concurrency from live files/sec (global CPU-capped). Static
 				// per-device split is the fallback (AdaptiveConcurrency off, or DOP=1 which stays strictly serial).
 				if (Settings.AdaptiveConcurrency && Settings.MaxDegreeOfParallelism != 1 && byDrive.Count > 0) {
