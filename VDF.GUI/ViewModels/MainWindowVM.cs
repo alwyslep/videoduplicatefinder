@@ -184,20 +184,14 @@ namespace VDF.GUI.ViewModels {
 			get => _BusyHeadingText;
 			set => this.RaiseAndSetIfChanged(ref _BusyHeadingText, value);
 		}
-		// Pause is two-phase: "pausing…" while in-flight files drain to 100%, then "paused" once the
-		// last worker parks (detected when a progress snapshot arrives with zero active rows). The
-		// overlay bar shows the real drain fraction — initial in-flight count → 0 — during phase one.
+		// Pause is two-phase: "pausing…" while in-flight files drain to 100% (overlay bar keeps
+		// sweeping, in orange, like Stop's drain), then "paused" with a static bar once the last
+		// worker parks — detected when a progress snapshot arrives with zero active rows.
 		bool _IsPauseDraining;
 		public bool IsPauseDraining {
 			get => _IsPauseDraining;
 			set => this.RaiseAndSetIfChanged(ref _IsPauseDraining, value);
 		}
-		double _PauseDrainProgress;
-		public double PauseDrainProgress {
-			get => _PauseDrainProgress;
-			set => this.RaiseAndSetIfChanged(ref _PauseDrainProgress, value);
-		}
-		int pauseDrainInitialActive;
 		bool _IsReadyToCompare;
 		public bool IsReadyToCompare {
 			get => _IsReadyToCompare;
@@ -677,15 +671,11 @@ namespace VDF.GUI.ViewModels {
 				ScanProgressMaxValue = e.MaxPosition;
 				UpdateDriveSegments(e.Drives);
 				if (IsPauseDraining) {
-					// Each parking worker fires an unthrottled snapshot, so the drain is tracked in
-					// real time; the last snapshot carries zero active rows → safely parked.
+					// Each parking worker fires an unthrottled snapshot; the last one carries zero
+					// active rows → everything safely parked, switch "pausing…" to "paused".
 					int active = e.Drives?.Sum(d => d.ActiveFiles?.Length ?? 0) ?? 0;
-					if (active > pauseDrainInitialActive) pauseDrainInitialActive = active;
-					PauseDrainProgress = pauseDrainInitialActive > 0
-						? (double)(pauseDrainInitialActive - active) / pauseDrainInitialActive : 1;
 					if (active == 0 && IsPaused) {
 						IsPauseDraining = false;
-						PauseDrainProgress = 1;
 						BusyHeadingText = App.Lang["Busy.Paused.Title"];
 						IsBusyOverlayText = App.Lang["Busy.Paused.Detail"];
 					}
@@ -1719,18 +1709,15 @@ Non-Windows setup:
 		public ReactiveCommand<Unit, Unit> PauseScanCommand => ReactiveCommand.Create(() => {
 			Scanner.Pause();
 			IsPaused = true;
-			// In-flight files keep running to 100% — show "pausing…" with a drain bar until the
-			// last one finishes; Scanner_Progress flips to "paused" when active rows reach zero.
-			pauseDrainInitialActive = DriveSegments.Sum(s => s.ActiveFileLines.Count);
-			if (pauseDrainInitialActive > 0) {
+			// In-flight files keep running to 100% — show "pausing…" until the last one finishes;
+			// Scanner_Progress flips to "paused" when active rows reach zero.
+			if (DriveSegments.Sum(s => s.ActiveFileLines.Count) > 0) {
 				IsPauseDraining = true;
-				PauseDrainProgress = 0;
 				BusyHeadingText = App.Lang["Busy.Pausing.Title"];
 				IsBusyOverlayText = App.Lang["Busy.Pausing.Detail"];
 			}
 			else {
 				IsPauseDraining = false;
-				PauseDrainProgress = 1;
 				BusyHeadingText = App.Lang["Busy.Paused.Title"];
 				IsBusyOverlayText = App.Lang["Busy.Paused.Detail"];
 			}
