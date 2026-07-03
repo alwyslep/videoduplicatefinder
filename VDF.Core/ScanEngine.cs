@@ -109,7 +109,7 @@ namespace VDF.Core {
 		// concurrent workers on the same drive each get their own stable slot instead of stomping a single
 		// last-writer-wins field — this is what lets the UI show N rows for N active workers.
 		sealed class ActiveFileState { public string Path = ""; public string? Stage; public int StageCur; public int StageMax; }
-		sealed class DriveCounter { public long TotalBytes; public int TotalFiles; public long DoneBytes; public int DoneFiles; public double Rate; public int Concurrency; public int CapOverride; public readonly ConcurrentDictionary<int, ActiveFileState> Active = new(); }
+		sealed class DriveCounter { public long TotalBytes; public int TotalFiles; public long DoneBytes; public int DoneFiles; public double Rate; public int CapOverride; public readonly ConcurrentDictionary<int, ActiveFileState> Active = new(); }
 		Dictionary<string, DriveCounter>? driveCounters;
 		string[]? driveOrder;
 		// Live per-drive parallelism override chosen from the status-bar dropdown (0 = auto). RunDriveAdaptive's
@@ -151,7 +151,13 @@ namespace VDF.Core {
 					active[j++] = new DriveActiveFile { File = s.Path, Stage = s.Stage, StageCurrent = s.StageCur, StageMax = s.StageMax };
 				}
 				if (j < active.Length) Array.Resize(ref active, j);
-				arr[i] = new DriveProgress { Root = order[i], TotalBytes = c.TotalBytes, DoneBytes = c.DoneBytes, TotalFiles = c.TotalFiles, DoneFiles = c.DoneFiles, FilesPerSec = c.Rate, Concurrency = c.Concurrency, ActiveFiles = active };
+				// Concurrency shown to the user IS active.Length (the same data backing the "now processing"
+				// rows below it), not the controller's internal target/ceiling bookkeeping — a lowered cap
+				// only stops NEW workers from starting (already-in-flight ones finish safely, per spec), so
+				// the two numbers can legitimately differ for a while during the drain; showing the live
+				// count instead of the target keeps the label truthful throughout that transition instead of
+				// silently claiming "1" while several rows are still visibly active underneath it.
+				arr[i] = new DriveProgress { Root = order[i], TotalBytes = c.TotalBytes, DoneBytes = c.DoneBytes, TotalFiles = c.TotalFiles, DoneFiles = c.DoneFiles, FilesPerSec = c.Rate, Concurrency = active.Length, ActiveFiles = active };
 			}
 			return arr;
 		}
@@ -980,15 +986,13 @@ namespace VDF.Core {
 						if (target > explicitTarget) throttle.Shrink(target - explicitTarget);
 						else if (target < explicitTarget) throttle.Grow(explicitTarget - target);
 						target = explicitTarget;
-						if (dcNow != null && dcNow.TryGetValue(root, out var __rcOv)) __rcOv.Concurrency = target;
 						prev = -1; before = System.Threading.Interlocked.Read(ref done); elapsed = 0;   // fresh baseline for when Auto resumes
 						continue;
 					}
 
 					int ceiling = FairCeiling();
 					// Live cap: fair-share ceiling dropped (another drive started) -> shed workers now, don't wait a window.
-					bool shed = false;
-					if (target > ceiling) { throttle.Shrink(target - ceiling); target = ceiling; shed = true; }
+					if (target > ceiling) { throttle.Shrink(target - ceiling); target = ceiling; }
 					elapsed += tick;
 					if (elapsed + 1e-9 >= windowSec) {
 						long after = System.Threading.Interlocked.Read(ref done);
@@ -1001,11 +1005,10 @@ namespace VDF.Core {
 						if (target < newTarget) throttle.Grow(newTarget - target);
 						else if (target > newTarget) throttle.Shrink(target - newTarget);
 						target = newTarget;
-						if (driveCounters != null && driveCounters.TryGetValue(root, out var __rc)) { __rc.Rate = rate; __rc.Concurrency = target; }
+						if (driveCounters != null && driveCounters.TryGetValue(root, out var __rc)) __rc.Rate = rate;
 						Logger.Instance.Info($"[adaptive] {root}: {rate:0.000} files/s -> concurrency {target}/{ceiling} (active drives {System.Threading.Volatile.Read(ref activeDrives[0])})");
 						prev = rate; before = after; elapsed = 0;
 					}
-					else if (shed && driveCounters != null && driveCounters.TryGetValue(root, out var __rc2)) { __rc2.Concurrency = target; }
 				}
 			}, driveCts.Token);
 			try { await Task.WhenAll(workers).ConfigureAwait(false); }
