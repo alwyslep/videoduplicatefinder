@@ -145,15 +145,18 @@ namespace VDF.Core {
 				if (!groups.TryGetValue(root, out var dc)) { dc = new DriveCounter(); groups[root] = dc; }
 				dc.TotalBytes += e.FileSize; dc.TotalFiles++;
 				// Audio-fingerprint inventory: cumulative DB state (not this scan's progress), so the
-				// user can see coverage grow across interrupted scans. Target = entries a fingerprint
-				// can still be computed for; permanently flagged ones (no/silent audio, past decode
-				// error) are excluded from both sides.
-				if (Settings.EnablePartialClipDetection && !e.IsImage &&
-					!e.Flags.Has(EntryFlags.NoAudioTrack) &&
-					!e.Flags.Has(EntryFlags.AudioFingerprintError) &&
-					!e.Flags.Has(EntryFlags.SilentAudioTrack)) {
-					dc.FingerprintTarget++;
-					if (e.AudioFingerprint != null) dc.Fingerprinted++;
+				// user can see coverage grow across interrupted scans. RAW holdings by user request:
+				// N counts every entry carrying a fingerprint (flags included), M = N plus the ones a
+				// fingerprint can still be computed for — N==M exactly when nothing computable remains.
+				if (Settings.EnablePartialClipDetection && !e.IsImage) {
+					if (e.AudioFingerprint != null) {
+						dc.Fingerprinted++;
+						dc.FingerprintTarget++;
+					}
+					else if (!e.Flags.Has(EntryFlags.NoAudioTrack) &&
+							 !e.Flags.Has(EntryFlags.AudioFingerprintError) &&
+							 !e.Flags.Has(EntryFlags.SilentAudioTrack))
+						dc.FingerprintTarget++;
 				}
 			}
 			// Seed saved per-drive caps BEFORE any worker launches, so a capped drive starts AT its cap.
