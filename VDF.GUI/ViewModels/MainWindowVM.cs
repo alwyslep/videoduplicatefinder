@@ -202,6 +202,9 @@ namespace VDF.GUI.ViewModels {
 			get => _IsPauseDraining;
 			set => this.RaiseAndSetIfChanged(ref _IsPauseDraining, value);
 		}
+		// True while a phase-level stage (e.g. "disk layout ordering") has replaced the overlay
+		// quip — the phase's closing push restores the quip exactly once.
+		bool overlayStageActive;
 		bool _IsReadyToCompare;
 		public bool IsReadyToCompare {
 			get => _IsReadyToCompare;
@@ -680,6 +683,25 @@ namespace VDF.GUI.ViewModels {
 				TimeElapsed = e.Elapsed.Format();
 				ScanProgressMaxValue = e.MaxPosition;
 				UpdateDriveSegments(e.Drives);
+				// Phase-level pushes (stage set, no file payload) take over the busy overlay's
+				// subtitle: a blocking phase like "disk layout ordering" is otherwise visible only
+				// in the per-drive rows at the bottom, and with the centre of the window still
+				// showing a random quip the app reads as frozen. While the phase is active its
+				// per-file events update the subtitle with live N/M; the phase's closing empty
+				// push restores the quip. Pause/stop texts own the overlay, hence the guard.
+				if (!IsPaused && !IsPauseDraining) {
+					if (string.IsNullOrEmpty(e.CurrentFile)) {
+						if (!string.IsNullOrEmpty(e.CurrentStage)) overlayStageActive = true;
+						else if (overlayStageActive) {
+							overlayStageActive = false;
+							ChangeIsBusyMessage();
+						}
+					}
+					if (overlayStageActive && !string.IsNullOrEmpty(e.CurrentStage))
+						IsBusyOverlayText = e.StageMax > 0
+							? $"{e.CurrentStage}  {e.StageCurrent:N0}/{e.StageMax:N0}"
+							: $"{e.CurrentStage}…";
+				}
 				if (IsPauseDraining) {
 					// Each parking worker fires an unthrottled snapshot; the last one carries zero
 					// active rows → everything safely parked, switch "pausing…" to "paused".
