@@ -73,6 +73,9 @@ namespace VDF.GUI.ViewModels {
 					}
 					foreach (var n in _directoryTreeRoots!)
 						n.RefreshState();
+					// Unscanned counts exclude blacklisted subtrees, so ancestors must recount.
+					foreach (var n in _directoryTreeRoots!)
+						n.RefreshStatsRecursive();
 				};
 				return _directoryTreeRoots;
 			}
@@ -290,13 +293,19 @@ namespace VDF.GUI.ViewModels {
 
 		// ── size + unscanned count (background) ─────────────────────────────────────────────────────
 		async void ComputeFolderStats() {
+			// Snapshot scan-relevant settings on the UI thread — WalkFolder runs on a worker and
+			// must not enumerate the live Blacklists ObservableCollection mid-mutation.
+			(bool includeImages, bool recurse, string[] blacklist) cfg = (
+				SettingsFile.Instance.IncludeImages,
+				SettingsFile.Instance.IncludeSubDirectories,
+				SettingsFile.Instance.Blacklists.Select(VDF.Core.ScanEngine.NormalizePathEntry).ToArray());
 			(long size, int missing) result = (0, 0);
 			try {
 				if (DbIndexTask != null)
 					await DbIndexTask.ConfigureAwait(false);
 				await WalkGate.WaitAsync().ConfigureAwait(false);
 				try {
-					result = await Task.Run(() => WalkFolder(Path)).ConfigureAwait(false);
+					result = await Task.Run(() => WalkFolder(Path, cfg)).ConfigureAwait(false);
 				}
 				finally {
 					WalkGate.Release();
@@ -337,12 +346,16 @@ namespace VDF.GUI.ViewModels {
 					c.RefreshStatsRecursive();
 		}
 
-		static (long size, int missing) WalkFolder(string path) {
+		// Size is the physical folder size (every file, always recursive). The "unscanned" count is
+		// what stage 1 (file-list building) would actually register if this folder were scanned with
+		// the CURRENT settings: video-only unless 'Include images' is on, top level only unless
+		// 'Include subdirectories' is on, and blacklisted subtrees pruned — so the badge matches the
+		// scan instead of over-counting.
+		static (long size, int missing) WalkFolder(string path, (bool includeImages, bool recurse, string[] blacklist) cfg) {
 			long size = 0;
 			int missing = 0;
 			try {
 				var opts = new EnumerationOptions {
-					RecurseSubdirectories = true,
 					IgnoreInaccessible = true,
 					// Skip Hidden|System (EnumerationOptions' own default, which is lost once AttributesToSkip
 					// is set) so $RECYCLE.BIN / System Volume Information don't count deleted files as
@@ -350,10 +363,27 @@ namespace VDF.GUI.ViewModels {
 					AttributesToSkip = FileAttributes.Hidden | FileAttributes.System | FileAttributes.ReparsePoint
 				};
 				var db = _dbPaths;
-				foreach (var fi in new DirectoryInfo(path).EnumerateFiles("*", opts)) {
-					size += fi.Length;
-					if (db != null && FileUtils.IsMediaExtension(System.IO.Path.GetExtension(fi.Name)) && !db.Contains(fi.FullName))
-						missing++;
+				// countable = stage 1 would visit this directory (recursion on and not excluded).
+				var queue = new Queue<(DirectoryInfo dir, bool countable)>();
+				queue.Enqueue((new DirectoryInfo(path), true));
+				while (queue.Count > 0) {
+					var (dir, countable) = queue.Dequeue();
+					try {
+						foreach (var fi in dir.EnumerateFiles("*", opts)) {
+							size += fi.Length;
+							if (!countable || db == null || db.Contains(fi.FullName))
+								continue;
+							string ext = System.IO.Path.GetExtension(fi.Name);
+							if (cfg.includeImages ? FileUtils.IsMediaExtension(ext) : FileUtils.IsVideoExtension(ext))
+								missing++;
+						}
+						foreach (var sub in dir.EnumerateDirectories("*", opts)) {
+							bool subCountable = countable && cfg.recurse &&
+								!cfg.blacklist.Any(b => VDF.Core.ScanEngine.IsBlackListed(sub.FullName, b));
+							queue.Enqueue((sub, subCountable));
+						}
+					}
+					catch { /* access denied mid-walk: skip this directory */ }
 				}
 			}
 			catch { /* best-effort */ }

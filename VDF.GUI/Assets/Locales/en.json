@@ -291,7 +291,7 @@
 	"MainWindow.Settings.ThumbnailMaxWidth": "Preview thumbnail width (px)",
 	"MainWindow.Settings.ThumbnailMaxWidthTooltip": "Width of the preview thumbnails shown in the results list. Display size only — does not affect detection accuracy.",
 	"MainWindow.Settings.DirectorySelection": "Directory selection",
-	"MainWindow.Settings.DirectorySelectionHint": "Tick folders in the tree to add/remove them from the scan. Green = included, amber = partially included. Each folder shows its size and how many files aren't in the database yet. Unticking a folder clears its whole subtree. If 'Include subdirectories' (Settings → Scanning) is on, subfolders of a ticked folder are scanned too. Drag a folder onto the exclude list on the right to exclude it; excluded folders are hidden from the tree (remove the entry to bring them back).",
+	"MainWindow.Settings.DirectorySelectionHint": "Tick folders in the tree to add/remove them from the scan. Green = included, amber = partially included. Each folder shows its size and an unscanned count — the files that file-list building would newly register under the current scan settings. Unticking a folder clears its whole subtree. If 'Include subdirectories' (Settings → Scanning) is on, subfolders of a ticked folder are scanned too. Drag a folder onto the exclude list on the right to exclude it; excluded folders are hidden from the tree (remove the entry to bring them back).",
 	"MainWindow.Settings.PartiallyIncluded": "(partially included)",
 	"MainWindow.Settings.Processing": "Processing",
 	"MainWindow.Settings.MiscHint": "Hint: Mouse hover options to get more information about them",
