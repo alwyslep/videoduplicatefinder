@@ -52,13 +52,6 @@ namespace VDF.GUI.ViewModels {
 			get => _ShowDriveProgress;
 			set => this.RaiseAndSetIfChanged(ref _ShowDriveProgress, value);
 		}
-		// True while at least one drive has a "now processing" row; swaps the single current-file
-		// text for the per-drive rows and back (compare phases have no drives, so it drops out there).
-		bool _ShowPerDriveFiles;
-		public bool ShowPerDriveFiles {
-			get => _ShowPerDriveFiles;
-			set => this.RaiseAndSetIfChanged(ref _ShowPerDriveFiles, value);
-		}
 		static readonly IBrush[] _drivePalette = {
 			new SolidColorBrush(Color.Parse("#4FC3F7")), new SolidColorBrush(Color.Parse("#81C784")),
 			new SolidColorBrush(Color.Parse("#FFB74D")), new SolidColorBrush(Color.Parse("#BA68C8")),
@@ -69,9 +62,9 @@ namespace VDF.GUI.ViewModels {
 		// Rebuild segments only when the drive set changes; otherwise just refresh each fraction/label.
 		void UpdateDriveSegments(DriveProgress[]? drives) {
 			// Compare phases run with driveCounters nulled (InitProgress), so their Progress events carry
-			// no drives at all — drop the per-drive rows so the single ScanProgressText (gated on
-			// !ShowPerDriveFiles) can show the live "comparing X/Y" text instead of a stale gather-phase state.
-			if (drives == null || drives.Length == 0) { ShowPerDriveFiles = false; return; }
+			// no drives at all — hide the whole per-drive block so the single ScanProgressText (gated on
+			// !ShowDriveProgress) can show the live "comparing X/Y" text instead of a stale gather-phase state.
+			if (drives == null || drives.Length == 0) { ShowDriveProgress = false; return; }
 			bool sameSet = DriveSegments.Count == drives.Length;
 			if (sameSet)
 				for (int i = 0; i < drives.Length; i++)
@@ -91,23 +84,23 @@ namespace VDF.GUI.ViewModels {
 				if (SettingsFile.Instance.DriveParallelismCaps.TryGetValue(drives[i].Root, out var savedCap) && savedCap > 0)
 					DriveSegments[i].CapIndex = DriveProgressVM.CapIndexFor(savedCap);
 			}
-			bool anyCurrent = false;
 			for (int i = 0; i < drives.Length; i++) {
 				var d = drives[i];
 				var seg = DriveSegments[i];
 				seg.Fraction = d.TotalBytes > 0 ? (double)d.DoneBytes / d.TotalBytes : 0;
 				seg.Label = $"{d.Root}  {seg.Fraction * 100:0}%  {d.DoneFiles:N0}/{d.TotalFiles:N0}" + (d.Concurrency > 0 ? $"  ·  {d.FilesPerSec:0.0} f/s  ·  x{d.Concurrency}" : "");
-				string cft = string.Empty;
-				if (!string.IsNullOrEmpty(d.CurrentFile)) {
-					cft = d.CurrentFile!;
-					if (!string.IsNullOrEmpty(d.CurrentStage))
-						cft += d.StageMax > 0 ? $"  [{d.CurrentStage} {d.StageCurrent}/{d.StageMax}]" : $"  [{d.CurrentStage}]";
-					anyCurrent = true;
-				}
-				seg.CurrentFileText = cft;
+				// One line per worker currently active on this drive — the collection's length IS the
+				// live concurrency shown to the user, so 2+ workers naturally render 2+ lines.
+				seg.ActiveFileLines.Clear();
+				if (d.ActiveFiles != null)
+					foreach (var af in d.ActiveFiles) {
+						string line = af.File;
+						if (!string.IsNullOrEmpty(af.Stage))
+							line += af.StageMax > 0 ? $"  [{af.Stage} {af.StageCurrent}/{af.StageMax}]" : $"  [{af.Stage}]";
+						seg.ActiveFileLines.Add(line);
+					}
 			}
 			ShowDriveProgress = true;
-			ShowPerDriveFiles = anyCurrent;
 		}
 		public ObservableCollection<string> LogItems { get; } = new();
 		List<HashSet<string>> GroupBlacklist = new();
@@ -543,7 +536,6 @@ namespace VDF.GUI.ViewModels {
 			ShowThumbnailRetrievalProgressBar = false;
 			DriveSegments.Clear();
 			ShowDriveProgress = false;
-			ShowPerDriveFiles = false;
 #pragma warning disable CS4014
 			if (SettingsFile.Instance.BackupAfterListChanged)
 				ExportScanResults(BackupScanResultsFile);
@@ -690,7 +682,6 @@ namespace VDF.GUI.ViewModels {
 				RemainingTime = TimeSpan.Zero.Format();
 				ScanProgressValue = 0;
 				ShowDriveProgress = false;
-				ShowPerDriveFiles = false;
 				RefreshDirectoryTree();   // directory-selection tab: DB changed, refresh unscanned counts
 			});
 
@@ -705,7 +696,6 @@ namespace VDF.GUI.ViewModels {
 				ScanProgressValue = 0;
 				RefreshDirectoryTree();   // directory-selection tab: DB changed, refresh unscanned counts
 				ShowDriveProgress = false;
-				ShowPerDriveFiles = false;
 				var completedScheduledScan = scheduledScanInProgress;
 				scheduledScanInProgress = false;
 				stageOnlyRunInProgress = false;

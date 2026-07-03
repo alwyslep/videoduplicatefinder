@@ -45,10 +45,16 @@ namespace VDF.Core {
 		public double FilesPerSec;
 		/// <summary>Adaptive controller's current worker concurrency for this drive (0 in static mode).</summary>
 		public int Concurrency;
-		/// <summary>Last file a worker touched on this drive (null when the drive is idle or finished).</summary>
-		public string? CurrentFile;
-		/// <summary>Sub-stage of CurrentFile (e.g. "audio fingerprint"); null/empty when untracked.</summary>
-		public string? CurrentStage;
+		/// <summary>One row per worker currently mid-file on this drive — length tracks live concurrency,
+		/// so a drive running N workers shows N rows. Empty when the drive is idle or finished.</summary>
+		public DriveActiveFile[]? ActiveFiles;
+	}
+
+	/// <summary>One worker's in-progress file on a drive, for a per-drive "now processing" row.</summary>
+	public struct DriveActiveFile {
+		public string File;
+		/// <summary>Sub-stage of File (e.g. "audio fingerprint"); null/empty when untracked.</summary>
+		public string? Stage;
 		public int StageCurrent;
 		public int StageMax;
 	}

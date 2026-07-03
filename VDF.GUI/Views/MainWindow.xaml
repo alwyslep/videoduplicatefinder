@@ -1276,27 +1276,26 @@
                                 </Grid>
                             </Grid>
                             <StackPanel Grid.Row="2" Margin="0,2,0,0">
-                                <!-- Per-drive segmented scan progress: one colour per drive, each segment's width proportional to that drive's total bytes, spanning the window width; "|" dividers between drives. -->
-                                <Border IsVisible="{Binding ShowDriveProgress}"
-                                    Margin="0,0,0,3"
-                                    BorderBrush="{actipro:ThemeResource ButtonForegroundBrush}"
-                                    BorderThickness="0,0,1,0">
-                                    <ItemsControl ItemsSource="{Binding DriveSegments}" Height="20" HorizontalAlignment="Stretch">
-                                        <ItemsControl.ItemsPanel>
-                                            <ItemsPanelTemplate>
-                                                <local:WeightedStackPanel />
-                                            </ItemsPanelTemplate>
-                                        </ItemsControl.ItemsPanel>
-                                        <ItemsControl.ItemTemplate>
-                                            <DataTemplate x:DataType="vm:DriveProgressVM">
+                                <!-- Per-drive scan progress, one row per drive: full-width bar (root/%/files/f-per-sec/
+                                     concurrency label + embedded worker-cap dropdown) with that drive's own dynamic
+                                     multi-line "now processing" list directly beneath it — line count adapts live to
+                                     that drive's concurrency (N workers -> N lines), not shared across drives. -->
+                                <ItemsControl ItemsSource="{Binding DriveSegments}" IsVisible="{Binding ShowDriveProgress}" Margin="0,0,0,3">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <StackPanel Orientation="Vertical" />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:DriveProgressVM">
+                                            <StackPanel Orientation="Vertical" Margin="0,0,0,2">
                                                 <Border BorderBrush="{actipro:ThemeResource ButtonForegroundBrush}"
-                                                    BorderThickness="1,0,0,0"
+                                                    BorderThickness="0,0,0,1"
                                                     ClipToBounds="True"
-                                                    ToolTip.Tip="{Binding Label}"
-                                                    local:WeightedStackPanel.Weight="{Binding Weight}">
+                                                    ToolTip.Tip="{Binding Label}">
                                                     <Grid>
                                                         <ProgressBar Minimum="0" Maximum="1" Value="{Binding Fraction}"
-                                                            Foreground="{Binding Fill}" Height="20" MinWidth="0" />
+                                                            Foreground="{Binding Fill}" Height="20" MinWidth="0" HorizontalAlignment="Stretch" />
                                                         <!-- Always-visible per-drive label directly on the bar (root, %, files, files/sec, concurrency):
                                                              white bold text with a black halo (DropShadowEffect, no offset) so it stays readable over
                                                              both the coloured fill and the dark empty area — no backing box, bar colour stays visible. -->
@@ -1317,8 +1316,7 @@
                                                                 </TextBlock.Effect>
                                                             </TextBlock>
                                                         </Panel>
-                                                        <!-- Ultra-narrow per-drive worker-cap dropdown, embedded in the segment itself
-                                                             (A = auto, else a hard cap). Replaces the old second-row dropdown strip. -->
+                                                        <!-- Ultra-narrow per-drive worker-cap dropdown, embedded in the bar itself (A = auto, else a hard cap). -->
                                                         <ComboBox SelectedIndex="{Binding CapIndex}" HorizontalAlignment="Right" VerticalAlignment="Center"
                                                             FontSize="10" MinWidth="0" Width="38" Height="20" MinHeight="0" Padding="5,0,0,0"
                                                             Background="#66000000" BorderThickness="0"
@@ -1333,10 +1331,18 @@
                                                         </ComboBox>
                                                     </Grid>
                                                 </Border>
-                                            </DataTemplate>
-                                        </ItemsControl.ItemTemplate>
-                                    </ItemsControl>
-                                </Border>
+                                                <!-- This drive's own "now processing" lines — row count follows its live concurrency. -->
+                                                <ItemsControl ItemsSource="{Binding ActiveFileLines}" Margin="10,1,0,1">
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate x:DataType="x:String">
+                                                            <TextBlock FontSize="11" Text="{Binding}" TextTrimming="CharacterEllipsis" />
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
                                 <WrapPanel>
                                 <!-- Statistics -->
                                 <StackPanel Orientation="Horizontal"
@@ -1403,25 +1409,12 @@
                                         <Run Text="{Binding RemainingTime, Mode=OneWay}" />
                                     </TextBlock>
                                     <Border Width="1" Margin="3,2" Background="{actipro:ThemeResource ButtonForegroundBrush}" />
-                                    <!-- Single current-file text: compare phases etc. Hidden while the per-drive rows below carry the same info. -->
+                                    <!-- Single current-file text: compare phases etc. Hidden while the per-drive block above carries the same info. -->
                                     <TextBlock FontSize="12" Margin="2,0" Text="{Binding ScanProgressText, Mode=OneWay}"
-                                        IsVisible="{Binding !ShowPerDriveFiles}"
+                                        IsVisible="{Binding !ShowDriveProgress}"
                                         TextTrimming="CharacterEllipsis" MaxWidth="500" />
                                 </StackPanel>
                             </WrapPanel>
-                            <!-- Per-drive "now processing" rows: one line per drive actively reading a file.
-                                 Row count follows the active drives (a finished/idle drive's row disappears). -->
-                            <ItemsControl ItemsSource="{Binding DriveSegments}" IsVisible="{Binding ShowPerDriveFiles}" Margin="0,2,0,0">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate x:DataType="vm:DriveProgressVM">
-                                        <StackPanel Orientation="Horizontal" Spacing="5"
-                                            IsVisible="{Binding CurrentFileText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
-                                            <Border Width="9" Height="9" CornerRadius="2" Background="{Binding Fill}" VerticalAlignment="Center" />
-                                            <TextBlock FontSize="11" Text="{Binding CurrentFileText}" TextTrimming="CharacterEllipsis" />
-                                        </StackPanel>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
                             </StackPanel>
                             <Grid
                                 x:Name="BusyIndicator"

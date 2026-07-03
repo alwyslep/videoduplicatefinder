@@ -105,22 +105,27 @@ namespace VDF.Core {
 		// ── Per-drive scan progress (segmented status bar) ──
 		// Built once at GatherInfos start (file-reading phase); left null during compare phases so their
 		// IncrementProgress calls don't touch it. DoneBytes/DoneFiles mutate via Interlocked (parallel loop).
-		sealed class DriveCounter { public long TotalBytes; public int TotalFiles; public long DoneBytes; public int DoneFiles; public double Rate; public int Concurrency; public int CapOverride; public string? CurrentFile; public string? CurrentStage; public int StageCur; public int StageMax; }
+		// One worker's in-progress file on a drive. Keyed by managed thread id in DriveCounter.Active so
+		// concurrent workers on the same drive each get their own stable slot instead of stomping a single
+		// last-writer-wins field — this is what lets the UI show N rows for N active workers.
+		sealed class ActiveFileState { public string Path = ""; public string? Stage; public int StageCur; public int StageMax; }
+		sealed class DriveCounter { public long TotalBytes; public int TotalFiles; public long DoneBytes; public int DoneFiles; public double Rate; public int Concurrency; public int CapOverride; public readonly ConcurrentDictionary<int, ActiveFileState> Active = new(); }
 		Dictionary<string, DriveCounter>? driveCounters;
 		string[]? driveOrder;
 		// Live per-drive parallelism override chosen from the status-bar dropdown (0 = auto). RunDriveAdaptive's
-		// FairCeiling reads it each ~3s control tick, so a change applies within seconds. No-op if that drive isn't scanning.
+		// control loop reads it each ~3s tick and applies it directly (bypassing AIMD), so a change applies
+		// within seconds in either direction. No-op if that drive isn't scanning.
 		public void SetDriveCap(string root, int cap) {
 			var dc = driveCounters;
 			if (dc != null && dc.TryGetValue(root, out var c)) c.CapOverride = System.Math.Max(0, cap);
 		}
 		static string DriveRootOf(string path) { try { return System.IO.Path.GetPathRoot(path) ?? "?"; } catch { return "?"; } }
-		// Last file a worker touched on this drive (+ optional sub-stage), for the per-drive "now processing"
-		// status rows. Racy last-writer-wins across that drive's workers — it's a display label, not accounting.
+		// Records the calling worker's in-progress file (+ optional sub-stage) under its own thread-id slot.
 		void SetDriveCurrent(string path, string? stage = null, int stageCurrent = 0, int stageMax = 0) {
 			var dc = driveCounters;
 			if (dc == null || !dc.TryGetValue(DriveRootOf(path), out var c)) return;
-			c.CurrentFile = path; c.CurrentStage = stage; c.StageCur = stageCurrent; c.StageMax = stageMax;
+			var slot = c.Active.GetOrAdd(Environment.CurrentManagedThreadId, static _ => new ActiveFileState());
+			slot.Path = path; slot.Stage = stage; slot.StageCur = stageCurrent; slot.StageMax = stageMax;
 		}
 		void BuildDriveCounters() {
 			var groups = new Dictionary<string, DriveCounter>(StringComparer.OrdinalIgnoreCase);
@@ -138,9 +143,15 @@ namespace VDF.Core {
 			var arr = new DriveProgress[order.Length];
 			for (int i = 0; i < order.Length; i++) {
 				var c = dc[order[i]];
-				bool working = c.DoneFiles < c.TotalFiles;   // a finished drive shows no "now processing" row
-				arr[i] = new DriveProgress { Root = order[i], TotalBytes = c.TotalBytes, DoneBytes = c.DoneBytes, TotalFiles = c.TotalFiles, DoneFiles = c.DoneFiles, FilesPerSec = c.Rate, Concurrency = c.Concurrency,
-					CurrentFile = working ? c.CurrentFile : null, CurrentStage = working ? c.CurrentStage : null, StageCurrent = c.StageCur, StageMax = c.StageMax };
+				var active = new DriveActiveFile[c.Active.Count];
+				int j = 0;
+				foreach (var kv in c.Active) {
+					if (j >= active.Length) break;   // dictionary can grow between Count and enumeration; guard the copy
+					var s = kv.Value;
+					active[j++] = new DriveActiveFile { File = s.Path, Stage = s.Stage, StageCurrent = s.StageCur, StageMax = s.StageMax };
+				}
+				if (j < active.Length) Array.Resize(ref active, j);
+				arr[i] = new DriveProgress { Root = order[i], TotalBytes = c.TotalBytes, DoneBytes = c.DoneBytes, TotalFiles = c.TotalFiles, DoneFiles = c.DoneFiles, FilesPerSec = c.Rate, Concurrency = c.Concurrency, ActiveFiles = active };
 			}
 			return arr;
 		}
@@ -231,7 +242,9 @@ namespace VDF.Core {
 				if (__dc != null && __dc.TryGetValue(DriveRootOf(path), out var __c)) {
 					System.Threading.Interlocked.Add(ref __c.DoneBytes, fileSize);
 					System.Threading.Interlocked.Increment(ref __c.DoneFiles);
-					if (string.Equals(__c.CurrentFile, path, StringComparison.Ordinal)) { __c.CurrentFile = null; __c.CurrentStage = null; }
+					// This thread is done with its current file on this drive; a no-op if it never had a slot
+					// (e.g. a cached/skipped entry that returned before SetDriveCurrent was called).
+					__c.Active.TryRemove(Environment.CurrentManagedThreadId, out _);
 				}
 			}
 			// Periodic per-drive progress line so files/sec per drive can be read off the log (measurement/telemetry).
@@ -919,7 +932,11 @@ namespace VDF.Core {
 			long done = 0;
 			int startC = Math.Max(1, Math.Min(FairCeiling(), 4));
 			int target = startC;
-			using var throttle = new System.Threading.SemaphoreSlim(startC, poolSize);
+			// AdaptiveThrottle (not a raw SemaphoreSlim): shrinking under CONTINUOUS full load can't steal
+			// an idle permit (there never is one — each worker immediately re-acquires the permit it just
+			// released for its next file), so a lowered cap must instead be consumed cooperatively by busy
+			// workers as they each finish their current file. See AdaptiveThrottle.
+			using var throttle = new AdaptiveThrottle(startC, poolSize);
 			using var driveCts = System.Threading.CancellationTokenSource.CreateLinkedTokenSource(token);
 			var workers = new List<Task>(poolSize);
 			for (int w = 0; w < poolSize; w++) {
@@ -928,13 +945,15 @@ namespace VDF.Core {
 						int i = System.Threading.Interlocked.Increment(ref idx);
 						if (i >= entries.Count) break;
 						await throttle.WaitAsync(token).ConfigureAwait(false);
+						bool retire;
 						try {
 							await globalGate.WaitAsync(token).ConfigureAwait(false);
 							try { await process(entries[i], token).ConfigureAwait(false); }
 							finally { globalGate.Release(); }
 						}
-						finally { throttle.Release(); }
+						finally { retire = throttle.Complete(); }
 						System.Threading.Interlocked.Increment(ref done);
+						if (retire) break;   // permit permanently retired; growth later reuses a still-idle spare worker instead
 					}
 				}, token));
 			}
@@ -948,10 +967,28 @@ namespace VDF.Core {
 					catch (OperationCanceledException) { break; }
 					if (System.Threading.Volatile.Read(ref idx) >= entries.Count) break;
 					if (pauseTokenSource.IsPaused) { prev = -1; before = System.Threading.Interlocked.Read(ref done); elapsed = 0; continue; }
+
+					var dcNow = driveCounters;
+					int ov = 0;
+					if (dcNow != null && dcNow.TryGetValue(root, out var __capNow)) ov = __capNow.CapOverride;
+					if (ov > 0) {
+						// Explicit user cap: this IS the target, applied directly every tick in either
+						// direction — no AIMD creep/backoff second-guessing a value the user set on purpose
+						// (the AIMD creep below only adds 1-2 workers per multi-minute window, far too slow
+						// for a manual raise to actually take effect).
+						int explicitTarget = Math.Max(1, Math.Min(ov, cpuBudget));
+						if (target > explicitTarget) throttle.Shrink(target - explicitTarget);
+						else if (target < explicitTarget) throttle.Grow(explicitTarget - target);
+						target = explicitTarget;
+						if (dcNow != null && dcNow.TryGetValue(root, out var __rcOv)) __rcOv.Concurrency = target;
+						prev = -1; before = System.Threading.Interlocked.Read(ref done); elapsed = 0;   // fresh baseline for when Auto resumes
+						continue;
+					}
+
 					int ceiling = FairCeiling();
-					// Live cap: user lowered the drive's dropdown cap (or fair share dropped) -> shed workers now, don't wait a window.
+					// Live cap: fair-share ceiling dropped (another drive started) -> shed workers now, don't wait a window.
 					bool shed = false;
-					while (target > ceiling && throttle.Wait(0)) { target--; shed = true; }
+					if (target > ceiling) { throttle.Shrink(target - ceiling); target = ceiling; shed = true; }
 					elapsed += tick;
 					if (elapsed + 1e-9 >= windowSec) {
 						long after = System.Threading.Interlocked.Read(ref done);
@@ -961,8 +998,9 @@ namespace VDF.Core {
 						else if (prev >= 0 && rate > prev * 1.25) newTarget = target + 2;      // strong gain -> climb faster
 						else newTarget = target + 1;                                           // else creep toward the ceiling
 						newTarget = Math.Max(1, Math.Min(newTarget, ceiling));                 // never exceed the live ceiling
-						while (target < newTarget) { throttle.Release(); target++; }
-						while (target > newTarget && throttle.Wait(0)) target--;
+						if (target < newTarget) throttle.Grow(newTarget - target);
+						else if (target > newTarget) throttle.Shrink(target - newTarget);
+						target = newTarget;
 						if (driveCounters != null && driveCounters.TryGetValue(root, out var __rc)) { __rc.Rate = rate; __rc.Concurrency = target; }
 						Logger.Instance.Info($"[adaptive] {root}: {rate:0.000} files/s -> concurrency {target}/{ceiling} (active drives {System.Threading.Volatile.Read(ref activeDrives[0])})");
 						prev = rate; before = after; elapsed = 0;
