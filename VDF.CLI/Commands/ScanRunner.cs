@@ -33,7 +33,7 @@ namespace VDF.CLI.Commands {
 
 			engine.BuildingHashesDone += OnDone;
 			engine.ScanAborted += OnAborted;
-			ct.Register(() => { engine.Stop(); tcs.TrySetCanceled(); });
+			ct.Register(() => { engine.Stop(force: true); tcs.TrySetCanceled(); });   // Ctrl+C: immediate abort, no drain
 
 			// searchAndCompare:false — the CLI drives comparison as a separate awaitable step
 			// (RunCompareAsync). Letting StartSearch auto-chain into StartCompare would run the
@@ -55,7 +55,7 @@ namespace VDF.CLI.Commands {
 
 			engine.ScanDone += OnDone;
 			engine.ScanAborted += OnAborted;
-			ct.Register(() => { engine.Stop(); tcs.TrySetCanceled(); });
+			ct.Register(() => { engine.Stop(force: true); tcs.TrySetCanceled(); });   // Ctrl+C: immediate abort, no drain
 
 			engine.StartCompare();
 			await tcs.Task;

@@ -62,6 +62,12 @@ namespace VDF.Core {
 
 		PauseTokenSource pauseTokenSource = new();
 		CancellationTokenSource cancelationTokenSource = new();
+		// SAFE stop (first Stop press during the file-reading phase): stops dispatching NEW files while
+		// every in-flight file runs to 100%, so its fingerprint lands in the cache and is never re-decoded
+		// on the next scan. Pause and Stop thus interrupt identically at a file boundary — they differ only
+		// in what follows (park for resume vs save-and-end). Hard cancellation (the token) stays for the
+		// second press / non-gather phases, where there is no per-file rework to protect.
+		volatile bool stopRequested;
 		readonly List<float> positionList = new();
 
 		bool _isScanning;
@@ -377,7 +383,7 @@ namespace VDF.Core {
 			// mid-write and left a torn ScannedFiles_new.db behind.
 			DatabaseUtils.SaveDatabase();
 			BuildingHashesDone?.Invoke(this, new EventArgs());
-			if (!cancelationTokenSource.IsCancellationRequested) {
+			if (!cancelationTokenSource.IsCancellationRequested && !stopRequested) {
 				if (searchAndCompare)
 					StartCompare();
 				else
@@ -446,7 +452,7 @@ namespace VDF.Core {
 		void FinishSearchSideStage() {
 			// Save before signaling completion — see the matching comment in StartSearch.
 			DatabaseUtils.SaveDatabase();
-			if (cancelationTokenSource.IsCancellationRequested) {
+			if (cancelationTokenSource.IsCancellationRequested || stopRequested) {
 				ScanAborted?.Invoke(this, new EventArgs());
 				Logger.Instance.Info(T("Log.ScanAborted"));
 			}
@@ -596,6 +602,7 @@ namespace VDF.Core {
 				cancelationTokenSource.Cancel();
 			cancelationTokenSource = new CancellationTokenSource();
 			pauseTokenSource = new PauseTokenSource();
+			stopRequested = false;
 			isScanning = false;
 		}
 
@@ -956,6 +963,7 @@ namespace VDF.Core {
 			for (int w = 0; w < poolSize; w++) {
 				workers.Add(Task.Run(async () => {
 					while (!token.IsCancellationRequested) {
+						if (stopRequested) break;   // safe stop: finish nothing new; current files already ran to 100%
 						int i = System.Threading.Interlocked.Increment(ref idx);
 						if (i >= entries.Count) break;
 						await throttle.WaitAsync(token).ConfigureAwait(false);
@@ -1033,6 +1041,7 @@ namespace VDF.Core {
 				InitProgress(DatabaseUtils.Database.Count);
 				BuildDriveCounters();
 				ValueTask ProcessEntry(FileEntry entry, CancellationToken token) {
+					if (stopRequested) return ValueTask.CompletedTask;   // safe stop: not-yet-started entries are skipped (covers the static Parallel path too)
 					pauseTokenSource.WaitWhilePaused(token);
 
 					try {
@@ -2678,12 +2687,26 @@ namespace VDF.Core {
 			pauseTokenSource.IsPaused = false;
 		}
 
-		public void Stop() {
+		/// <summary>
+		/// Stops the scan. During the file-reading phase the FIRST call is a SAFE stop — nothing new
+		/// starts, in-flight files finish to 100% (so their fingerprints are cached, not re-paid next
+		/// scan), then completed work is saved and the scan ends. A SECOND call, or a call outside that
+		/// phase (file list / compare, which have no per-file rework to protect), hard-cancels.
+		/// </summary>
+		/// <returns>true = safe stop initiated (drain in progress); false = hard cancellation.</returns>
+		public bool Stop(bool force = false) {
 			if (pauseTokenSource.IsPaused)
 				Resume();
+			if (!isScanning)
+				return false;
+			if (!force && driveCounters != null && !stopRequested) {
+				stopRequested = true;
+				Logger.Instance.Info("Stop requested: letting in-flight files finish safely (press Stop again to force-abort)");
+				return true;
+			}
 			Logger.Instance.Info("Scan stopped by user");
-			if (isScanning)
-				cancelationTokenSource.Cancel();
+			cancelationTokenSource.Cancel();
+			return false;
 		}
 	}
 }

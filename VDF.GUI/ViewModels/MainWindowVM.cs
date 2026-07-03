@@ -1696,9 +1696,14 @@ Non-Windows setup:
 
 		public ReactiveCommand<Unit, Unit> StopScanCommand => ReactiveCommand.Create(() => {
 			IsPaused = false;
-			IsBusy = true;
-			IsBusyOverlayText = "Stopping all scan threads...";
-			Scanner.Stop();
+			// Safe stop (gather phase, first press): the UI stays live so the per-drive rows can be
+			// watched draining as each in-flight file finishes to 100%; pressing Stop again force-aborts.
+			// Only a hard cancellation gets the blocking "stopping..." overlay (it resolves quickly).
+			bool draining = Scanner.Stop();
+			if (!draining) {
+				IsBusy = true;
+				IsBusyOverlayText = "Stopping all scan threads...";
+			}
 		}, CanStopScan);
 
 		IObservable<bool> CanStopScan {
