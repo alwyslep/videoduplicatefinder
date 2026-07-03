@@ -66,6 +66,11 @@ namespace VDF.Core {
 		// static per-device split when off. Per-drive hard caps come live from the status-bar dropdowns (SetDriveCap).
 		public bool AdaptiveConcurrency = true;
 		public int AdaptiveWindowSeconds = 120;
+		// User-chosen per-drive worker caps (root -> cap), seeded into the drive counters at scan START so a
+		// capped drive launches at its cap instead of at auto — the GUI's live SetDriveCap push only lands
+		// after the first progress event, by which time an uncapped launch has already spun up extra workers
+		// that then have to drain (visible as "starts at 4, shrinks to 1" after every restart).
+		public Dictionary<string, int> DriveWorkerCaps = new(StringComparer.OrdinalIgnoreCase);
 
 		public string CustomFFArguments = string.Empty;
 		public string CustomDatabaseFolder = string.Empty;

@@ -134,6 +134,11 @@ namespace VDF.Core {
 				if (!groups.TryGetValue(root, out var dc)) { dc = new DriveCounter(); groups[root] = dc; }
 				dc.TotalBytes += e.FileSize; dc.TotalFiles++;
 			}
+			// Seed saved per-drive caps BEFORE any worker launches, so a capped drive starts AT its cap.
+			// The GUI's SetDriveCap push (first progress event) still handles live mid-scan changes.
+			foreach (var kv in groups)
+				if (Settings.DriveWorkerCaps.TryGetValue(kv.Key, out var cap) && cap > 0)
+					kv.Value.CapOverride = cap;
 			var keys = new List<string>(groups.Keys); keys.Sort(StringComparer.OrdinalIgnoreCase);
 			driveCounters = groups; driveOrder = keys.ToArray();
 		}
@@ -936,7 +941,10 @@ namespace VDF.Core {
 			}
 			int idx = -1;
 			long done = 0;
-			int startC = Math.Max(1, Math.Min(FairCeiling(), 4));
+			// Explicit (seeded/saved) cap: launch at exactly that many workers. Auto only: warm up at
+			// min(fair share, 4) and let AIMD climb — the 4 is a cold-start heuristic, not a cap.
+			bool hasExplicitCap = driveCounters != null && driveCounters.TryGetValue(root, out var __seed) && __seed.CapOverride > 0;
+			int startC = hasExplicitCap ? FairCeiling() : Math.Max(1, Math.Min(FairCeiling(), 4));
 			int target = startC;
 			// AdaptiveThrottle (not a raw SemaphoreSlim): shrinking under CONTINUOUS full load can't steal
 			// an idle permit (there never is one — each worker immediately re-acquires the permit it just

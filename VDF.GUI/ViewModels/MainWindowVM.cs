@@ -1624,6 +1624,10 @@ Non-Windows setup:
 			Scanner.Settings.HddMaxDegreeOfParallelism = SettingsFile.Instance.HddMaxDegreeOfParallelism;
 			Scanner.Settings.AdaptiveConcurrency = SettingsFile.Instance.AdaptiveConcurrency;
 			Scanner.Settings.AdaptiveWindowSeconds = SettingsFile.Instance.AdaptiveWindowSeconds;
+			// Snapshot of the saved per-drive caps, seeded into the drive counters at scan start so a capped
+			// drive LAUNCHES at its cap (instead of starting at auto and draining down once the first progress
+			// event pushes the cap). Live mid-scan changes still flow through SetDriveCap.
+			Scanner.Settings.DriveWorkerCaps = new Dictionary<string, int>(SettingsFile.Instance.DriveParallelismCaps, StringComparer.OrdinalIgnoreCase);
 			Scanner.Settings.ThumbnailCount = SettingsFile.Instance.Thumbnails;
 			Scanner.Settings.ThumbnailMaxWidth = SettingsFile.Instance.ThumbnailMaxWidth;
 			Scanner.Settings.ExtendedFFToolsLogging = SettingsFile.Instance.ExtendedFFToolsLogging;
