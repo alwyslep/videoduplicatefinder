@@ -1286,9 +1286,18 @@ namespace VDF.Core {
 				// LCN sort below (spinning only) and the static path's per-device DOP further down.
 				// Drives with nothing in scope (no counter) are never read this scan, so don't spin
 				// them up with a probe either.
+				// The probe + FSCTL walk can take tens of seconds on big USB drives with no progress
+				// events of their own — without the stage pushes below the window sits frozen and
+				// reads as a hang.
+				string lcnLabel = T("Scan.Stage.LcnSort");
+				currentStageLabel = lcnLabel;
+				PushProgressSnapshot();
 				var seekLat = new Dictionary<string, double?>(StringComparer.OrdinalIgnoreCase);
-				foreach (var kv in byDrive)
-					seekLat[kv.Key] = driveCounters != null && driveCounters.ContainsKey(kv.Key) ? ProbeSeekLatencyMs(kv.Value) : null;
+				foreach (var kv in byDrive) {
+					bool inScopeDrive = driveCounters != null && driveCounters.ContainsKey(kv.Key);
+					if (inScopeDrive) ReportStage(kv.Key, lcnLabel);
+					seekLat[kv.Key] = inScopeDrive ? ProbeSeekLatencyMs(kv.Value) : null;
+				}
 				// Order each SPINNING drive's queue by on-disk position (first-extent LCN) so its
 				// single head assembly sweeps the platter once instead of seeking randomly between
 				// consecutive files — database iteration order is effectively random, the worst case
@@ -1307,6 +1316,8 @@ namespace VDF.Core {
 						var keyed = new List<(long Key, FileEntry E)>(kv.Value.Count);
 						foreach (var e in kv.Value) {
 							if (cancelationTokenSource.IsCancellationRequested) break;
+							if ((keyed.Count & 127) == 0)
+								ReportStage(e.Path, lcnLabel, keyed.Count, kv.Value.Count);
 							keyed.Add((LcnUtils.GetFirstLcn(e.Path), e));
 						}
 						if (keyed.Count != kv.Value.Count) break;   // cancelled mid-walk: keep original order
@@ -1315,6 +1326,14 @@ namespace VDF.Core {
 						Logger.Instance.Info($"[lcn] {kv.Key}: spinning (seek {lat.Value:0.0}ms) — ordered {kv.Value.Count:N0} entries by on-disk position in {lcnSw.ElapsedMilliseconds:N0}ms");
 					}
 				}
+				// Clear the sort's status rows (this thread has a slot in every probed drive's Active
+				// dict, and the workers run on OTHER threads so nothing else would ever remove them),
+				// then push the clean state before processing starts.
+				if (driveCounters != null)
+					foreach (var dcKv in driveCounters)
+						dcKv.Value.Active.TryRemove(Environment.CurrentManagedThreadId, out _);
+				currentStageLabel = string.Empty;
+				PushProgressSnapshot();
 				// Adaptive path: each drive self-tunes its concurrency from live files/sec (global CPU-capped). Static
 				// per-device split is the fallback (AdaptiveConcurrency off, or DOP=1 which stays strictly serial).
 				if (Settings.AdaptiveConcurrency && Settings.MaxDegreeOfParallelism != 1 && byDrive.Count > 0) {
