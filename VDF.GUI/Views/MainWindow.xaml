@@ -1433,7 +1433,7 @@
                                         HorizontalAlignment="Center"
                                         FontSize="14"
                                         FontWeight="ExtraBold"
-                                        Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Busy.PleaseWait]}" />
+                                        Text="{Binding BusyHeadingText}" />
                                     <TextBlock
                                         Name="LblBusyIndicator"
                                         Margin="0,10,0,0"

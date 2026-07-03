@@ -316,6 +316,27 @@ namespace VDF.Core {
 							});
 		}
 
+		// Unthrottled progress push with no file payload of its own — called as a worker parks for a
+		// pause. Its last completed file's throttled IncrementProgress push was usually swallowed
+		// (the file's own ReportStage calls kept lastProgressUpdate fresh), so without this the UI
+		// freezes on a stale row (e.g. "audio fingerprint 98/100") for the entire pause even though
+		// that file actually finished. The last worker to park publishes the fully-drained truth.
+		void PushProgressSnapshot() {
+			lastProgressUpdate = DateTime.UtcNow;
+			var timeRemaining = TimeSpan.FromTicks(DateTime.UtcNow.Subtract(startTime).Ticks *
+									(scanProgressMaxValue - (processedFiles + 1)) / (processedFiles + 1));
+			Progress?.Invoke(this,
+							new ScanProgressChangedEventArgs {
+								CurrentPosition = processedFiles,
+								CurrentFile = string.Empty,
+								Elapsed = ElapsedTimer.Elapsed,
+								Remaining = timeRemaining,
+								MaxPosition = scanProgressMaxValue,
+								CurrentStage = currentStageLabel,
+								Drives = DriveSnapshot(),
+							});
+		}
+
 		void TryDatabaseCheckpoint() {
 			if (Settings.DatabaseCheckpointIntervalMinutes <= 0) return;
 			var interval = TimeSpan.FromMinutes(Settings.DatabaseCheckpointIntervalMinutes);
@@ -1041,8 +1062,12 @@ namespace VDF.Core {
 				InitProgress(DatabaseUtils.Database.Count);
 				BuildDriveCounters();
 				ValueTask ProcessEntry(FileEntry entry, CancellationToken token) {
-					if (stopRequested) return ValueTask.CompletedTask;   // safe stop: not-yet-started entries are skipped (covers the static Parallel path too)
+					// Park BEFORE the stop check: a worker sleeping through a pause has already claimed this
+					// entry, and Stop-while-paused resumes it to wake it up — with the check first, every
+					// woken worker then processed one extra file ("one more per drive after pressing Stop").
+					if (pauseTokenSource.IsPaused) PushProgressSnapshot();
 					pauseTokenSource.WaitWhilePaused(token);
+					if (stopRequested) return ValueTask.CompletedTask;   // safe stop: not-yet-started entries are skipped (covers the static Parallel path too)
 
 					try {
 						entry.invalid = InvalidEntry(entry, out bool reportProgress, out string? invalidReason);

@@ -176,6 +176,14 @@ namespace VDF.GUI.ViewModels {
 			get => _IsBusyOverlayText;
 			set => this.RaiseAndSetIfChanged(ref _IsBusyOverlayText, value);
 		}
+		// Overlay heading. "Please wait" while work is actually running; replaced with an accurate
+		// state ("Paused", "Stopping…") when it isn't — a paused scan showing "please wait" + a random
+		// quip reads as the app still doing something, when it's waiting for the USER (Resume).
+		string _BusyHeadingText = App.Lang["MainWindow.Busy.PleaseWait"];
+		public string BusyHeadingText {
+			get => _BusyHeadingText;
+			set => this.RaiseAndSetIfChanged(ref _BusyHeadingText, value);
+		}
 		bool _IsReadyToCompare;
 		public bool IsReadyToCompare {
 			get => _IsReadyToCompare;
@@ -1580,6 +1588,7 @@ Non-Windows setup:
 			SettingsFile.SaveSettings();
 			SyncCoreSettings();
 
+			BusyHeadingText = App.Lang["MainWindow.Busy.PleaseWait"];
 			ChangeIsBusyMessage();
 			IsBusy = true;
 
@@ -1677,6 +1686,8 @@ Non-Windows setup:
 		public ReactiveCommand<Unit, Unit> PauseScanCommand => ReactiveCommand.Create(() => {
 			Scanner.Pause();
 			IsPaused = true;
+			BusyHeadingText = App.Lang["Busy.Paused.Title"];
+			IsBusyOverlayText = App.Lang["Busy.Paused.Detail"];
 		}, CanPauseScan);
 
 		IObservable<bool> CanPauseScan {
@@ -1687,6 +1698,8 @@ Non-Windows setup:
 		public ReactiveCommand<Unit, Unit> ResumeScanCommand => ReactiveCommand.Create(() => {
 			IsPaused = false;
 			Scanner.Resume();
+			BusyHeadingText = App.Lang["MainWindow.Busy.PleaseWait"];
+			ChangeIsBusyMessage();
 		}, CanResumeScan);
 
 		IObservable<bool> CanResumeScan {
@@ -1700,8 +1713,13 @@ Non-Windows setup:
 			// watched draining as each in-flight file finishes to 100%; pressing Stop again force-aborts.
 			// Only a hard cancellation gets the blocking "stopping..." overlay (it resolves quickly).
 			bool draining = Scanner.Stop();
-			if (!draining) {
+			if (draining) {
+				BusyHeadingText = App.Lang["Busy.Stopping.Title"];
+				IsBusyOverlayText = App.Lang["Busy.Stopping.Detail"];
+			}
+			else {
 				IsBusy = true;
+				BusyHeadingText = App.Lang["MainWindow.Busy.PleaseWait"];
 				IsBusyOverlayText = "Stopping all scan threads...";
 			}
 		}, CanStopScan);
