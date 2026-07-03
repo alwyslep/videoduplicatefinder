@@ -32,6 +32,8 @@ namespace VDF.GUI.Utils {
 	/// </summary>
 	internal static class SurvivorThumbArchive {
 		const int ThumbMaxWidth = 320;
+		// Callers fire-and-forget from the delete flow; two rapid deletes must not race one DB file.
+		static readonly object writeLock = new();
 
 		static string DbPath => Path.Combine(
 			CoreUtils.ResolveDatabaseFolder(SettingsFile.Instance.CustomDatabaseFolder),
@@ -39,6 +41,11 @@ namespace VDF.GUI.Utils {
 
 		/// <summary>Archives one frame per survivor; content already archived is skipped. Returns rows added.</summary>
 		public static int Archive(IReadOnlyList<DuplicateItemVM> survivors) {
+			lock (writeLock)
+				return ArchiveLocked(survivors);
+		}
+
+		static int ArchiveLocked(IReadOnlyList<DuplicateItemVM> survivors) {
 			using var con = new SqliteConnection($"Data Source={DbPath}");
 			con.Open();
 			using (var create = con.CreateCommand()) {
