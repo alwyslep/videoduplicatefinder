@@ -464,8 +464,9 @@ namespace VDF.Core {
 					Logger.Instance.InsertSeparator('-');
 					// Standalone stage: BuildFileList (which normally loads the DB) may never have
 					// run in this process — same fresh-process concern PrepareCompare handles (#790).
+					// Off the UI thread: StartStage runs on the caller's (UI) thread until an await.
 					if (DatabaseUtils.Database.Count == 0)
-						DatabaseUtils.LoadDatabase();
+						await Task.Run(DatabaseUtils.LoadDatabase);
 					Logger.Instance.Info(T("Log.GatheringMediaInfo"));
 					if (!cancelationTokenSource.IsCancellationRequested)
 						await GatherInfos();
@@ -1293,6 +1294,13 @@ namespace VDF.Core {
 				currentStageLabel = lcnLabel;
 				PushProgressSnapshot();
 				var seekLat = new Dictionary<string, double?>(StringComparer.OrdinalIgnoreCase);
+				// ★ The probe + FSCTL walk below are seconds-to-MINUTES of synchronous disk work, and
+				// GatherInfos' pre-await prefix runs on the CALLER's thread — the UI thread for both
+				// the full-scan and the stage buttons (async void command → first await). Without this
+				// Task.Run the whole window genuinely froze for the entire walk: the progress events
+				// fired but the dispatcher queue they marshal onto was the very thread doing the walk.
+				// (A headless harness "worked", which is how this hid — no UI thread to block.)
+				await Task.Run(() => {
 				foreach (var kv in byDrive) {
 					bool inScopeDrive = driveCounters != null && driveCounters.ContainsKey(kv.Key);
 					if (inScopeDrive) ReportStage(kv.Key, lcnLabel);
@@ -1328,12 +1336,14 @@ namespace VDF.Core {
 				}
 				// Clear the sort's status rows (this thread has a slot in every probed drive's Active
 				// dict, and the workers run on OTHER threads so nothing else would ever remove them),
-				// then push the clean state before processing starts.
+				// then push the clean state before processing starts. Must stay INSIDE the Task.Run:
+				// the slots are keyed by the walking thread's id.
 				if (driveCounters != null)
 					foreach (var dcKv in driveCounters)
 						dcKv.Value.Active.TryRemove(Environment.CurrentManagedThreadId, out _);
 				currentStageLabel = string.Empty;
 				PushProgressSnapshot();
+				}, cancelationTokenSource.Token).ConfigureAwait(false);
 				// Adaptive path: each drive self-tunes its concurrency from live files/sec (global CPU-capped). Static
 				// per-device split is the fallback (AdaptiveConcurrency off, or DOP=1 which stays strictly serial).
 				if (Settings.AdaptiveConcurrency && Settings.MaxDegreeOfParallelism != 1 && byDrive.Count > 0) {
