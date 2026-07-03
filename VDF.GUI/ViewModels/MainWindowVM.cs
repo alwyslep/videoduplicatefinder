@@ -68,7 +68,10 @@ namespace VDF.GUI.ViewModels {
 		static IBrush DriveBrush(int i) => _drivePalette[((i % _drivePalette.Length) + _drivePalette.Length) % _drivePalette.Length];
 		// Rebuild segments only when the drive set changes; otherwise just refresh each fraction/label.
 		void UpdateDriveSegments(DriveProgress[]? drives) {
-			if (drives == null || drives.Length == 0) return;
+			// Compare phases run with driveCounters nulled (InitProgress), so their Progress events carry
+			// no drives at all — drop the per-drive rows so the single ScanProgressText (gated on
+			// !ShowPerDriveFiles) can show the live "comparing X/Y" text instead of a stale gather-phase state.
+			if (drives == null || drives.Length == 0) { ShowPerDriveFiles = false; return; }
 			bool sameSet = DriveSegments.Count == drives.Length;
 			if (sameSet)
 				for (int i = 0; i < drives.Length; i++)
@@ -77,11 +80,16 @@ namespace VDF.GUI.ViewModels {
 				DriveSegments.Clear();
 				for (int i = 0; i < drives.Length; i++) {
 					var vm = new DriveProgressVM(drives[i].Root, DriveBrush(i), drives[i].TotalBytes) { SetCap = Scanner.SetDriveCap };
-					// Restore the drive's saved cap; setting CapIndex pushes it to the running scan right away.
-					if (SettingsFile.Instance.DriveParallelismCaps.TryGetValue(drives[i].Root, out var savedCap) && savedCap > 0)
-						vm.CapIndex = DriveProgressVM.CapIndexFor(savedCap);
 					DriveSegments.Add(vm);
 				}
+			}
+			// Every tick (not just on segment rebuild): BuildDriveCounters recreates the engine's
+			// DriveCounter objects with CapOverride=0 at the start of EVERY scan, even one over an
+			// unchanged drive set (segments stay the same VM instances, so the rebuild branch above
+			// doesn't rerun) — so the saved cap must be re-pushed here to survive a second scan.
+			for (int i = 0; i < drives.Length; i++) {
+				if (SettingsFile.Instance.DriveParallelismCaps.TryGetValue(drives[i].Root, out var savedCap) && savedCap > 0)
+					DriveSegments[i].CapIndex = DriveProgressVM.CapIndexFor(savedCap);
 			}
 			bool anyCurrent = false;
 			for (int i = 0; i < drives.Length; i++) {
@@ -1844,10 +1852,18 @@ Non-Windows setup:
 				   .GroupBy(d => d.ItemInfo.GroupId)
 				   .ToDictionary(
 					   g => g.Key,
-					   g => g.FirstOrDefault(x => !x.Checked)
+					   // Prefer an unchecked item whose file still exists — a stale unchecked entry
+					   // (moved/deleted externally since the scan) would otherwise be picked as the
+					   // "keeper" even though a different unchecked member is the real survivor.
+					   g => g.FirstOrDefault(x => !x.Checked && File.Exists(x.ItemInfo.Path)) ?? g.FirstOrDefault(x => !x.Checked)
 				   );
 
 			var actuallyDeleted = new HashSet<DuplicateItemVM>(toDelete.Count, ReferenceEqualityComparer<DuplicateItemVM>.Instance);
+			// Subset of actuallyDeleted that reflects a REAL disk change this pass (recycled/deleted/linked
+			// content, or content destroyed even if a subsequent link creation then failed) — used only to
+			// gate the survivor archive below. actuallyDeleted itself also includes items whose file was
+			// already gone before this operation ("removing entry only"), which must not trigger archiving.
+			var diskContentChanged = new HashSet<DuplicateItemVM>(toDelete.Count, ReferenceEqualityComparer<DuplicateItemVM>.Instance);
 			// Whole-group checked-delete (no unchecked survivor) is a content rejection: keep exactly
 			// one fingerprint as a tombstone. This set records the groups that already kept theirs.
 			var tombstonedGroups = new HashSet<Guid>();
@@ -1912,8 +1928,11 @@ Non-Windows setup:
 										throw new Exception($"Cannot create a link for '{dub.ItemInfo.Path}' because all items in this group are selected");
 									if (!File.Exists(keeper.ItemInfo.Path))
 										throw new Exception($"Cannot create a link for '{dub.ItemInfo.Path}' because the file to keep ('{keeper.ItemInfo.Path}') does not exist");
-									// The link target path must be free before the link can be created.
+									// The link target path must be free before the link can be created. Content is
+									// gone the instant this succeeds — record it even if the link call below then
+									// throws, so a group whose dup was destroyed but not linked still gets archived.
 									File.Delete(dub.ItemInfo.Path);
+									diskContentChanged.Add(dub);
 									if (createHardLinksInstead)
 										HardLinkUtils.CreateHardLink(dub.ItemInfo.Path, keeper.ItemInfo.Path);
 									else
@@ -1925,10 +1944,12 @@ Non-Windows setup:
 								if (!exists) {
 									if (batchRecycled.Contains(dub)) {
 										freedBytes += CheckedSizeOf(dub);
+										diskContentChanged.Add(dub);
 									}
 									else {
-										// File was already gone — treat as successfully deleted
-										// so the entry is still removed from the list and database.
+										// File was already gone before this operation — treat as successfully
+										// deleted so the entry is still removed from the list and database,
+										// but this pass didn't touch disk content (no diskContentChanged mark).
 										Logger.Instance.Info($"'{dub.ItemInfo.Path}' no longer exists on disk; removing entry only.");
 									}
 								}
@@ -1941,10 +1962,12 @@ Non-Windows setup:
 									if (!FileUtils.MoveToTrash(dub.ItemInfo.Path))
 										File.Delete(dub.ItemInfo.Path);
 									freedBytes += CheckedSizeOf(dub);
+									diskContentChanged.Add(dub);
 								}
 								else {
 									File.Delete(dub.ItemInfo.Path);
 									freedBytes += CheckedSizeOf(dub);
+									diskContentChanged.Add(dub);
 								}
 							}
 
@@ -1977,12 +2000,13 @@ Non-Windows setup:
 
 			// Each group that just lost members leaves its unique survivor a permanent visual record:
 			// one frame in the append-only SurvivorThumbs.sqlite (content-keyed; see SurvivorThumbArchive).
-			// Disk-affecting dedupe only — list-only removals don't resolve content. Fire-and-forget so
-			// the frame grabs never block the UI; failures only log.
-			if ((fromDisk || createLinks) && actuallyDeleted.Count > 0) {
+			// Disk-affecting dedupe only — gated on diskContentChanged (not actuallyDeleted, which also
+			// includes "file was already gone" list-only cleanups that never touched content) — so a
+			// stale-list prune with zero real deletions never triggers an archive write.
+			if ((fromDisk || createLinks) && diskContentChanged.Count > 0) {
 				var survivorList = new List<DuplicateItemVM>();
 				var seenGroups = new HashSet<Guid>();
-				foreach (var d in actuallyDeleted)
+				foreach (var d in diskContentChanged)
 					if (seenGroups.Add(d.ItemInfo.GroupId) &&
 						keepByGroup.TryGetValue(d.ItemInfo.GroupId, out var survivor) && survivor != null)
 						survivorList.Add(survivor);

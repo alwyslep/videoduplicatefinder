@@ -201,7 +201,14 @@ namespace VDF.GUI.Data {
 		[JsonPropertyName("DriveParallelismCaps")]
 		public Dictionary<string, int> DriveParallelismCaps {
 			get => _DriveParallelismCaps;
-			set => this.RaiseAndSetIfChanged(ref _DriveParallelismCaps, value ?? new(StringComparer.OrdinalIgnoreCase));
+			set {
+				// JSON deserialization hands back a plain case-sensitive dictionary (System.Text.Json
+				// has no way to preserve StringComparer through round-tripping) — rewrap it every time,
+				// not just on null, or drive-root lookups silently go case-sensitive after a restart.
+				var d = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+				if (value != null) foreach (var kv in value) d[kv.Key] = kv.Value;
+				this.RaiseAndSetIfChanged(ref _DriveParallelismCaps, d);
+			}
 		}
 		int _AdaptiveWindowSeconds = 120;
 		[JsonPropertyName("AdaptiveWindowSeconds")]

@@ -1291,6 +1291,7 @@
                                             <DataTemplate x:DataType="vm:DriveProgressVM">
                                                 <Border BorderBrush="{actipro:ThemeResource ButtonForegroundBrush}"
                                                     BorderThickness="1,0,0,0"
+                                                    ClipToBounds="True"
                                                     ToolTip.Tip="{Binding Label}"
                                                     local:WeightedStackPanel.Weight="{Binding Weight}">
                                                     <Grid>
@@ -1319,7 +1320,7 @@
                                                         <!-- Ultra-narrow per-drive worker-cap dropdown, embedded in the segment itself
                                                              (A = auto, else a hard cap). Replaces the old second-row dropdown strip. -->
                                                         <ComboBox SelectedIndex="{Binding CapIndex}" HorizontalAlignment="Right" VerticalAlignment="Center"
-                                                            FontSize="10" MinWidth="0" Width="38" Height="20" Padding="5,0,0,0"
+                                                            FontSize="10" MinWidth="0" Width="38" Height="20" MinHeight="0" Padding="5,0,0,0"
                                                             Background="#66000000" BorderThickness="0"
                                                             ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.DriveCap.Tooltip]}">
                                                             <ComboBoxItem Content="A" />

@@ -72,6 +72,7 @@ namespace VDF.GUI.Utils {
 				}
 				byte[]? thumb = ScanEngine.ExtractThumbnailJpeg(path,
 					TimeSpan.FromTicks(s.ItemInfo.Duration.Ticks / 2), ThumbMaxWidth);
+				if (thumb == null) continue;   // frame grab failed — leave the oshash unrecorded so a later call can retry
 				using var insert = con.CreateCommand();
 				insert.CommandText = @"INSERT OR IGNORE INTO survivors(oshash, path, size, duration_sec, thumb, added_utc)
 					VALUES($h, $p, $s, $d, $t, $u)";
@@ -79,7 +80,7 @@ namespace VDF.GUI.Utils {
 				insert.Parameters.AddWithValue("$p", path);
 				insert.Parameters.AddWithValue("$s", s.ItemInfo.SizeLong);
 				insert.Parameters.AddWithValue("$d", s.ItemInfo.Duration.TotalSeconds);
-				insert.Parameters.AddWithValue("$t", (object?)thumb ?? DBNull.Value);
+				insert.Parameters.AddWithValue("$t", thumb);
 				insert.Parameters.AddWithValue("$u", DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss"));
 				added += insert.ExecuteNonQuery();
 			}
