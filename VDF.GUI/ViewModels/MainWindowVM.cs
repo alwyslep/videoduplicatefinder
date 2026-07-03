@@ -1975,6 +1975,29 @@ Non-Windows setup:
 				IsBusy = false;
 			}
 
+			// Each group that just lost members leaves its unique survivor a permanent visual record:
+			// one frame in the append-only SurvivorThumbs.sqlite (content-keyed; see SurvivorThumbArchive).
+			// Disk-affecting dedupe only — list-only removals don't resolve content. Fire-and-forget so
+			// the frame grabs never block the UI; failures only log.
+			if ((fromDisk || createLinks) && actuallyDeleted.Count > 0) {
+				var survivorList = new List<DuplicateItemVM>();
+				var seenGroups = new HashSet<Guid>();
+				foreach (var d in actuallyDeleted)
+					if (seenGroups.Add(d.ItemInfo.GroupId) &&
+						keepByGroup.TryGetValue(d.ItemInfo.GroupId, out var survivor) && survivor != null)
+						survivorList.Add(survivor);
+				if (survivorList.Count > 0)
+					_ = Task.Run(() => {
+						try {
+							int n = Utils.SurvivorThumbArchive.Archive(survivorList);
+							Logger.Instance.Info($"Survivor thumbnail archive: {n} new frame(s) stored.");
+						}
+						catch (Exception ex) {
+							Logger.Instance.Info($"Survivor thumbnail archive failed: {ex.Message}");
+						}
+					});
+			}
+
 			if (freedBytes > 0)
 				TotalSizeRemovedInternal += freedBytes;
 
