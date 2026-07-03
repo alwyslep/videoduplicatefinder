@@ -289,7 +289,7 @@
 	"MainWindow.Settings.ThumbnailMaxWidth": "미리보기 썸네일 너비 (px)",
 	"MainWindow.Settings.ThumbnailMaxWidthTooltip": "결과 목록에 표시되는 미리보기 썸네일의 너비입니다. 탐지 정확도와는 무관하며 표시 크기만 바꿉니다.",
 	"MainWindow.Settings.DirectorySelection": "디렉터리 선택",
-	"MainWindow.Settings.DirectorySelectionHint": "폴더 트리에서 체크하면 검색 대상에 추가/제거됩니다. 초록=포함, 주황=일부 포함. 폴더마다 용량과 아직 DB에 없는(미스캔) 파일 수가 표시됩니다. 폴더를 해제하면 그 하위 선택까지 모두 해제됩니다. '하위 디렉터리 포함'(설정→스캔)이 켜져 있으면 체크한 폴더의 하위도 함께 스캔됩니다.",
+	"MainWindow.Settings.DirectorySelectionHint": "폴더 트리에서 체크하면 검색 대상에 추가/제거됩니다. 초록=포함, 주황=일부 포함. 폴더마다 용량과 아직 DB에 없는(미스캔) 파일 수가 표시됩니다. 폴더를 해제하면 그 하위 선택까지 모두 해제됩니다. '하위 디렉터리 포함'(설정→스캔)이 켜져 있으면 체크한 폴더의 하위도 함께 스캔됩니다. 폴더를 오른쪽 '제외 디렉터리' 목록으로 끌어다 놓으면 제외되며, 제외된 폴더는 트리에서 숨겨집니다(목록에서 제거하면 다시 표시).",
 	"MainWindow.Settings.PartiallyIncluded": "(일부 포함)",
 	"MainWindow.Settings.Processing": "처리",
 	"MainWindow.Settings.MiscHint": "힌트: 옵션에 마우스를 올리면 자세한 설명이 나옵니다",

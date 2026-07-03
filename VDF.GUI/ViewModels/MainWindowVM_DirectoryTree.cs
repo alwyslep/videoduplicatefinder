@@ -56,6 +56,24 @@ namespace VDF.GUI.ViewModels {
 					foreach (var n in _directoryTreeRoots!)
 						n.RefreshState();
 				};
+				// Excluded folders are hidden from the tree, so re-evaluate visibility whenever the
+				// exclude list changes (drag-to-exclude, add/remove/clear in the exclude panel).
+				// A new exclude also prunes include entries it swallows (equal or underneath):
+				// their nodes just went invisible, so they would be unmanageable phantoms — and the
+				// scan would still walk the whole excluded subtree only to reject every file.
+				// Ancestor-wide includes stay (that's the carve-out case).
+				SettingsFile.Instance.Blacklists.CollectionChanged += (_, e) => {
+					if (e.Action == System.Collections.Specialized.NotifyCollectionChangedAction.Add && e.NewItems != null) {
+						foreach (string b in e.NewItems.OfType<string>()) {
+							string entry = VDF.Core.ScanEngine.NormalizePathEntry(b);
+							for (int i = includes.Count - 1; i >= 0; i--)
+								if (VDF.Core.ScanEngine.IsBlackListed(includes[i], entry))
+									includes.RemoveAt(i);
+						}
+					}
+					foreach (var n in _directoryTreeRoots!)
+						n.RefreshState();
+				};
 				return _directoryTreeRoots;
 			}
 		}
@@ -194,6 +212,15 @@ namespace VDF.GUI.ViewModels {
 
 		public FontWeight NameWeight => CheckState == true ? FontWeight.SemiBold : FontWeight.Normal;
 
+		// Blacklisted folders are hidden from the tree entirely — same matching rules as the
+		// scanner (entry normalized, then path prefix or wildcard via ScanEngine.IsBlackListed),
+		// so what the tree hides is exactly what a scan skips. Removing the exclude entry brings
+		// the node straight back.
+		public bool IsVisibleInTree =>
+			_isPlaceholder ||
+			!SettingsFile.Instance.Blacklists.Any(b =>
+				VDF.Core.ScanEngine.IsBlackListed(Path, VDF.Core.ScanEngine.NormalizePathEntry(b)));
+
 		string _sizeText = string.Empty;
 		public string SizeText { get => _sizeText; private set => this.RaiseAndSetIfChanged(ref _sizeText, value); }
 
@@ -214,6 +241,7 @@ namespace VDF.GUI.ViewModels {
 			this.RaisePropertyChanged(nameof(IconBrush));
 			this.RaisePropertyChanged(nameof(NameBrush));
 			this.RaisePropertyChanged(nameof(NameWeight));
+			this.RaisePropertyChanged(nameof(IsVisibleInTree));
 			if (_loaded)
 				foreach (var c in Children)
 					c.RefreshState();

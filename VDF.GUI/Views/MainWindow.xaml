@@ -119,10 +119,11 @@
                             </DockPanel>
                             <Border Grid.Row="1" Grid.Column="0" BorderThickness="1" CornerRadius="4"
                                     BorderBrush="{actipro:ThemeResource Container1BorderBrush}">
-                                <TreeView ItemsSource="{Binding DirectoryTreeRoots}">
+                                <TreeView Name="DirectoryTree" ItemsSource="{Binding DirectoryTreeRoots}">
                                     <TreeView.Styles>
                                         <Style Selector="TreeViewItem" x:DataType="vm:DirectoryTreeNodeVM">
                                             <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
+                                            <Setter Property="IsVisible" Value="{Binding IsVisibleInTree}" />
                                         </Style>
                                     </TreeView.Styles>
                                     <TreeView.ItemTemplate>

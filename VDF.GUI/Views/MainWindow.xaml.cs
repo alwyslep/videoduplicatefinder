@@ -55,6 +55,12 @@ namespace VDF.GUI.Views {
 
 			this.FindControl<ListBox>("ListboxBlacklist")!.AddHandler(DragDrop.DropEvent, DropBlacklist);
 			this.FindControl<ListBox>("ListboxBlacklist")!.AddHandler(DragDrop.DragOverEvent, DragOver);
+			// Drag-to-exclude: drag a folder out of the directory tree onto the exclude list.
+			// handledEventsToo because TreeViewItem marks presses handled while selecting.
+			var directoryTree = this.FindControl<TreeView>("DirectoryTree")!;
+			directoryTree.AddHandler(InputElement.PointerPressedEvent, DirectoryTree_PointerPressed, Avalonia.Interactivity.RoutingStrategies.Bubble, handledEventsToo: true);
+			directoryTree.AddHandler(InputElement.PointerMovedEvent, DirectoryTree_PointerMoved, Avalonia.Interactivity.RoutingStrategies.Bubble, handledEventsToo: true);
+			directoryTree.AddHandler(InputElement.PointerReleasedEvent, DirectoryTree_PointerReleased, Avalonia.Interactivity.RoutingStrategies.Bubble, handledEventsToo: true);
 
 			ApplicationHelpers.CurrentApplicationLifetime.Startup += MainWindow_Startup;
 			ApplicationHelpers.CurrentApplicationLifetime.Exit += MainWindow_Exit;
@@ -253,22 +259,70 @@ namespace VDF.GUI.Views {
 			// Only allow Copy or Link as Drop Operations.
 			e.DragEffects &= (DragDropEffects.Copy | DragDropEffects.Link);
 
-			// Only allow if the dragged data contains filenames.
-			if (!e.DataTransfer.Contains(DataFormat.File))
+			// Only allow if the dragged data contains filenames (Explorer) or a folder path as
+			// text (directory-tree drag-to-exclude).
+			if (!e.DataTransfer.Contains(DataFormat.File) && !e.DataTransfer.Contains(DataFormat.Text))
 				e.DragEffects = DragDropEffects.None;
 		}
 
 		private void DropBlacklist(object? sender, DragEventArgs e) {
-			if (!e.DataTransfer.Contains(DataFormat.File)) return;
-
-			foreach (var path in e.DataTransfer.GetItems(DataFormat.File) ?? Array.Empty<IDataTransferItem>()) {
-				IStorageItem? fold = path.TryGetFile();
-				if (fold == null)
-					continue;
-				string? localPath = fold.TryGetLocalPath();
-				if (!string.IsNullOrEmpty(localPath) && !SettingsFile.Instance.Blacklists.Contains(localPath))
-					SettingsFile.Instance.Blacklists.Add(localPath);
+			if (e.DataTransfer.Contains(DataFormat.File)) {
+				foreach (var path in e.DataTransfer.GetItems(DataFormat.File) ?? Array.Empty<IDataTransferItem>()) {
+					IStorageItem? fold = path.TryGetFile();
+					if (fold == null)
+						continue;
+					string? localPath = fold.TryGetLocalPath();
+					if (!string.IsNullOrEmpty(localPath) && !SettingsFile.Instance.Blacklists.Contains(localPath))
+						SettingsFile.Instance.Blacklists.Add(localPath);
+				}
+				return;
 			}
+			// Directory-tree drag carries the folder path as plain text.
+			if (e.DataTransfer.TryGetText() is { Length: > 0 } text && Directory.Exists(text) &&
+				!SettingsFile.Instance.Blacklists.Contains(text))
+				SettingsFile.Instance.Blacklists.Add(text);
+		}
+
+		// ── directory-tree drag source ───────────────────────────────────────────────────────────
+		PointerPressedEventArgs? treeDragPress;
+		DirectoryTreeNodeVM? treeDragNode;
+		Point treeDragOrigin;
+
+		void DirectoryTree_PointerPressed(object? sender, PointerPressedEventArgs e) {
+			treeDragPress = null;
+			treeDragNode = null;
+			if (!e.GetCurrentPoint(sender as Visual).Properties.IsLeftButtonPressed) return;
+			// Presses on interactive parts (tick box, expander arrow) keep their click behaviour.
+			for (var v = e.Source as Visual; v != null && v != sender; v = v.GetVisualParent())
+				if (v is Avalonia.Controls.Primitives.ToggleButton) return;
+			if ((e.Source as Control)?.DataContext is not DirectoryTreeNodeVM node || string.IsNullOrEmpty(node.Path)) return;
+			treeDragPress = e;
+			treeDragNode = node;
+			treeDragOrigin = e.GetPosition(this);
+		}
+
+		async void DirectoryTree_PointerMoved(object? sender, PointerEventArgs e) {
+			if (treeDragPress == null || treeDragNode == null) return;
+			// Disarm if the button was released outside our sight (capture lost, window deactivated).
+			if (!e.GetCurrentPoint(sender as Visual).Properties.IsLeftButtonPressed) {
+				treeDragPress = null;
+				treeDragNode = null;
+				return;
+			}
+			Point pos = e.GetPosition(this);
+			if (Math.Abs(pos.X - treeDragOrigin.X) < 4 && Math.Abs(pos.Y - treeDragOrigin.Y) < 4) return;
+			var press = treeDragPress;
+			string path = treeDragNode.Path;
+			treeDragPress = null;
+			treeDragNode = null;
+			var data = new DataTransfer();
+			data.Add(DataTransferItem.CreateText(path));
+			await DragDrop.DoDragDropAsync(press, data, DragDropEffects.Copy);
+		}
+
+		void DirectoryTree_PointerReleased(object? sender, PointerReleasedEventArgs e) {
+			treeDragPress = null;
+			treeDragNode = null;
 		}
 
 		void Thumbnails_ValueChanged(object? sender, NumericUpDownValueChangedEventArgs e) {

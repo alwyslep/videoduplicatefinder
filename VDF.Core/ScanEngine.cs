@@ -561,18 +561,26 @@ namespace VDF.Core {
 		void NormalizeScanPaths() {
 			static HashSet<string> Normalize(HashSet<string> paths) {
 				var result = new HashSet<string>();
-				foreach (var path in paths) {
-					string normalized = path;
-					try {
-						normalized = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
-					}
-					catch { /* keep the original string if it cannot be resolved */ }
-					result.Add(normalized);
-				}
+				foreach (var path in paths)
+					result.Add(NormalizePathEntry(path));
 				return result;
 			}
 			Settings.IncludeList = Normalize(Settings.IncludeList);
 			Settings.BlackList = Normalize(Settings.BlackList);
+		}
+
+		// Normalizes one include/blacklist entry the way the scan compares them. Wildcard patterns
+		// (#582) pass through verbatim: GetFullPath does NOT throw on '*'/'?' (they aren't
+		// InvalidPathChars), so without the guard a bare pattern like "*temp*" silently gained a
+		// CWD prefix and its segment matching broke. Public so the GUI directory tree hides
+		// exactly what a scan skips.
+		public static string NormalizePathEntry(string entry) {
+			if (entry.IndexOfAny(['*', '?']) >= 0)
+				return entry;
+			try {
+				return Path.TrimEndingDirectorySeparator(Path.GetFullPath(entry));
+			}
+			catch { return entry; /* keep the original string if it cannot be resolved */ }
 		}
 
 		[MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -909,7 +917,8 @@ namespace VDF.Core {
 
 		// Returns true if folderPath is covered by blacklistEntry.
 		// Supports wildcard patterns (*, ?) in blacklistEntry — see https://github.com/0x90d/videoduplicatefinder/issues/582
-		static bool IsBlackListed(string folderPath, string blacklistEntry) {
+		// Public: the GUI directory tree uses the same rules to hide excluded folders.
+		public static bool IsBlackListed(string folderPath, string blacklistEntry) {
 			bool hasWildcard = blacklistEntry.IndexOfAny(['*', '?']) >= 0;
 			if (!hasWildcard) {
 				if (!folderPath.StartsWith(blacklistEntry, StringComparison.OrdinalIgnoreCase))
