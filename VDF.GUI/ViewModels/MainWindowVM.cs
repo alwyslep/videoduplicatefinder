@@ -95,7 +95,10 @@ namespace VDF.GUI.ViewModels {
 				seg.Label = $"{d.Root}  {seg.Fraction * 100:0}%  {d.DoneFiles:N0}/{d.TotalFiles:N0}"
 					+ (d.Concurrency > 0 ? $"  ·  {d.FilesPerSec:0.0} f/s  ·  x{d.Concurrency}" : "")
 					+ (d.Analyzed > 0 ? $"  ·  {App.Lang["Drive.Analyzed"]} {d.Analyzed:N0}" : "")
-					+ (d.Missing > 0 ? $"  ·  {App.Lang["Drive.Missing"]} {d.Missing:N0}" : "");
+					+ (d.Missing > 0 ? $"  ·  {App.Lang["Drive.Missing"]} {d.Missing:N0}" : "")
+					// Cumulative DB inventory (grows across scans), NOT this scan's progress — the
+					// done/total on the left resets every scan, which kept reading as "fingerprints".
+					+ (d.FingerprintTarget > 0 ? $"  ·  {App.Lang["Drive.Fingerprints"]} {d.Fingerprinted:N0}/{d.FingerprintTarget:N0}" : "");
 				// One line per worker currently active on this drive — the collection's length IS the
 				// live concurrency shown to the user, so 2+ workers naturally render 2+ lines.
 				seg.ActiveFileLines.Clear();

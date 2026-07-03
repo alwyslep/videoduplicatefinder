@@ -115,7 +115,7 @@ namespace VDF.Core {
 		// concurrent workers on the same drive each get their own stable slot instead of stomping a single
 		// last-writer-wins field — this is what lets the UI show N rows for N active workers.
 		sealed class ActiveFileState { public string Path = ""; public string? Stage; public int StageCur; public int StageMax; }
-		sealed class DriveCounter { public long TotalBytes; public int TotalFiles; public long DoneBytes; public int DoneFiles; public double Rate; public int CapOverride; public int Analyzed; public int MissingFiles; public readonly ConcurrentDictionary<int, ActiveFileState> Active = new(); }
+		sealed class DriveCounter { public long TotalBytes; public int TotalFiles; public long DoneBytes; public int DoneFiles; public double Rate; public int CapOverride; public int Analyzed; public int MissingFiles; public int Fingerprinted; public int FingerprintTarget; public readonly ConcurrentDictionary<int, ActiveFileState> Active = new(); }
 		Dictionary<string, DriveCounter>? driveCounters;
 		string[]? driveOrder;
 		// Live per-drive parallelism override chosen from the status-bar dropdown (0 = auto). RunDriveAdaptive's
@@ -144,6 +144,17 @@ namespace VDF.Core {
 				var root = DriveRootOf(e.Path);
 				if (!groups.TryGetValue(root, out var dc)) { dc = new DriveCounter(); groups[root] = dc; }
 				dc.TotalBytes += e.FileSize; dc.TotalFiles++;
+				// Audio-fingerprint inventory: cumulative DB state (not this scan's progress), so the
+				// user can see coverage grow across interrupted scans. Target = entries a fingerprint
+				// can still be computed for; permanently flagged ones (no/silent audio, past decode
+				// error) are excluded from both sides.
+				if (Settings.EnablePartialClipDetection && !e.IsImage &&
+					!e.Flags.Has(EntryFlags.NoAudioTrack) &&
+					!e.Flags.Has(EntryFlags.AudioFingerprintError) &&
+					!e.Flags.Has(EntryFlags.SilentAudioTrack)) {
+					dc.FingerprintTarget++;
+					if (e.AudioFingerprint != null) dc.Fingerprinted++;
+				}
 			}
 			// Seed saved per-drive caps BEFORE any worker launches, so a capped drive starts AT its cap.
 			// The GUI's SetDriveCap push (first progress event) still handles live mid-scan changes.
@@ -173,7 +184,7 @@ namespace VDF.Core {
 				// the two numbers can legitimately differ for a while during the drain; showing the live
 				// count instead of the target keeps the label truthful throughout that transition instead of
 				// silently claiming "1" while several rows are still visibly active underneath it.
-				arr[i] = new DriveProgress { Root = order[i], TotalBytes = c.TotalBytes, DoneBytes = c.DoneBytes, TotalFiles = c.TotalFiles, DoneFiles = c.DoneFiles, FilesPerSec = c.Rate, Concurrency = active.Length, ActiveFiles = active, Analyzed = c.Analyzed, Missing = c.MissingFiles };
+				arr[i] = new DriveProgress { Root = order[i], TotalBytes = c.TotalBytes, DoneBytes = c.DoneBytes, TotalFiles = c.TotalFiles, DoneFiles = c.DoneFiles, FilesPerSec = c.Rate, Concurrency = active.Length, ActiveFiles = active, Analyzed = c.Analyzed, Missing = c.MissingFiles, Fingerprinted = c.Fingerprinted, FingerprintTarget = c.FingerprintTarget };
 			}
 			return arr;
 		}
@@ -1099,6 +1110,13 @@ namespace VDF.Core {
 						if (dcA != null && dcA.TryGetValue(DriveRootOf(entry.Path), out var cA))
 							System.Threading.Interlocked.Increment(ref cA.Analyzed);
 					}
+					// Bumps the drive's cumulative fingerprint inventory when this entry just gained one.
+					void MarkFingerprinted() {
+						if (entry.AudioFingerprint == null) return;
+						var dcF = driveCounters;
+						if (dcF != null && dcF.TryGetValue(DriveRootOf(entry.Path), out var cF))
+							System.Threading.Interlocked.Increment(ref cF.Fingerprinted);
+					}
 
 					try {
 						entry.invalid = InvalidEntry(entry, out bool reportProgress, out string? invalidReason);
@@ -1164,6 +1182,7 @@ namespace VDF.Core {
 									MarkAnalyzed();
 									ExtractAudioFingerprint(entry, cancelationTokenSource.Token,
 										onProgress: p => ReportStage(cachedAudioPath, audioStageLabel, (int)(p * 100), 100));
+									MarkFingerprinted();
 								}
 								IncrementProgress(entry.Path, entry.FileSize);
 								return ValueTask.CompletedTask;
@@ -1231,6 +1250,7 @@ namespace VDF.Core {
 							MarkAnalyzed();
 							ExtractAudioFingerprint(entry, cancelationTokenSource.Token,
 								onProgress: p => ReportStage(audioPath, audioLabel, (int)(p * 100), 100));
+							MarkFingerprinted();
 						}
 
 						IncrementProgress(entry.Path, entry.FileSize);

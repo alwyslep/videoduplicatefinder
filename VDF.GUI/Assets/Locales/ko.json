@@ -60,6 +60,7 @@
 	"BusyMessages20": "진정하세요—곧 파일이 정돈됩니다.",
 	"Drive.Analyzed": "분석",
 	"Drive.Missing": "부재",
+	"Drive.Fingerprints": "지문",
 	"Busy.Pausing.Title": "일시정지하는 중…",
 	"Busy.Pausing.Detail": "진행 중이던 파일을 100%까지 완료하고 있습니다 — 모두 끝나면 '일시정지됨'으로 바뀝니다.",
 	"Busy.Paused.Title": "일시정지됨",

@@ -60,6 +60,7 @@
 	"BusyMessages20": "Stay calm—your files are about to make sense.",
 	"Drive.Analyzed": "analyzed",
 	"Drive.Missing": "missing",
+	"Drive.Fingerprints": "fp",
 	"Busy.Pausing.Title": "Pausing…",
 	"Busy.Pausing.Detail": "Finishing in-flight files to 100% — switches to 'Paused' once they're all done.",
 	"Busy.Paused.Title": "Paused",

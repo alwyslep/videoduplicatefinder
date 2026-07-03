@@ -53,6 +53,12 @@ namespace VDF.Core {
 		public int Analyzed;
 		/// <summary>Entries whose file no longer exists at its recorded path (skipped in milliseconds).</summary>
 		public int Missing;
+		/// <summary>Cumulative audio-fingerprint inventory for this drive (DB state, not this scan's
+		/// progress): how many of the fingerprintable entries already have one. Grows live.</summary>
+		public int Fingerprinted;
+		/// <summary>Entries a fingerprint can still be computed for (video, not permanently flagged).
+		/// 0 when partial-clip detection is off — hide the inventory then.</summary>
+		public int FingerprintTarget;
 	}
 
 	/// <summary>One worker's in-progress file on a drive, for a per-drive "now processing" row.</summary>
