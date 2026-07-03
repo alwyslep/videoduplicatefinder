@@ -1018,7 +1018,7 @@ namespace VDF.Core {
 
 		// Adaptive per-drive concurrency with FAIR CPU-budget sharing. The bottleneck is CPU (decode), so total
 		// workers are balanced around Environment.ProcessorCount and split across drives still working: each drive's
-		// ceiling = ceil(cpuBudget / activeDrives), recomputed as drives finish so survivors absorb the freed CPU.
+		// ceiling = max(8, ceil(cpuBudget / activeDrives)), recomputed as drives finish so survivors absorb the freed CPU.
 		// A fixed worker pool is throttled to that ceiling, a shared global gate caps total decodes, and an AIMD
 		// controller climbs toward the ceiling and backs a drive off only when its throughput drops (disk-bound).
 		// A per-drive hard cap can be set live from the status-bar dropdown (SetDriveCap); 0 means fair-share up to the whole budget.
@@ -1033,7 +1033,11 @@ namespace VDF.Core {
 				if (driveCounters != null && driveCounters.TryGetValue(root, out var __cap)) ov = __cap.CapOverride;
 				if (ov > 0) return Math.Max(1, Math.Min(ov, cpuBudget));   // explicit per-drive override; total still capped by the global CPU gate
 				int a = Math.Max(1, System.Threading.Volatile.Read(ref activeDrives[0]));
-				return Math.Max(1, (cpuBudget + a - 1) / a);
+				// Auto floor of 8: with many drives active the pure fair share pins every drive low
+				// (24 cpu / 6 drives = 4), starving fast NVMe drives that could use more. Total demand
+				// may now exceed cpuBudget, but the global gate still caps actual concurrent decodes,
+				// and AIMD backs a slow drive off its 8 as soon as its throughput drops.
+				return Math.Max(Math.Min(8, cpuBudget), (cpuBudget + a - 1) / a);
 			}
 			int idx = -1;
 			long done = 0;
