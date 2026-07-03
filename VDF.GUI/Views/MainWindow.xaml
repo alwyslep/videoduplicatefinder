@@ -97,8 +97,16 @@
                                 FontSize="12"
                                 Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.DirectorySelection]}" />
                         </TabItem.Header>
-                        <Grid Margin="12,12,12,10" ColumnDefinitions="2*,12,*" RowDefinitions="Auto,*"
-                              IsEnabled="{Binding !IsScanning}">
+                        <Grid Margin="12,12,12,10" ColumnDefinitions="2*,12,*" RowDefinitions="Auto,*">
+                            <!-- Editable when idle OR paused: the engine snapshots settings at scan
+                                 start (SyncCoreSettings), so edits during a pause can't disturb the
+                                 running scan — they apply from the next scan/stage start. -->
+                            <Grid.IsEnabled>
+                                <MultiBinding Converter="{x:Static BoolConverters.Or}">
+                                    <Binding Path="!IsScanning" />
+                                    <Binding Path="IsPaused" />
+                                </MultiBinding>
+                            </Grid.IsEnabled>
                             <!-- ═══════ search directories (folder tree) ═══════ -->
                             <DockPanel Grid.Row="0" Grid.Column="0" Margin="0,0,0,6">
                                 <Button DockPanel.Dock="Right" VerticalAlignment="Top" Padding="7,3" Margin="8,0,0,0"
@@ -1661,8 +1669,15 @@
                                     </MenuItem.Header>
                                 </MenuItem>
                             </Menu>
-                            <TabControl Grid.Row="1" TabStripPlacement="Left"
-                                      IsEnabled="{Binding !IsScanning}">
+                            <TabControl Grid.Row="1" TabStripPlacement="Left">
+                                <!-- Editable when idle OR paused — engine reads a scan-start snapshot
+                                     (SyncCoreSettings), so paused edits only affect the next scan. -->
+                                <TabControl.IsEnabled>
+                                    <MultiBinding Converter="{x:Static BoolConverters.Or}">
+                                        <Binding Path="!IsScanning" />
+                                        <Binding Path="IsPaused" />
+                                    </MultiBinding>
+                                </TabControl.IsEnabled>
                                 <TabControl.Styles>
                                     <Style Selector="TabItem">
                                         <Setter Property="MinWidth" Value="160" />
