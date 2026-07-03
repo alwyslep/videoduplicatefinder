@@ -52,6 +52,13 @@ namespace VDF.GUI.ViewModels {
 			get => _ShowDriveProgress;
 			set => this.RaiseAndSetIfChanged(ref _ShowDriveProgress, value);
 		}
+		// True while at least one drive has a "now processing" row; swaps the single current-file
+		// text for the per-drive rows and back (compare phases have no drives, so it drops out there).
+		bool _ShowPerDriveFiles;
+		public bool ShowPerDriveFiles {
+			get => _ShowPerDriveFiles;
+			set => this.RaiseAndSetIfChanged(ref _ShowPerDriveFiles, value);
+		}
 		static readonly IBrush[] _drivePalette = {
 			new SolidColorBrush(Color.Parse("#4FC3F7")), new SolidColorBrush(Color.Parse("#81C784")),
 			new SolidColorBrush(Color.Parse("#FFB74D")), new SolidColorBrush(Color.Parse("#BA68C8")),
@@ -76,13 +83,23 @@ namespace VDF.GUI.ViewModels {
 					DriveSegments.Add(vm);
 				}
 			}
+			bool anyCurrent = false;
 			for (int i = 0; i < drives.Length; i++) {
 				var d = drives[i];
 				var seg = DriveSegments[i];
 				seg.Fraction = d.TotalBytes > 0 ? (double)d.DoneBytes / d.TotalBytes : 0;
 				seg.Label = $"{d.Root}  {seg.Fraction * 100:0}%  {d.DoneFiles:N0}/{d.TotalFiles:N0}" + (d.Concurrency > 0 ? $"  ·  {d.FilesPerSec:0.0} f/s  ·  x{d.Concurrency}" : "");
+				string cft = string.Empty;
+				if (!string.IsNullOrEmpty(d.CurrentFile)) {
+					cft = d.CurrentFile!;
+					if (!string.IsNullOrEmpty(d.CurrentStage))
+						cft += d.StageMax > 0 ? $"  [{d.CurrentStage} {d.StageCurrent}/{d.StageMax}]" : $"  [{d.CurrentStage}]";
+					anyCurrent = true;
+				}
+				seg.CurrentFileText = cft;
 			}
 			ShowDriveProgress = true;
+			ShowPerDriveFiles = anyCurrent;
 		}
 		public ObservableCollection<string> LogItems { get; } = new();
 		List<HashSet<string>> GroupBlacklist = new();
@@ -518,6 +535,7 @@ namespace VDF.GUI.ViewModels {
 			ShowThumbnailRetrievalProgressBar = false;
 			DriveSegments.Clear();
 			ShowDriveProgress = false;
+			ShowPerDriveFiles = false;
 #pragma warning disable CS4014
 			if (SettingsFile.Instance.BackupAfterListChanged)
 				ExportScanResults(BackupScanResultsFile);
@@ -664,6 +682,7 @@ namespace VDF.GUI.ViewModels {
 				RemainingTime = TimeSpan.Zero.Format();
 				ScanProgressValue = 0;
 				ShowDriveProgress = false;
+				ShowPerDriveFiles = false;
 				RefreshDirectoryTree();   // directory-selection tab: DB changed, refresh unscanned counts
 			});
 
@@ -678,6 +697,7 @@ namespace VDF.GUI.ViewModels {
 				ScanProgressValue = 0;
 				RefreshDirectoryTree();   // directory-selection tab: DB changed, refresh unscanned counts
 				ShowDriveProgress = false;
+				ShowPerDriveFiles = false;
 				var completedScheduledScan = scheduledScanInProgress;
 				scheduledScanInProgress = false;
 				stageOnlyRunInProgress = false;

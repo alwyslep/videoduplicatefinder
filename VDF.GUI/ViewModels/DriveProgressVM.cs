@@ -31,6 +31,14 @@ namespace VDF.GUI.ViewModels {
 			set => this.RaiseAndSetIfChanged(ref _Label, value);
 		}
 
+		// "Now processing" row under the status bar: the file (+ sub-stage) a worker on this drive
+		// is currently reading. Empty hides the row, so the row count follows the active drives.
+		string _CurrentFileText = string.Empty;
+		public string CurrentFileText {
+			get => _CurrentFileText;
+			set => this.RaiseAndSetIfChanged(ref _CurrentFileText, value);
+		}
+
 		// Per-drive parallelism override, chosen live from the in-bar dropdown. CapIndex is the ComboBox
 		// selection; it maps to an actual worker cap (0 = auto), is pushed to the running scan via SetCap
 		// and persisted per drive root so the choice survives across scans and sessions.

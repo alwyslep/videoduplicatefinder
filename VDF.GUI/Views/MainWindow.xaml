@@ -1402,10 +1402,25 @@
                                         <Run Text="{Binding RemainingTime, Mode=OneWay}" />
                                     </TextBlock>
                                     <Border Width="1" Margin="3,2" Background="{actipro:ThemeResource ButtonForegroundBrush}" />
+                                    <!-- Single current-file text: compare phases etc. Hidden while the per-drive rows below carry the same info. -->
                                     <TextBlock FontSize="12" Margin="2,0" Text="{Binding ScanProgressText, Mode=OneWay}"
+                                        IsVisible="{Binding !ShowPerDriveFiles}"
                                         TextTrimming="CharacterEllipsis" MaxWidth="500" />
                                 </StackPanel>
                             </WrapPanel>
+                            <!-- Per-drive "now processing" rows: one line per drive actively reading a file.
+                                 Row count follows the active drives (a finished/idle drive's row disappears). -->
+                            <ItemsControl ItemsSource="{Binding DriveSegments}" IsVisible="{Binding ShowPerDriveFiles}" Margin="0,2,0,0">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:DriveProgressVM">
+                                        <StackPanel Orientation="Horizontal" Spacing="5"
+                                            IsVisible="{Binding CurrentFileText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+                                            <Border Width="9" Height="9" CornerRadius="2" Background="{Binding Fill}" VerticalAlignment="Center" />
+                                            <TextBlock FontSize="11" Text="{Binding CurrentFileText}" TextTrimming="CharacterEllipsis" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
                             </StackPanel>
                             <Grid
                                 x:Name="BusyIndicator"

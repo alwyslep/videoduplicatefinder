@@ -45,5 +45,11 @@ namespace VDF.Core {
 		public double FilesPerSec;
 		/// <summary>Adaptive controller's current worker concurrency for this drive (0 in static mode).</summary>
 		public int Concurrency;
+		/// <summary>Last file a worker touched on this drive (null when the drive is idle or finished).</summary>
+		public string? CurrentFile;
+		/// <summary>Sub-stage of CurrentFile (e.g. "audio fingerprint"); null/empty when untracked.</summary>
+		public string? CurrentStage;
+		public int StageCurrent;
+		public int StageMax;
 	}
 }

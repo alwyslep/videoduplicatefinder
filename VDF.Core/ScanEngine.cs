@@ -105,7 +105,7 @@ namespace VDF.Core {
 		// ── Per-drive scan progress (segmented status bar) ──
 		// Built once at GatherInfos start (file-reading phase); left null during compare phases so their
 		// IncrementProgress calls don't touch it. DoneBytes/DoneFiles mutate via Interlocked (parallel loop).
-		sealed class DriveCounter { public long TotalBytes; public int TotalFiles; public long DoneBytes; public int DoneFiles; public double Rate; public int Concurrency; public int CapOverride; }
+		sealed class DriveCounter { public long TotalBytes; public int TotalFiles; public long DoneBytes; public int DoneFiles; public double Rate; public int Concurrency; public int CapOverride; public string? CurrentFile; public string? CurrentStage; public int StageCur; public int StageMax; }
 		Dictionary<string, DriveCounter>? driveCounters;
 		string[]? driveOrder;
 		// Live per-drive parallelism override chosen from the status-bar dropdown (0 = auto). RunDriveAdaptive's
@@ -115,6 +115,13 @@ namespace VDF.Core {
 			if (dc != null && dc.TryGetValue(root, out var c)) c.CapOverride = System.Math.Max(0, cap);
 		}
 		static string DriveRootOf(string path) { try { return System.IO.Path.GetPathRoot(path) ?? "?"; } catch { return "?"; } }
+		// Last file a worker touched on this drive (+ optional sub-stage), for the per-drive "now processing"
+		// status rows. Racy last-writer-wins across that drive's workers — it's a display label, not accounting.
+		void SetDriveCurrent(string path, string? stage = null, int stageCurrent = 0, int stageMax = 0) {
+			var dc = driveCounters;
+			if (dc == null || !dc.TryGetValue(DriveRootOf(path), out var c)) return;
+			c.CurrentFile = path; c.CurrentStage = stage; c.StageCur = stageCurrent; c.StageMax = stageMax;
+		}
 		void BuildDriveCounters() {
 			var groups = new Dictionary<string, DriveCounter>(StringComparer.OrdinalIgnoreCase);
 			foreach (var e in DatabaseUtils.Database) {
@@ -131,7 +138,9 @@ namespace VDF.Core {
 			var arr = new DriveProgress[order.Length];
 			for (int i = 0; i < order.Length; i++) {
 				var c = dc[order[i]];
-				arr[i] = new DriveProgress { Root = order[i], TotalBytes = c.TotalBytes, DoneBytes = c.DoneBytes, TotalFiles = c.TotalFiles, DoneFiles = c.DoneFiles, FilesPerSec = c.Rate, Concurrency = c.Concurrency };
+				bool working = c.DoneFiles < c.TotalFiles;   // a finished drive shows no "now processing" row
+				arr[i] = new DriveProgress { Root = order[i], TotalBytes = c.TotalBytes, DoneBytes = c.DoneBytes, TotalFiles = c.TotalFiles, DoneFiles = c.DoneFiles, FilesPerSec = c.Rate, Concurrency = c.Concurrency,
+					CurrentFile = working ? c.CurrentFile : null, CurrentStage = working ? c.CurrentStage : null, StageCurrent = c.StageCur, StageMax = c.StageMax };
 			}
 			return arr;
 		}
@@ -222,6 +231,7 @@ namespace VDF.Core {
 				if (__dc != null && __dc.TryGetValue(DriveRootOf(path), out var __c)) {
 					System.Threading.Interlocked.Add(ref __c.DoneBytes, fileSize);
 					System.Threading.Interlocked.Increment(ref __c.DoneFiles);
+					if (string.Equals(__c.CurrentFile, path, StringComparison.Ordinal)) { __c.CurrentFile = null; __c.CurrentStage = null; }
 				}
 			}
 			// Periodic per-drive progress line so files/sec per drive can be read off the log (measurement/telemetry).
@@ -257,6 +267,7 @@ namespace VDF.Core {
 		// Throttled to the same cadence as IncrementProgress so a stuck file's last-reported
 		// stage (e.g. "sampling frame 2/5") hints at where it froze.
 		void ReportStage(string path, string stage, int stageCurrent = 0, int stageMax = 0) {
+			SetDriveCurrent(path, stage, stageCurrent, stageMax);   // per-drive row updates even when the global push below is throttled
 			if (lastProgressUpdate + progressUpdateIntervall > DateTime.UtcNow) return;
 			lastProgressUpdate = DateTime.UtcNow;
 			var timeRemaining = TimeSpan.FromTicks(DateTime.UtcNow.Subtract(startTime).Ticks *
@@ -1002,6 +1013,8 @@ namespace VDF.Core {
 								IncrementProgress(entry.Path, entry.FileSize);
 							return ValueTask.CompletedTask;
 						}
+
+						SetDriveCurrent(entry.Path);   // real work starts here; skipped/cached entries above never show
 
 						// Cache a cheap content fingerprint so a future scan can detect this file was
 						// MOVED (same OsHash, old path gone) and relink it without re-decoding. Runs once
