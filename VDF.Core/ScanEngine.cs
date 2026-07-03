@@ -133,7 +133,30 @@ namespace VDF.Core {
 			var slot = c.Active.GetOrAdd(Environment.CurrentManagedThreadId, static _ => new ActiveFileState());
 			slot.Path = path; slot.Stage = stage; slot.StageCur = stageCurrent; slot.StageMax = stageMax;
 		}
+		// DB-state-only "nothing left to do" predicate, mirroring ProcessEntry's skip/cache logic.
+		// Seeds the per-drive bars with already-complete work at scan start — the bar shows the
+		// drive's CUMULATIVE completion state, not this scan's throughput (the LCN ordering killed
+		// the old start-of-scan flythrough that used to fake this) — and marks those entries so
+		// their instant pass-through isn't counted a second time. Keep in sync with ProcessEntry.
+		bool EntryIsAlreadyComplete(FileEntry e) {
+			if (e.Flags.Has(EntryFlags.ThumbnailError))
+				return !Settings.AlwaysRetryFailedSampling;   // permanently skipped unless retry is on
+			if (!e.IsImage && e.mediaInfo == null) return false;
+			if (e.grayBytes == null || (e.IsImage && e.grayBytes.Count == 0)) return false;
+			if (!e.IsImage)
+				for (int i = 0; i < positionList.Count; i++)
+					if (!e.grayBytes.ContainsKey(GetGrayBytesIndex(e, positionList[i]))) return false;
+			if (Settings.EnablePartialClipDetection && !e.IsImage &&
+				!e.Flags.Has(EntryFlags.NoAudioTrack) &&
+				!e.Flags.Has(EntryFlags.AudioFingerprintError) &&
+				!e.Flags.Has(EntryFlags.SilentAudioTrack) &&
+				e.AudioFingerprint == null) return false;
+			return true;
+		}
+		// In-scope entries already complete at scan start, pre-counted into the progress totals.
+		int preseededFiles;
 		void BuildDriveCounters() {
+			int preseeded = 0;
 			var groups = new Dictionary<string, DriveCounter>(StringComparer.OrdinalIgnoreCase);
 			foreach (var e in DatabaseUtils.Database) {
 				// Count only entries this scan will actually touch. Out-of-scope entries never
@@ -144,6 +167,11 @@ namespace VDF.Core {
 				var root = DriveRootOf(e.Path);
 				if (!groups.TryGetValue(root, out var dc)) { dc = new DriveCounter(); groups[root] = dc; }
 				dc.TotalBytes += e.FileSize; dc.TotalFiles++;
+				if (EntryIsAlreadyComplete(e)) {
+					dc.DoneBytes += e.FileSize;
+					dc.DoneFiles++;
+					preseeded++;
+				}
 				// Audio-fingerprint inventory: cumulative DB state (not this scan's progress), so the
 				// user can see coverage grow across interrupted scans. RAW holdings by user request:
 				// N counts every entry carrying a fingerprint (flags included), M = N plus the ones a
@@ -166,6 +194,8 @@ namespace VDF.Core {
 					kv.Value.CapOverride = cap;
 			var keys = new List<string>(groups.Keys); keys.Sort(StringComparer.OrdinalIgnoreCase);
 			driveCounters = groups; driveOrder = keys.ToArray();
+			preseededFiles = preseeded;
+			processedFiles = preseeded;   // global counter starts at the cumulative baseline too
 		}
 		DriveProgress[]? DriveSnapshot() {
 			var dc = driveCounters; var order = driveOrder;
@@ -242,8 +272,20 @@ namespace VDF.Core {
 			driveCounters = null;
 			driveOrder = null;
 			processedFiles = 0;
+			preseededFiles = 0;   // gather re-seeds via BuildDriveCounters; compare phases start from zero
 			lastProgressUpdate = DateTime.MinValue;
 			lastCheckpointTime = DateTime.UtcNow;
+		}
+
+		// ETA from files processed THIS scan: the progress counters start pre-seeded with already-
+		// complete work (cumulative bars), so the naive elapsed/processed rate would divide by
+		// thousands of files this scan never touched and report a near-zero remaining time.
+		TimeSpan EstimateRemaining() {
+			int done = processedFiles - preseededFiles;
+			if (done < 1) done = 1;
+			long remaining = scanProgressMaxValue - processedFiles;
+			if (remaining < 0) remaining = 0;
+			return TimeSpan.FromTicks(DateTime.UtcNow.Subtract(startTime).Ticks * remaining / done);
 		}
 		void ResetExcludedLogging() {
 			excludedReasonCounts.Clear();
@@ -297,8 +339,7 @@ namespace VDF.Core {
 								lastProgressUpdate + progressUpdateIntervall < DateTime.UtcNow;
 			if (!pushUpdate) return;
 			lastProgressUpdate = DateTime.UtcNow;
-			var timeRemaining = TimeSpan.FromTicks(DateTime.UtcNow.Subtract(startTime).Ticks *
-									(scanProgressMaxValue - (processedFiles + 1)) / (processedFiles + 1));
+			var timeRemaining = EstimateRemaining();
 			Progress?.Invoke(this,
 							new ScanProgressChangedEventArgs {
 								CurrentPosition = processedFiles,
@@ -319,8 +360,7 @@ namespace VDF.Core {
 			SetDriveCurrent(path, stage, stageCurrent, stageMax);   // per-drive row updates even when the global push below is throttled
 			if (lastProgressUpdate + progressUpdateIntervall > DateTime.UtcNow) return;
 			lastProgressUpdate = DateTime.UtcNow;
-			var timeRemaining = TimeSpan.FromTicks(DateTime.UtcNow.Subtract(startTime).Ticks *
-									(scanProgressMaxValue - (processedFiles + 1)) / (processedFiles + 1));
+			var timeRemaining = EstimateRemaining();
 			Progress?.Invoke(this,
 							new ScanProgressChangedEventArgs {
 								CurrentPosition = processedFiles,
@@ -342,8 +382,7 @@ namespace VDF.Core {
 		// that file actually finished. The last worker to park publishes the fully-drained truth.
 		void PushProgressSnapshot() {
 			lastProgressUpdate = DateTime.UtcNow;
-			var timeRemaining = TimeSpan.FromTicks(DateTime.UtcNow.Subtract(startTime).Ticks *
-									(scanProgressMaxValue - (processedFiles + 1)) / (processedFiles + 1));
+			var timeRemaining = EstimateRemaining();
 			Progress?.Invoke(this,
 							new ScanProgressChangedEventArgs {
 								CurrentPosition = processedFiles,
@@ -1103,6 +1142,12 @@ namespace VDF.Core {
 					pauseTokenSource.WaitWhilePaused(token);
 					if (stopRequested) return ValueTask.CompletedTask;   // safe stop: not-yet-started entries are skipped (covers the static Parallel path too)
 
+					// Entries complete at scan start were pre-counted into the bars by
+					// BuildDriveCounters — their instant pass-through must not count a second time.
+					// Same predicate both places, on fields the scan doesn't mutate for already-
+					// complete entries, so the two classifications can't diverge.
+					bool preCounted = EntryIsAlreadyComplete(entry);
+
 					// Once per entry, when a real tool runs (ffprobe/frame sampling/audio fingerprint):
 					// the per-drive "analyzed" count is what separates genuine work from the instant
 					// cache/flag skips that fill a bar to 100% in seconds.
@@ -1145,12 +1190,13 @@ namespace VDF.Core {
 							entry.invalid = true;
 							if (!wasInvalid && skipReason != null)
 								LogExcludedFile(entry, skipReason);
-							if (reportProgress)
+							if (reportProgress && !preCounted)
 								IncrementProgress(entry.Path, entry.FileSize);
 							return ValueTask.CompletedTask;
 						}
 
-						SetDriveCurrent(entry.Path);   // real work starts here; skipped/cached entries above never show
+						if (!preCounted)
+							SetDriveCurrent(entry.Path);   // real work starts here; skipped/cached/pre-counted entries never show
 
 						// Cache a cheap content fingerprint so a future scan can detect this file was
 						// MOVED (same OsHash, old path gone) and relink it without re-decoding. Runs once
@@ -1188,7 +1234,8 @@ namespace VDF.Core {
 										onProgress: p => ReportStage(cachedAudioPath, audioStageLabel, (int)(p * 100), 100));
 									MarkFingerprinted();
 								}
-								IncrementProgress(entry.Path, entry.FileSize);
+								if (!preCounted)
+									IncrementProgress(entry.Path, entry.FileSize);
 								return ValueTask.CompletedTask;
 							}
 						}
@@ -1202,7 +1249,8 @@ namespace VDF.Core {
 							var dcM = driveCounters;
 							if (dcM != null && dcM.TryGetValue(DriveRootOf(entry.Path), out var cM))
 								System.Threading.Interlocked.Increment(ref cM.MissingFiles);
-							IncrementProgress(entry.Path, entry.FileSize);
+							if (!preCounted)
+								IncrementProgress(entry.Path, entry.FileSize);
 							return ValueTask.CompletedTask;
 						}
 						if (entry.mediaInfo == null && !entry.IsImage) {
@@ -1257,7 +1305,8 @@ namespace VDF.Core {
 							MarkFingerprinted();
 						}
 
-						IncrementProgress(entry.Path, entry.FileSize);
+						if (!preCounted)
+							IncrementProgress(entry.Path, entry.FileSize);
 						return ValueTask.CompletedTask;
 					}
 					catch (OperationCanceledException) {
@@ -1270,7 +1319,8 @@ namespace VDF.Core {
 						Logger.Instance.Info($"Unhandled error processing '{entry.Path}': {ex}");
 						entry.invalid = true;
 						entry.Flags.Set(EntryFlags.ThumbnailError);
-						IncrementProgress(entry.Path, entry.FileSize);
+						if (!preCounted)
+							IncrementProgress(entry.Path, entry.FileSize);
 						return ValueTask.CompletedTask;
 					}
 				}
