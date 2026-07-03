@@ -184,6 +184,20 @@ namespace VDF.GUI.ViewModels {
 			get => _BusyHeadingText;
 			set => this.RaiseAndSetIfChanged(ref _BusyHeadingText, value);
 		}
+		// Pause is two-phase: "pausing…" while in-flight files drain to 100%, then "paused" once the
+		// last worker parks (detected when a progress snapshot arrives with zero active rows). The
+		// overlay bar shows the real drain fraction — initial in-flight count → 0 — during phase one.
+		bool _IsPauseDraining;
+		public bool IsPauseDraining {
+			get => _IsPauseDraining;
+			set => this.RaiseAndSetIfChanged(ref _IsPauseDraining, value);
+		}
+		double _PauseDrainProgress;
+		public double PauseDrainProgress {
+			get => _PauseDrainProgress;
+			set => this.RaiseAndSetIfChanged(ref _PauseDrainProgress, value);
+		}
+		int pauseDrainInitialActive;
 		bool _IsReadyToCompare;
 		public bool IsReadyToCompare {
 			get => _IsReadyToCompare;
@@ -662,6 +676,20 @@ namespace VDF.GUI.ViewModels {
 				TimeElapsed = e.Elapsed.Format();
 				ScanProgressMaxValue = e.MaxPosition;
 				UpdateDriveSegments(e.Drives);
+				if (IsPauseDraining) {
+					// Each parking worker fires an unthrottled snapshot, so the drain is tracked in
+					// real time; the last snapshot carries zero active rows → safely parked.
+					int active = e.Drives?.Sum(d => d.ActiveFiles?.Length ?? 0) ?? 0;
+					if (active > pauseDrainInitialActive) pauseDrainInitialActive = active;
+					PauseDrainProgress = pauseDrainInitialActive > 0
+						? (double)(pauseDrainInitialActive - active) / pauseDrainInitialActive : 1;
+					if (active == 0 && IsPaused) {
+						IsPauseDraining = false;
+						PauseDrainProgress = 1;
+						BusyHeadingText = App.Lang["Busy.Paused.Title"];
+						IsBusyOverlayText = App.Lang["Busy.Paused.Detail"];
+					}
+				}
 			});
 
 		void Scanner_ScanAborted(object? sender, EventArgs e) =>
@@ -687,6 +715,7 @@ namespace VDF.GUI.ViewModels {
 				// File-list building ignores the pause token, so a stage run can complete while
 				// paused — clear it or the next scan starts with Resume/Pause swapped.
 				IsPaused = false;
+				IsPauseDraining = false;
 				IsReadyToCompare = true;
 				IsGathered = true;
 				ScanProgressText = string.Empty;
@@ -1592,6 +1621,7 @@ Non-Windows setup:
 			SyncCoreSettings();
 
 			BusyHeadingText = App.Lang["MainWindow.Busy.PleaseWait"];
+			IsPauseDraining = false;
 			ChangeIsBusyMessage();
 			IsBusy = true;
 
@@ -1689,8 +1719,21 @@ Non-Windows setup:
 		public ReactiveCommand<Unit, Unit> PauseScanCommand => ReactiveCommand.Create(() => {
 			Scanner.Pause();
 			IsPaused = true;
-			BusyHeadingText = App.Lang["Busy.Paused.Title"];
-			IsBusyOverlayText = App.Lang["Busy.Paused.Detail"];
+			// In-flight files keep running to 100% — show "pausing…" with a drain bar until the
+			// last one finishes; Scanner_Progress flips to "paused" when active rows reach zero.
+			pauseDrainInitialActive = DriveSegments.Sum(s => s.ActiveFileLines.Count);
+			if (pauseDrainInitialActive > 0) {
+				IsPauseDraining = true;
+				PauseDrainProgress = 0;
+				BusyHeadingText = App.Lang["Busy.Pausing.Title"];
+				IsBusyOverlayText = App.Lang["Busy.Pausing.Detail"];
+			}
+			else {
+				IsPauseDraining = false;
+				PauseDrainProgress = 1;
+				BusyHeadingText = App.Lang["Busy.Paused.Title"];
+				IsBusyOverlayText = App.Lang["Busy.Paused.Detail"];
+			}
 		}, CanPauseScan);
 
 		IObservable<bool> CanPauseScan {
@@ -1700,6 +1743,7 @@ Non-Windows setup:
 
 		public ReactiveCommand<Unit, Unit> ResumeScanCommand => ReactiveCommand.Create(() => {
 			IsPaused = false;
+			IsPauseDraining = false;
 			Scanner.Resume();
 			BusyHeadingText = App.Lang["MainWindow.Busy.PleaseWait"];
 			ChangeIsBusyMessage();
@@ -1712,6 +1756,7 @@ Non-Windows setup:
 
 		public ReactiveCommand<Unit, Unit> StopScanCommand => ReactiveCommand.Create(() => {
 			IsPaused = false;
+			IsPauseDraining = false;
 			// Safe stop (gather phase, first press): the UI stays live so the per-drive rows can be
 			// watched draining as each in-flight file finishes to 100%; pressing Stop again force-aborts.
 			// Only a hard cancellation gets the blocking "stopping..." overlay (it resolves quickly).
