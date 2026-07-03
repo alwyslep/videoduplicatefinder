@@ -1232,14 +1232,25 @@ namespace VDF.Core {
 					if (!byDrive.TryGetValue(r, out var lst)) { lst = new List<FileEntry>(); byDrive[r] = lst; }
 					lst.Add(e);
 				}
-				// Order each drive's queue by on-disk position (first-extent LCN) so a spindle drive's
-				// head sweeps the platter once instead of seeking randomly between consecutive files —
-				// concurrent workers then also read from neighbouring regions. Database iteration order
-				// is effectively random, the worst case for a mechanical drive. Wasted-but-harmless on
-				// SSDs; skipped off-Windows (GetFirstLcn is constant there and the sort is stable).
+				// Probe each drive's seek latency once, up front — it now drives two decisions: the
+				// LCN sort below (spinning only) and the static path's per-device DOP further down.
+				var seekLat = new Dictionary<string, double?>(StringComparer.OrdinalIgnoreCase);
+				foreach (var kv in byDrive)
+					seekLat[kv.Key] = ProbeSeekLatencyMs(kv.Value);
+				// Order each SPINNING drive's queue by on-disk position (first-extent LCN) so its
+				// single head assembly sweeps the platter once instead of seeking randomly between
+				// consecutive files — database iteration order is effectively random, the worst case
+				// for a mechanical drive. NAND/SSD drives skip the sort: random access costs nothing
+				// there, so the per-file FSCTL queries would be pure waste. Classification reuses the
+				// empirical probe (the storage MediaType API reports "Unspecified" behind USB bridges).
 				if (OperatingSystem.IsWindows()) {
-					var lcnSw = System.Diagnostics.Stopwatch.StartNew();
 					foreach (var kv in byDrive) {
+						double? lat = seekLat[kv.Key];
+						if (lat == null || lat.Value < SsdHddLatencyThresholdMs) {
+							Logger.Instance.Info($"[lcn] {kv.Key}: fast/unprobed (seek {(lat.HasValue ? lat.Value.ToString("0.0") : "?")}ms) — keeping database order");
+							continue;
+						}
+						var lcnSw = System.Diagnostics.Stopwatch.StartNew();
 						var keyed = new List<(long Key, FileEntry E)>(kv.Value.Count);
 						foreach (var e in kv.Value) {
 							if (cancelationTokenSource.IsCancellationRequested) break;
@@ -1248,8 +1259,8 @@ namespace VDF.Core {
 						if (keyed.Count != kv.Value.Count) break;   // cancelled mid-walk: keep original order
 						keyed.Sort((a, b) => a.Key.CompareTo(b.Key));
 						for (int i = 0; i < keyed.Count; i++) kv.Value[i] = keyed[i].E;
+						Logger.Instance.Info($"[lcn] {kv.Key}: spinning (seek {lat.Value:0.0}ms) — ordered {kv.Value.Count:N0} entries by on-disk position in {lcnSw.ElapsedMilliseconds:N0}ms");
 					}
-					Logger.Instance.Info($"[lcn] ordered {byDrive.Sum(k => k.Value.Count):N0} entries on {byDrive.Count} drive(s) by on-disk position in {lcnSw.ElapsedMilliseconds:N0}ms");
 				}
 				// Adaptive path: each drive self-tunes its concurrency from live files/sec (global CPU-capped). Static
 				// per-device split is the fallback (AdaptiveConcurrency off, or DOP=1 which stays strictly serial).
@@ -1268,7 +1279,7 @@ namespace VDF.Core {
 				bool forceSerial = ssdDop == 1;                                     // user pinned single-thread -> honour globally
 				var groups = new List<(string Root, List<FileEntry> Entries, double? Lat)>();
 				foreach (var kv in byDrive)
-					groups.Add((kv.Key, kv.Value, forceSerial ? (double?)null : ProbeSeekLatencyMs(kv.Value)));
+					groups.Add((kv.Key, kv.Value, seekLat[kv.Key]));   // probed once above, before the LCN sort
 				int fastCount = 0;
 				foreach (var g in groups) if (g.Lat != null && g.Lat.Value < SsdHddLatencyThresholdMs) fastCount++;
 				int fastBudget = ssdDop < 0 ? Environment.ProcessorCount : ssdDop;
