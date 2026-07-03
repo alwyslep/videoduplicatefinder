@@ -115,7 +115,7 @@ namespace VDF.Core {
 		// concurrent workers on the same drive each get their own stable slot instead of stomping a single
 		// last-writer-wins field — this is what lets the UI show N rows for N active workers.
 		sealed class ActiveFileState { public string Path = ""; public string? Stage; public int StageCur; public int StageMax; }
-		sealed class DriveCounter { public long TotalBytes; public int TotalFiles; public long DoneBytes; public int DoneFiles; public double Rate; public int CapOverride; public readonly ConcurrentDictionary<int, ActiveFileState> Active = new(); }
+		sealed class DriveCounter { public long TotalBytes; public int TotalFiles; public long DoneBytes; public int DoneFiles; public double Rate; public int CapOverride; public int Analyzed; public int MissingFiles; public readonly ConcurrentDictionary<int, ActiveFileState> Active = new(); }
 		Dictionary<string, DriveCounter>? driveCounters;
 		string[]? driveOrder;
 		// Live per-drive parallelism override chosen from the status-bar dropdown (0 = auto). RunDriveAdaptive's
@@ -136,6 +136,11 @@ namespace VDF.Core {
 		void BuildDriveCounters() {
 			var groups = new Dictionary<string, DriveCounter>(StringComparer.OrdinalIgnoreCase);
 			foreach (var e in DatabaseUtils.Database) {
+				// Count only entries this scan will actually touch. Out-of-scope entries never
+				// report progress (InvalidEntry → reportProgress=false), so counting them left
+				// whole drives stuck below 100% — and a drive with nothing in scope shouldn't get
+				// a bar (or a seek probe / LCN walk) at all.
+				if (!Settings.ScanAgainstEntireDatabase && !IsInIncludeScope(e)) continue;
 				var root = DriveRootOf(e.Path);
 				if (!groups.TryGetValue(root, out var dc)) { dc = new DriveCounter(); groups[root] = dc; }
 				dc.TotalBytes += e.FileSize; dc.TotalFiles++;
@@ -168,7 +173,7 @@ namespace VDF.Core {
 				// the two numbers can legitimately differ for a while during the drain; showing the live
 				// count instead of the target keeps the label truthful throughout that transition instead of
 				// silently claiming "1" while several rows are still visibly active underneath it.
-				arr[i] = new DriveProgress { Root = order[i], TotalBytes = c.TotalBytes, DoneBytes = c.DoneBytes, TotalFiles = c.TotalFiles, DoneFiles = c.DoneFiles, FilesPerSec = c.Rate, Concurrency = active.Length, ActiveFiles = active };
+				arr[i] = new DriveProgress { Root = order[i], TotalBytes = c.TotalBytes, DoneBytes = c.DoneBytes, TotalFiles = c.TotalFiles, DoneFiles = c.DoneFiles, FilesPerSec = c.Rate, Concurrency = active.Length, ActiveFiles = active, Analyzed = c.Analyzed, Missing = c.MissingFiles };
 			}
 			return arr;
 		}
@@ -1068,7 +1073,12 @@ namespace VDF.Core {
 		async Task GatherInfos() {
 			try {
 				currentStageLabel = string.Empty;
-				InitProgress(DatabaseUtils.Database.Count);
+				// Progress universe = entries this scan will actually touch (see BuildDriveCounters);
+				// with the full DB as the max, a narrowed scope could never reach 100%.
+				int inScopeCount = 0;
+				foreach (var e in DatabaseUtils.Database)
+					if (Settings.ScanAgainstEntireDatabase || IsInIncludeScope(e)) inScopeCount++;
+				InitProgress(inScopeCount);
 				BuildDriveCounters();
 				ValueTask ProcessEntry(FileEntry entry, CancellationToken token) {
 					// Park BEFORE the stop check: a worker sleeping through a pause has already claimed this
@@ -1077,6 +1087,18 @@ namespace VDF.Core {
 					if (pauseTokenSource.IsPaused) PushProgressSnapshot();
 					pauseTokenSource.WaitWhilePaused(token);
 					if (stopRequested) return ValueTask.CompletedTask;   // safe stop: not-yet-started entries are skipped (covers the static Parallel path too)
+
+					// Once per entry, when a real tool runs (ffprobe/frame sampling/audio fingerprint):
+					// the per-drive "analyzed" count is what separates genuine work from the instant
+					// cache/flag skips that fill a bar to 100% in seconds.
+					bool analyzedCounted = false;
+					void MarkAnalyzed() {
+						if (analyzedCounted) return;
+						analyzedCounted = true;
+						var dcA = driveCounters;
+						if (dcA != null && dcA.TryGetValue(DriveRootOf(entry.Path), out var cA))
+							System.Threading.Interlocked.Increment(ref cA.Analyzed);
+					}
 
 					try {
 						entry.invalid = InvalidEntry(entry, out bool reportProgress, out string? invalidReason);
@@ -1139,6 +1161,7 @@ namespace VDF.Core {
 									string cachedAudioPath = entry.Path;
 									string audioStageLabel = T("Scan.Stage.AudioFingerprint");
 									ReportStage(cachedAudioPath, audioStageLabel);
+									MarkAnalyzed();
 									ExtractAudioFingerprint(entry, cancelationTokenSource.Token,
 										onProgress: p => ReportStage(cachedAudioPath, audioStageLabel, (int)(p * 100), 100));
 								}
@@ -1153,11 +1176,15 @@ namespace VDF.Core {
 						// ffprobe/ffmpeg on a missing path (which only errors).
 						if (!File.Exists(entry.Path)) {
 							entry.invalid = true;
+							var dcM = driveCounters;
+							if (dcM != null && dcM.TryGetValue(DriveRootOf(entry.Path), out var cM))
+								System.Threading.Interlocked.Increment(ref cM.MissingFiles);
 							IncrementProgress(entry.Path, entry.FileSize);
 							return ValueTask.CompletedTask;
 						}
 						if (entry.mediaInfo == null && !entry.IsImage) {
 							ReportStage(entry.Path, T("Scan.Stage.Probing"));
+							MarkAnalyzed();
 							MediaInfo? info = FFProbeEngine.GetMediaInfo(entry.Path, Settings.ExtendedFFToolsLogging);
 							if (info == null) {
 								entry.invalid = true;
@@ -1175,6 +1202,7 @@ namespace VDF.Core {
 
 
 						if (entry.IsImage && entry.grayBytes.Count == 0) {
+							MarkAnalyzed();
 							if (!GetGrayBytesFromImage(entry, Settings.UseExifCreationDate, Settings.ExtendedFFToolsLogging))
 								entry.invalid = true;
 						}
@@ -1182,6 +1210,7 @@ namespace VDF.Core {
 							string entryPath = entry.Path;
 							int totalSamples = positionList.Count;
 							string samplingLabel = T("Scan.Stage.SamplingFrames");
+							MarkAnalyzed();
 							if (!FfmpegEngine.GetGrayBytesFromVideo(entry, positionList, Settings.MaxSamplingDurationSeconds,
 									Settings.ExtendedFFToolsLogging,
 									onSampleComplete: (done) => ReportStage(entryPath, samplingLabel, done, totalSamples)))
@@ -1199,6 +1228,7 @@ namespace VDF.Core {
 							string audioPath = entry.Path;
 							string audioLabel = T("Scan.Stage.AudioFingerprint");
 							ReportStage(audioPath, audioLabel);
+							MarkAnalyzed();
 							ExtractAudioFingerprint(entry, cancelationTokenSource.Token,
 								onProgress: p => ReportStage(audioPath, audioLabel, (int)(p * 100), 100));
 						}
@@ -1234,9 +1264,11 @@ namespace VDF.Core {
 				}
 				// Probe each drive's seek latency once, up front — it now drives two decisions: the
 				// LCN sort below (spinning only) and the static path's per-device DOP further down.
+				// Drives with nothing in scope (no counter) are never read this scan, so don't spin
+				// them up with a probe either.
 				var seekLat = new Dictionary<string, double?>(StringComparer.OrdinalIgnoreCase);
 				foreach (var kv in byDrive)
-					seekLat[kv.Key] = ProbeSeekLatencyMs(kv.Value);
+					seekLat[kv.Key] = driveCounters != null && driveCounters.ContainsKey(kv.Key) ? ProbeSeekLatencyMs(kv.Value) : null;
 				// Order each SPINNING drive's queue by on-disk position (first-extent LCN) so its
 				// single head assembly sweeps the platter once instead of seeking randomly between
 				// consecutive files — database iteration order is effectively random, the worst case
@@ -1245,6 +1277,7 @@ namespace VDF.Core {
 				// empirical probe (the storage MediaType API reports "Unspecified" behind USB bridges).
 				if (OperatingSystem.IsWindows()) {
 					foreach (var kv in byDrive) {
+						if (driveCounters == null || !driveCounters.ContainsKey(kv.Key)) continue;   // nothing in scope: never read this scan
 						double? lat = seekLat[kv.Key];
 						if (lat == null || lat.Value < SsdHddLatencyThresholdMs) {
 							Logger.Instance.Info($"[lcn] {kv.Key}: fast/unprobed (seek {(lat.HasValue ? lat.Value.ToString("0.0") : "?")}ms) — keeping database order");

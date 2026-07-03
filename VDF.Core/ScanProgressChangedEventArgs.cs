@@ -48,6 +48,11 @@ namespace VDF.Core {
 		/// <summary>One row per worker currently mid-file on this drive — length tracks live concurrency,
 		/// so a drive running N workers shows N rows. Empty when the drive is idle or finished.</summary>
 		public DriveActiveFile[]? ActiveFiles;
+		/// <summary>Files that actually ran a tool this scan (ffprobe/frame sampling/audio fingerprint)
+		/// — everything else completed instantly from cache or flags. Explains a fast-filling bar.</summary>
+		public int Analyzed;
+		/// <summary>Entries whose file no longer exists at its recorded path (skipped in milliseconds).</summary>
+		public int Missing;
 	}
 
 	/// <summary>One worker's in-progress file on a drive, for a per-drive "now processing" row.</summary>

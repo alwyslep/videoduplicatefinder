@@ -88,7 +88,14 @@ namespace VDF.GUI.ViewModels {
 				var d = drives[i];
 				var seg = DriveSegments[i];
 				seg.Fraction = d.TotalBytes > 0 ? (double)d.DoneBytes / d.TotalBytes : 0;
-				seg.Label = $"{d.Root}  {seg.Fraction * 100:0}%  {d.DoneFiles:N0}/{d.TotalFiles:N0}" + (d.Concurrency > 0 ? $"  ·  {d.FilesPerSec:0.0} f/s  ·  x{d.Concurrency}" : "");
+				// "분석 N" = files that actually ran a tool this scan, "부재 N" = entries whose file is
+				// gone from its recorded path — together they explain a bar that fills in seconds
+				// (everything else completed instantly from cache/flags), so 100% no longer reads
+				// as "this drive was fully re-analysed".
+				seg.Label = $"{d.Root}  {seg.Fraction * 100:0}%  {d.DoneFiles:N0}/{d.TotalFiles:N0}"
+					+ (d.Concurrency > 0 ? $"  ·  {d.FilesPerSec:0.0} f/s  ·  x{d.Concurrency}" : "")
+					+ (d.Analyzed > 0 ? $"  ·  {App.Lang["Drive.Analyzed"]} {d.Analyzed:N0}" : "")
+					+ (d.Missing > 0 ? $"  ·  {App.Lang["Drive.Missing"]} {d.Missing:N0}" : "");
 				// One line per worker currently active on this drive — the collection's length IS the
 				// live concurrency shown to the user, so 2+ workers naturally render 2+ lines.
 				seg.ActiveFileLines.Clear();

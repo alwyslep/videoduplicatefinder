@@ -58,6 +58,8 @@
 	"BusyMessages18": "Outsmarting copy–paste’s greatest hits.",
 	"BusyMessages19": "Because two of the same is one too many.",
 	"BusyMessages20": "Stay calm—your files are about to make sense.",
+	"Drive.Analyzed": "analyzed",
+	"Drive.Missing": "missing",
 	"Busy.Pausing.Title": "Pausing…",
 	"Busy.Pausing.Detail": "Finishing in-flight files to 100% — switches to 'Paused' once they're all done.",
 	"Busy.Paused.Title": "Paused",
