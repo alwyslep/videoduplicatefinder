@@ -47,12 +47,15 @@ namespace VDF.Core.FFTools.FFmpegNative {
 		private const double ShadowSeconds = 3.0;   // covers ShadowFrames plus the FrameSize lookahead
 		private const int ShadowFrames = 16;        // ≈ 2 s of frames cross-checked at every seam
 		private const int MinDurationSeconds = 60;  // shorter files: sequential is fine
-		private const long QueuedBytesCap = 512L * 1024 * 1024;
+		private const long QueuedBytesCap = 512L * 1024 * 1024;        // per file
+		private const long GlobalQueuedBytesCap = 1024L * 1024 * 1024; // all files together
+		private const long PerFileFloorBytes = 32L * 1024 * 1024;      // a reader below this never stalls on the global cap
 		private const int ReadTimeoutMs = 120_000;
 		private const int MaxFramesPerPacket = 10_000;
 
 		private static int maxDecodeThreads;
 		private static SemaphoreSlim decodeGate = new(1, 1);
+		private static long totalQueuedBytes; // process-wide cloned-packet RAM across concurrent files
 
 		/// <summary>
 		/// Process-wide decode-thread cap, shared by all drives/files. 0 or 1 disables
@@ -112,7 +115,12 @@ namespace VDF.Core.FFTools.FFmpegNative {
 			AVPacket* pkt = null;
 			var segments = new List<Segment>();
 			long queuedBytes = 0;
+			Action<long> onBytesFreed = v => {
+				Interlocked.Add(ref queuedBytes, -v);
+				Interlocked.Add(ref totalQueuedBytes, -v);
+			};
 			string fileName = Path.GetFileName(filePath);
+			int prevLogLevel = int.MinValue;
 
 			// Interrupt callback state — same per-operation deadline scheme as AudioStreamDecoder.
 			long timeoutTicks = (long)(ReadTimeoutMs / 1000.0 * Stopwatch.Frequency);
@@ -127,6 +135,11 @@ namespace VDF.Core.FFTools.FFmpegNative {
 			}
 
 			try {
+				// Same noisy-warning suppression as the sequential native path — without it
+				// the reader plus N workers flood stderr at FFmpeg's default INFO level.
+				prevLogLevel = ffmpeg.av_log_get_level();
+				ffmpeg.av_log_set_level(extendedLogging ? ffmpeg.AV_LOG_ERROR : ffmpeg.AV_LOG_FATAL);
+
 				fmt = ffmpeg.avformat_alloc_context();
 				if (fmt == null) return Fallback("failed to allocate format context");
 				fmt->interrupt_callback = new AVIOInterruptCB { callback = interruptCb };
@@ -194,8 +207,7 @@ namespace VDF.Core.FFTools.FFmpegNative {
 				}
 
 				void Dispatch(Segment seg, long spLocal, int rate) {
-					seg.Work = StartWorker(seg, parPtr, rate, spLocal, ct, extendedLogging, fileName,
-						v => Interlocked.Add(ref queuedBytes, -v));
+					seg.Work = StartWorker(seg, parPtr, rate, spLocal, ct, extendedLogging, fileName, onBytesFreed);
 				}
 
 				while (true) {
@@ -245,6 +257,7 @@ namespace VDF.Core.FFTools.FFmpegNative {
 						seg.Packets.Add((IntPtr)clone);
 						seg.PacketBytes += clone->size;
 						Interlocked.Add(ref queuedBytes, clone->size);
+						Interlocked.Add(ref totalQueuedBytes, clone->size);
 					}
 
 					// Dispatch segments whose decode range the reader has fully passed.
@@ -253,9 +266,24 @@ namespace VDF.Core.FFTools.FFmpegNative {
 					while (nextDispatch < segments.Count && pktIndex >= (nextDispatch + 1) * segPkts + shadowPkts)
 						Dispatch(segments[nextDispatch++], sp, srcRate);
 
-					// RAM backstop — decode normally outruns the disk, so this never trips.
-					while (Interlocked.Read(ref queuedBytes) > QueuedBytesCap) {
+					// RAM backstop — decode normally outruns the disk, so this rarely trips.
+					// Stall on the per-file cap, or on the global cap when this file holds a
+					// non-trivial share. Progress guarantee: bytes only drain via dispatched
+					// workers, so if everything this file holds is undispatched (the reader
+					// itself is the only thing that could free them) fall back instead of
+					// sleeping forever — e.g. one >512 MB segment of very-high-bitrate audio.
+					while (true) {
+						long own = Interlocked.Read(ref queuedBytes);
+						long global = Interlocked.Read(ref totalQueuedBytes);
+						bool stall = own > QueuedBytesCap ||
+							(global > GlobalQueuedBytesCap && own > PerFileFloorBytes);
+						if (!stall) break;
 						if (ct.IsCancellationRequested) return (true, null);
+						long undispatched = 0;
+						for (int k = nextDispatch; k < segments.Count; k++)
+							undispatched += segments[k].PacketBytes;
+						if (undispatched >= own)
+							return Fallback("segment bytes exceed RAM cap");
 						Thread.Sleep(5);
 					}
 
@@ -274,8 +302,24 @@ namespace VDF.Core.FFTools.FFmpegNative {
 				if (shortPktIndex >= 0 && shortPktIndex != pktIndex - 1)
 					return Fallback("short packet mid-stream");
 
-				// EOF: open-end the tail segment and dispatch everything left.
+				// EOF: a tail segment materialised only by the warmup lookahead — or left
+				// without a single completable frame window — can never emit, which would
+				// force a guaranteed seam-check fallback (double decode) for file lengths
+				// near a segment boundary. Fold the tail into the previous segment: it is
+				// provably undispatched here (dispatch needs pktIndex ≥ N·segPkts+shadowPkts,
+				// which lies past EOF) and its decode range already holds every tail packet.
 				var lastSeg = segments[^1];
+				if (segments.Count >= 2 && nextDispatch < segments.Count - 1) {
+					long emitFromFrame = CeilDiv(OutSample(lastSeg.EmitStartPkt, sp, srcRate), ChromaContext.FrameHop);
+					long availableOut = OutSample(pktIndex, sp, srcRate);
+					// Conservative margin (one extra hop) for flush residue / a short final packet;
+					// over-folding is safe — the previous segment just decodes a slightly longer tail.
+					if (availableOut < emitFromFrame * ChromaContext.FrameHop + Chroma.FrameSize + ChromaContext.FrameHop) {
+						FreeSegment(lastSeg, onBytesFreed);
+						segments.RemoveAt(segments.Count - 1);
+						lastSeg = segments[^1];
+					}
+				}
 				lastSeg.IsLast = true;
 				lastSeg.EmitEndPkt = long.MaxValue;
 				while (nextDispatch < segments.Count)
@@ -348,12 +392,14 @@ namespace VDF.Core.FFTools.FFmpegNative {
 					if (seg.Work != null) {
 						try { seg.Work.GetAwaiter().GetResult(); } catch { }
 					}
-					seg.FreePackets();
+					FreeSegment(seg, onBytesFreed); // idempotent — keeps the global byte counter honest
 				}
 				if (parCopy != null) {
 					var pc = parCopy;
 					ffmpeg.avcodec_parameters_free(&pc);
 				}
+				if (prevLogLevel != int.MinValue)
+					ffmpeg.av_log_set_level(prevLogLevel);
 				GC.KeepAlive(interruptCb);
 			}
 		}
@@ -364,9 +410,12 @@ namespace VDF.Core.FFTools.FFmpegNative {
 		/// </summary>
 		private static Task<WorkerResult?> StartWorker(Segment seg, IntPtr par, int srcRate, long sp,
 			CancellationToken ct, bool extendedLogging, string fileName, Action<long> onBytesFreed) {
+			// Pin the gate instance: the MaxDecodeThreads setter swaps the static field,
+			// and Wait/Release must always pair on the same semaphore.
+			var gate = decodeGate;
 			return Task.Run(async () => {
 				try {
-					await decodeGate.WaitAsync(ct).ConfigureAwait(false);
+					await gate.WaitAsync(ct).ConfigureAwait(false);
 				}
 				catch (OperationCanceledException) {
 					FreeSegment(seg, onBytesFreed);
@@ -377,7 +426,7 @@ namespace VDF.Core.FFTools.FFmpegNative {
 				}
 				finally {
 					FreeSegment(seg, onBytesFreed);
-					decodeGate.Release();
+					gate.Release();
 				}
 			});
 		}
