@@ -72,6 +72,12 @@ namespace VDF.Core {
 		// that then have to drain (visible as "starts at 4, shrinks to 1" after every restart).
 		public Dictionary<string, int> DriveWorkerCaps = new(StringComparer.OrdinalIgnoreCase);
 
+		// Segment-parallel audio fingerprint decode: 0 or 1 = existing sequential path
+		// (default), N>1 = decode each file in parallel segments with a process-wide
+		// N-thread cap. Requires the native FFmpeg binding; unsupported files fall
+		// back to the sequential path per-file. See PARALLEL-AUDIO-DECODE-DESIGN.md.
+		public int ParallelAudioDecodeThreads;
+
 		public string CustomFFArguments = string.Empty;
 		public string CustomDatabaseFolder = string.Empty;
 

@@ -516,6 +516,8 @@
 	"MainWindow.Settings.PartialClipRequireVisualMatchTooltip": "Bestätigt Teilclip-Treffer zusätzlich durch Vergleich von Videoframes am gefundenen Offset. Filtert Fehltreffer durch geteilte Audiospuren (z. B. TikToks mit demselben Song). Verwendet pHash, wenn 'Perzeptive Hashes verwenden' aktiviert ist, sonst 32x32-Graustufenvergleich.",
 	"MainWindow.Settings.PartialClipVisualThreshold": "Min. visuelle Ähnlichkeit (%):",
 	"MainWindow.Settings.PartialClipVisualThresholdTooltip": "Minimale visuelle Ähnlichkeit am gefundenen Offset, damit ein Teilclip-Paar akzeptiert wird.",
+	"MainWindow.Settings.ParallelAudioDecodeThreads": "Parallele Audio-Dekodier-Threads:",
+	"MainWindow.Settings.ParallelAudioDecodeThreadsTooltip": "0 oder 1 = klassische sequenzielle Dekodierung. Höhere Werte dekodieren das Audio jeder Datei in parallelen Segmenten (prozessweite Thread-Obergrenze) und beschleunigen das Fingerprinting großer Dateien erheblich. Ergebnisse werden an jeder Segmentnaht bit-identisch verifiziert; nicht unterstützte Dateien nutzen automatisch die sequenzielle Methode. Erfordert die native FFmpeg-Anbindung.",
 	"Dialog.CopySelected": "Auswahl kopieren",
 	"DuplicateList.HoverDiff.Best": "BESTE"
 }

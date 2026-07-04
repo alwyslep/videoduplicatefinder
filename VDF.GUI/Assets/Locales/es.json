@@ -516,6 +516,8 @@
 	"MainWindow.Settings.PartialClipRequireVisualMatchTooltip": "Confirma las coincidencias de clips parciales comprobando también fotogramas de vídeo en el desplazamiento detectado. Filtra falsos positivos de vídeos que comparten audio pero difieren visualmente (p. ej. TikToks que reutilizan la misma canción). Usa pHash si 'Usar hash perceptual' está activado; en caso contrario, diferencia porcentual en escala de grises 32x32.",
 	"MainWindow.Settings.PartialClipVisualThreshold": "Similitud visual mín. (%):",
 	"MainWindow.Settings.PartialClipVisualThresholdTooltip": "Similitud visual mínima en el desplazamiento detectado para mantener un par de clip parcial.",
+	"MainWindow.Settings.ParallelAudioDecodeThreads": "Hilos de decodificación de audio en paralelo:",
+	"MainWindow.Settings.ParallelAudioDecodeThreadsTooltip": "0 o 1 = decodificación secuencial clásica. Valores mayores decodifican el audio de cada archivo en segmentos paralelos (límite de hilos por proceso), acelerando mucho la huella de archivos grandes. Los resultados se verifican bit a bit en cada unión; los archivos no compatibles usan automáticamente el método secuencial. Requiere el enlace nativo de FFmpeg.",
 	"Dialog.CopySelected": "Copiar seleccionado",
 	"DuplicateList.HoverDiff.Best": "MEJOR"
 }

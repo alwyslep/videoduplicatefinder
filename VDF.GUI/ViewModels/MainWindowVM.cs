@@ -1724,6 +1724,7 @@ Non-Windows setup:
 			Scanner.Settings.PartialClipSimilarityThreshold = SettingsFile.Instance.PartialClipSimilarityThresholdPercent / 100.0;
 			Scanner.Settings.PartialClipRequireVisualMatch = SettingsFile.Instance.PartialClipRequireVisualMatch;
 			Scanner.Settings.PartialClipVisualThreshold = SettingsFile.Instance.PartialClipVisualThresholdPercent / 100.0;
+			Scanner.Settings.ParallelAudioDecodeThreads = SettingsFile.Instance.ParallelAudioDecodeThreads;
 			Scanner.Settings.IncludeList.Clear();
 			foreach (var s in SettingsFile.Instance.Includes)
 				Scanner.Settings.IncludeList.Add(s);

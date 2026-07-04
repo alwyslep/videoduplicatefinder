@@ -516,6 +516,8 @@
 	"MainWindow.Settings.PartialClipRequireVisualMatchTooltip": "在检测到的偏移位置再核对视频画面以确认部分片段匹配。可过滤共用音轨但画面不同的误报（如使用同一背景音乐的 TikTok 视频）。若启用「使用感知哈希」则采用 pHash，否则使用 32x32 灰度像素差。",
 	"MainWindow.Settings.PartialClipVisualThreshold": "最小视觉相似度 (%):",
 	"MainWindow.Settings.PartialClipVisualThresholdTooltip": "保留部分片段配对所需的最小视觉相似度（在检测到的偏移位置进行比较）。",
+	"MainWindow.Settings.ParallelAudioDecodeThreads": "并行音频解码线程数:",
+	"MainWindow.Settings.ParallelAudioDecodeThreadsTooltip": "0 或 1 = 经典顺序解码。更大的值将每个文件的音频分段并行解码（进程级线程上限），大幅加快大文件的指纹提取。每个分段接缝处都会验证结果逐位一致；不支持的文件自动改用顺序方式。需要原生 FFmpeg 绑定。",
 	"Dialog.CopySelected": "复制所选",
 	"DuplicateList.HoverDiff.Best": "最佳"
 }

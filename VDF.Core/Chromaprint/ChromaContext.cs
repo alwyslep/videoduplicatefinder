@@ -40,7 +40,7 @@ namespace VDF.Core.Chromaprint {
 		// ──────────────────────────────────────────────────────────────────────
 		// Frame / hop parameters  (standard Chromaprint / AcoustID values)
 		// ──────────────────────────────────────────────────────────────────────
-		private const int FrameHop = 1365; // samples between consecutive frames
+		internal const int FrameHop = 1365; // samples between consecutive frames
 		// Frames per second = 11025 / 1365 ≈ 8.07
 
 		// ──────────────────────────────────────────────────────────────────────

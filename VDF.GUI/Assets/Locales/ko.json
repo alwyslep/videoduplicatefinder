@@ -551,6 +551,8 @@
 	"MainWindow.Settings.PartialClipRequireVisualMatchTooltip": "매치된 오프셋에서 비디오 프레임도 확인해 부분 클립 매치를 검증합니다. 오디오 트랙은 같지만 영상이 다른 경우(예: 같은 노래를 쓴 틱톡)의 오탐을 걸러냅니다. 매치당 프레임 디코딩이 약간 추가됩니다. '지각 해싱 사용'이 켜져 있으면 pHash를, 아니면 32x32 그레이스케일 퍼센트 차이를 씁니다.",
 	"MainWindow.Settings.PartialClipVisualThreshold": "최소 시각 유사도 (%):",
 	"MainWindow.Settings.PartialClipVisualThresholdTooltip": "부분 클립 쌍을 유지하기 위한, 매치된 오프셋에서의 최소 시각 유사도입니다.",
+	"MainWindow.Settings.ParallelAudioDecodeThreads": "오디오 병렬 디코드 스레드 수:",
+	"MainWindow.Settings.ParallelAudioDecodeThreadsTooltip": "0 또는 1 = 기존 순차 디코드. 2 이상 = 파일 하나의 오디오를 구간별로 병렬 디코드하여(프로세스 전체 스레드 상한) 대용량 파일의 지문 생성을 크게 단축합니다. 모든 구간 이음새에서 결과가 비트 단위로 동일함을 검증하며, 지원되지 않는 파일은 자동으로 순차 방식을 사용합니다. 네이티브 FFmpeg 바인딩이 필요합니다.",
 	"Dialog.CopySelected": "선택 항목 복사",
 	"DuplicateList.HoverDiff.Best": "최상"
 }

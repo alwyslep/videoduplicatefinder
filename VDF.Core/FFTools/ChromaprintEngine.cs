@@ -42,6 +42,13 @@ namespace VDF.Core.FFTools {
 		/// </summary>
 		internal static uint[]? ExtractFingerprint(string filePath, bool extendedLogging, CancellationToken ct = default, Action<double>? onProgress = null) {
 			if (FfmpegEngine.UseNativeBinding) {
+				// Hybrid: opt-in segment-parallel decode. Handled=false (unsupported
+				// profile or seam mismatch) falls through to the unchanged sequential path.
+				if (ParallelAudioFingerprinter.Enabled) {
+					var (handled, fp) = ParallelAudioFingerprinter.TryExtract(filePath, extendedLogging, ct, onProgress);
+					if (handled) return fp;
+					if (ct.IsCancellationRequested) return null;
+				}
 				try {
 					return ExtractFingerprintNative(filePath, extendedLogging, ct, onProgress);
 				}

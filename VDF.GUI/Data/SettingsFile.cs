@@ -556,6 +556,12 @@ namespace VDF.GUI.Data {
 			get => _PartialClipVisualThresholdPercent;
 			set => this.RaiseAndSetIfChanged(ref _PartialClipVisualThresholdPercent, value);
 		}
+		int _ParallelAudioDecodeThreads;
+		[JsonPropertyName("ParallelAudioDecodeThreads")]
+		public int ParallelAudioDecodeThreads {
+			get => _ParallelAudioDecodeThreads;
+			set => this.RaiseAndSetIfChanged(ref _ParallelAudioDecodeThreads, value);
+		}
 
 		List<string> _QualityCriteriaOrder = ["Duration", "Resolution", "FPS", "Bitrate", "Audio Bitrate", "Size"];
 		[JsonPropertyName("QualityCriteriaOrder")]

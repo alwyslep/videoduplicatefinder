@@ -70,6 +70,7 @@ namespace VDF.Core {
 			FfmpegEngine.HardwareAccelerationMode = Settings.HardwareAccelerationMode;
 			FfmpegEngine.CustomFFArguments = Settings.CustomFFArguments;
 			FfmpegEngine.UseNativeBinding = Settings.UseNativeFfmpegBinding;
+			FFTools.FFmpegNative.ParallelAudioFingerprinter.MaxDecodeThreads = Settings.ParallelAudioDecodeThreads;
 
 			// ── File checks ─────────────────────────────────────────────────
 			sb.AppendLine("--- File checks ---");
