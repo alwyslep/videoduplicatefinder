@@ -1171,7 +1171,17 @@ namespace VDF.Core {
 						if (target > explicitTarget) throttle.Shrink(target - explicitTarget);
 						else if (target < explicitTarget) throttle.Grow(explicitTarget - target);
 						target = explicitTarget;
-						prev = -1; before = System.Threading.Interlocked.Read(ref done); elapsed = 0;   // fresh baseline for when Auto resumes
+						// Keep measuring throughput under an explicit cap — resetting the baseline
+						// every tick left Rate permanently 0 for capped drives, so the status bar
+						// showed a meaningless "0.0" instead of the drive's real pace.
+						elapsed += tick;
+						if (elapsed + 1e-9 >= windowSec) {
+							long afterCapped = System.Threading.Interlocked.Read(ref done);
+							if (driveCounters != null && driveCounters.TryGetValue(root, out var __rcCapped))
+								__rcCapped.Rate = (afterCapped - before) / elapsed;
+							before = afterCapped; elapsed = 0;
+						}
+						prev = -1;   // fresh AIMD baseline for when Auto resumes
 						continue;
 					}
 

@@ -113,7 +113,10 @@ namespace VDF.GUI.ViewModels {
 				// (everything else completed instantly from cache/flags), so 100% no longer reads
 				// as "this drive was fully re-analysed".
 				seg.Label = $"{d.Root}  {seg.Fraction * 100:0}%  {d.DoneFiles:N0}/{d.TotalFiles:N0}"
-					+ (d.Concurrency > 0 ? $"  ·  {d.FilesPerSec:0.0} f/s  ·  x{d.Concurrency}" : "")
+					// Seconds-per-file (user request): at ~0.02-0.5 f/s the f/s figure rendered
+					// as a meaningless "0.0", and the worker count is already visible as the
+					// number of processing rows. Updates once per adaptive window.
+					+ (d.FilesPerSec > 0 ? $"  ·  {1 / d.FilesPerSec:0.0} s/f" : "")
 					// Live segment-decode threads chewing this drive's audio (process-wide gate slots).
 					+ (d.DecodeWorkers > 0 ? $"  ·  {App.Lang["Drive.Decode"]} x{d.DecodeWorkers}" : "")
 					+ (d.Analyzed > 0 ? $"  ·  {App.Lang["Drive.Analyzed"]} {d.Analyzed:N0}" : "")
