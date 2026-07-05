@@ -57,5 +57,20 @@ namespace VDF.GUI.ViewModels {
 				if (cap == 0) caps.Remove(Root); else caps[Root] = cap;
 			}
 		}
+
+		// Per-drive pause checkbox (leftmost in the bar). Deliberately session-only —
+		// a new scan always starts with every drive active, so a forgotten unchecked
+		// box can't silently exclude a drive next time. An unchecked box is re-pushed
+		// every progress tick (see UpdateDriveSegments) because the engine recreates
+		// its DriveCounters at each scan/stage start.
+		public System.Action<string, bool>? SetEnabled;
+		bool _IsActive = true;
+		public bool IsActive {
+			get => _IsActive;
+			set {
+				this.RaiseAndSetIfChanged(ref _IsActive, value);
+				SetEnabled?.Invoke(Root, value);
+			}
+		}
 	}
 }

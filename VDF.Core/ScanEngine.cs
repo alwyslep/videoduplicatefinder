@@ -115,7 +115,7 @@ namespace VDF.Core {
 		// concurrent workers on the same drive each get their own stable slot instead of stomping a single
 		// last-writer-wins field — this is what lets the UI show N rows for N active workers.
 		sealed class ActiveFileState { public string Path = ""; public string? Stage; public int StageCur; public int StageMax; }
-		sealed class DriveCounter { public long TotalBytes; public int TotalFiles; public long DoneBytes; public int DoneFiles; public double Rate; public int CapOverride; public int Analyzed; public int MissingFiles; public int Fingerprinted; public int FingerprintTarget; public readonly ConcurrentDictionary<int, ActiveFileState> Active = new(); }
+		sealed class DriveCounter { public long TotalBytes; public int TotalFiles; public long DoneBytes; public int DoneFiles; public double Rate; public int CapOverride; public volatile bool Disabled; public int Analyzed; public int MissingFiles; public int Fingerprinted; public int FingerprintTarget; public readonly ConcurrentDictionary<int, ActiveFileState> Active = new(); }
 		Dictionary<string, DriveCounter>? driveCounters;
 		string[]? driveOrder;
 		// Live per-drive parallelism override chosen from the status-bar dropdown (0 = auto). RunDriveAdaptive's
@@ -124,6 +124,18 @@ namespace VDF.Core {
 		public void SetDriveCap(string root, int cap) {
 			var dc = driveCounters;
 			if (dc != null && dc.TryGetValue(root, out var c)) c.CapOverride = System.Math.Max(0, cap);
+		}
+		// Live per-drive pause from the status-bar checkbox: a disabled drive claims no new
+		// files (in-flight ones run to completion); re-enabling resumes within a second.
+		// Session-scoped: BuildDriveCounters recreates the counters with Disabled=false, and
+		// the GUI re-pushes an unchecked box every progress tick (same pattern as the caps).
+		public void SetDriveEnabled(string root, bool enabled) {
+			var dc = driveCounters;
+			if (dc != null && dc.TryGetValue(root, out var c)) c.Disabled = !enabled;
+		}
+		bool DriveDisabled(string root) {
+			var dc = driveCounters;
+			return dc != null && dc.TryGetValue(root, out var c) && c.Disabled;
 		}
 		static string DriveRootOf(string path) { try { return System.IO.Path.GetPathRoot(path) ?? "?"; } catch { return "?"; } }
 		// Records the calling worker's in-progress file (+ optional sub-stage) under its own thread-id slot.
@@ -1058,6 +1070,13 @@ namespace VDF.Core {
 				workers.Add(Task.Run(async () => {
 					while (!token.IsCancellationRequested) {
 						if (stopRequested) break;   // safe stop: finish nothing new; current files already ran to 100%
+						// Per-drive checkbox pause: park BEFORE claiming an index or any permit,
+						// so in-flight files finish and no global decode slot is held while paused.
+						if (DriveDisabled(root)) {
+							try { await Task.Delay(200, token).ConfigureAwait(false); }
+							catch (OperationCanceledException) { break; }
+							continue;
+						}
 						int i = System.Threading.Interlocked.Increment(ref idx);
 						if (i >= entries.Count) break;
 						await throttle.WaitAsync(token).ConfigureAwait(false);
@@ -1429,17 +1448,26 @@ namespace VDF.Core {
 					if (lat == null) return 4;                                     // unprobeable -> safe moderate
 					return lat.Value >= SsdHddLatencyThresholdMs ? hddDop : fastPerGroup;
 				}
+				// Static-path variant of the per-drive checkbox pause: the adaptive path parks in
+				// its own worker loop; here each drive's ForEachAsync holds no cross-drive permits,
+				// so waiting inside the body only blocks this drive's own slots.
+				async ValueTask GatedProcess(string root, FileEntry entry, CancellationToken tk) {
+					while (DriveDisabled(root) && !stopRequested && !tk.IsCancellationRequested)
+						await Task.Delay(200, tk).ConfigureAwait(false);
+					await ProcessEntry(entry, tk).ConfigureAwait(false);
+				}
 				if (forceSerial) {
 					// preserve the pre-stage-3 single-thread guarantee: one drive, one file at a time
 					foreach (var g in groups)
-						await Parallel.ForEachAsync(g.Entries, new ParallelOptions { CancellationToken = cancelationTokenSource.Token, MaxDegreeOfParallelism = 1 }, ProcessEntry);
+						await Parallel.ForEachAsync(g.Entries, new ParallelOptions { CancellationToken = cancelationTokenSource.Token, MaxDegreeOfParallelism = 1 }, (e, tk) => GatedProcess(g.Root, e, tk));
 				}
 				else {
 					var driveTasks = new List<Task>(groups.Count);
 					foreach (var g in groups) {
 						int dop = DopFor(g.Lat);
+						var root = g.Root;
 						Logger.Instance.Info($"Drive {g.Root}: {g.Entries.Count:N0} file(s), concurrency = {dop}" + (g.Lat != null ? $" (seek {g.Lat.Value:0.0}ms)" : " (unprobed)"));
-						driveTasks.Add(Parallel.ForEachAsync(g.Entries, new ParallelOptions { CancellationToken = cancelationTokenSource.Token, MaxDegreeOfParallelism = dop }, ProcessEntry));
+						driveTasks.Add(Parallel.ForEachAsync(g.Entries, new ParallelOptions { CancellationToken = cancelationTokenSource.Token, MaxDegreeOfParallelism = dop }, (e, tk) => GatedProcess(root, e, tk)));
 					}
 					await Task.WhenAll(driveTasks);
 				}

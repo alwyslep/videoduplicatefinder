@@ -72,7 +72,7 @@ namespace VDF.GUI.ViewModels {
 			if (!sameSet) {
 				DriveSegments.Clear();
 				for (int i = 0; i < drives.Length; i++) {
-					var vm = new DriveProgressVM(drives[i].Root, DriveBrush(i), drives[i].TotalBytes) { SetCap = Scanner.SetDriveCap };
+					var vm = new DriveProgressVM(drives[i].Root, DriveBrush(i), drives[i].TotalBytes) { SetCap = Scanner.SetDriveCap, SetEnabled = Scanner.SetDriveEnabled };
 					DriveSegments.Add(vm);
 				}
 			}
@@ -83,6 +83,10 @@ namespace VDF.GUI.ViewModels {
 			for (int i = 0; i < drives.Length; i++) {
 				if (SettingsFile.Instance.DriveParallelismCaps.TryGetValue(drives[i].Root, out var savedCap) && savedCap > 0)
 					DriveSegments[i].CapIndex = DriveProgressVM.CapIndexFor(savedCap);
+				// Same re-push rationale as the caps above (engine counters are recreated per
+				// scan/stage with Disabled=false), but session-only: the checkbox is the truth.
+				if (!DriveSegments[i].IsActive)
+					Scanner.SetDriveEnabled(drives[i].Root, false);
 			}
 			for (int i = 0; i < drives.Length; i++) {
 				var d = drives[i];

@@ -1447,7 +1447,7 @@
                                                         <!-- 밝은 채움 위 가독성: 검은 헤일로를 2겹으로. 동일 라벨 2장을 겹쳐 각각의 DropShadow가
                                                              합성되며 헤일로 농도가 ~2배(Opacity/색은 이미 최대라 한 겹으론 더 못 짙게 함). 주황 글자는
                                                              완전 불투명이라 겹쳐도 그대로. -->
-                                                        <Panel HorizontalAlignment="Center" VerticalAlignment="Center" Margin="4,0,40,0">
+                                                        <Panel HorizontalAlignment="Center" VerticalAlignment="Center" Margin="24,0,40,0">
                                                             <TextBlock Text="{Binding Label}" FontSize="10" FontWeight="Bold"
                                                                 Foreground="#FFB74D" TextTrimming="CharacterEllipsis">
                                                                 <TextBlock.Effect>
@@ -1461,6 +1461,12 @@
                                                                 </TextBlock.Effect>
                                                             </TextBlock>
                                                         </Panel>
+                                                        <!-- Leftmost per-drive pause checkbox: unchecked = claim no new files on this drive
+                                                             (in-flight ones finish); re-check resumes. Session-only — every scan starts all-active. -->
+                                                        <CheckBox IsChecked="{Binding IsActive}" HorizontalAlignment="Left" VerticalAlignment="Center"
+                                                            Margin="3,0,0,0" MinWidth="0" Width="20" Height="20" MinHeight="0" Padding="0"
+                                                            Background="#66000000" BorderThickness="1"
+                                                            ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.DriveEnable.Tooltip]}" />
                                                         <!-- Ultra-narrow per-drive worker-cap dropdown, embedded in the bar itself (A = auto, else a hard cap). -->
                                                         <ComboBox SelectedIndex="{Binding CapIndex}" HorizontalAlignment="Right" VerticalAlignment="Center"
                                                             FontSize="10" MinWidth="0" Width="38" Height="20" MinHeight="0" Padding="5,0,0,0"
