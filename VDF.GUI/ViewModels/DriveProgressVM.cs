@@ -5,6 +5,25 @@ using VDF.GUI.Data;
 
 namespace VDF.GUI.ViewModels {
 	/// <summary>
+	/// One "now processing" row under a drive's bar: file + stage text on the left and, when the
+	/// stage reports progress (StageMax &gt; 0), a small gauge (mini bar + percent) on the right.
+	/// Instances are reused index-matched across progress ticks so the gauge updates in place
+	/// instead of being torn down and rebuilt.
+	/// </summary>
+	public sealed class ActiveFileRowVM : ReactiveObject {
+		string _Text = string.Empty;
+		public string Text { get => _Text; set => this.RaiseAndSetIfChanged(ref _Text, value); }
+		bool _HasProgress;
+		public bool HasProgress { get => _HasProgress; set => this.RaiseAndSetIfChanged(ref _HasProgress, value); }
+		double _Fraction;
+		public double Fraction { get => _Fraction; set => this.RaiseAndSetIfChanged(ref _Fraction, value); }
+		string _PercentText = string.Empty;
+		public string PercentText { get => _PercentText; set => this.RaiseAndSetIfChanged(ref _PercentText, value); }
+		IBrush? _Fill;   // the parent drive's bar colour, for visual coherence
+		public IBrush? Fill { get => _Fill; set => this.RaiseAndSetIfChanged(ref _Fill, value); }
+	}
+
+	/// <summary>
 	/// One drive's segment in the per-drive scan progress bar. <see cref="Weight"/> (total bytes on that
 	/// drive) drives the segment width; <see cref="Fraction"/> (0..1) drives its fill; <see cref="Fill"/>
 	/// is the drive's distinct colour. Built once per drive when a scan starts; only Fraction/Label change.
@@ -32,9 +51,9 @@ namespace VDF.GUI.ViewModels {
 			set => this.RaiseAndSetIfChanged(ref _Label, value);
 		}
 
-		// One "now processing" line per worker currently active on this drive — grows/shrinks with the
-		// drive's live concurrency, so 2+ workers show 2+ lines. Rebuilt each progress tick.
-		public ObservableCollection<string> ActiveFileLines { get; } = new();
+		// One "now processing" row per worker currently active on this drive — grows/shrinks with the
+		// drive's live concurrency, so 2+ workers show 2+ rows. Row VMs are reused in place each tick.
+		public ObservableCollection<ActiveFileRowVM> ActiveFileLines { get; } = new();
 
 		// Per-drive parallelism override, chosen live from the in-bar dropdown. CapIndex is the ComboBox
 		// selection; it maps to an actual worker cap (0 = auto), is pushed to the running scan via SetCap

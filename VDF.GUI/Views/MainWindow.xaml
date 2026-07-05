@@ -1501,11 +1501,22 @@
                                                         </ComboBox>
                                                     </Grid>
                                                 </Border>
-                                                <!-- This drive's own "now processing" lines — row count follows its live concurrency. -->
-                                                <ItemsControl ItemsSource="{Binding ActiveFileLines}" Margin="10,1,0,1">
+                                                <!-- This drive's own "now processing" rows — row count follows its live concurrency.
+                                                     Right side: a mini stage gauge (bar in the drive's colour + percent), visible only
+                                                     for stages that report progress (audio fingerprint, frame sampling, LCN sort). -->
+                                                <ItemsControl ItemsSource="{Binding ActiveFileLines}" Margin="10,1,4,1">
                                                     <ItemsControl.ItemTemplate>
-                                                        <DataTemplate x:DataType="x:String">
-                                                            <TextBlock FontSize="11" Text="{Binding}" TextTrimming="CharacterEllipsis" />
+                                                        <DataTemplate x:DataType="vm:ActiveFileRowVM">
+                                                            <Grid ColumnDefinitions="*,8,Auto,4,34">
+                                                                <TextBlock Grid.Column="0" FontSize="11" Text="{Binding Text}" TextTrimming="CharacterEllipsis" />
+                                                                <ProgressBar Grid.Column="2" Width="90" Height="7" MinWidth="0" MinHeight="0"
+                                                                             Minimum="0" Maximum="1" Value="{Binding Fraction}"
+                                                                             Foreground="{Binding Fill}" VerticalAlignment="Center"
+                                                                             IsVisible="{Binding HasProgress}" />
+                                                                <TextBlock Grid.Column="4" FontSize="11" Text="{Binding PercentText}"
+                                                                           HorizontalAlignment="Right" VerticalAlignment="Center"
+                                                                           IsVisible="{Binding HasProgress}" />
+                                                            </Grid>
                                                         </DataTemplate>
                                                     </ItemsControl.ItemTemplate>
                                                 </ItemsControl>

@@ -124,16 +124,28 @@ namespace VDF.GUI.ViewModels {
 					// Cumulative DB inventory (grows across scans), NOT this scan's progress — the
 					// done/total on the left resets every scan, which kept reading as "fingerprints".
 					+ (d.FingerprintTarget > 0 ? $"  ·  {App.Lang["Drive.Fingerprints"]} {d.Fingerprinted:N0}/{d.FingerprintTarget:N0}" : "");
-				// One line per worker currently active on this drive — the collection's length IS the
-				// live concurrency shown to the user, so 2+ workers naturally render 2+ lines.
-				seg.ActiveFileLines.Clear();
+				// One row per worker currently active on this drive — the collection's length IS the
+				// live concurrency shown to the user, so 2+ workers naturally render 2+ rows.
+				// Rows are reused index-matched (update, not Clear+Add) so the right-side stage
+				// gauge updates its value in place instead of re-creating controls every tick.
+				int rowCount = 0;
 				if (d.ActiveFiles != null)
 					foreach (var af in d.ActiveFiles) {
-						string line = af.File;
-						if (!string.IsNullOrEmpty(af.Stage))
-							line += af.StageMax > 0 ? $"  [{af.Stage} {af.StageCurrent}/{af.StageMax}]" : $"  [{af.Stage}]";
-						seg.ActiveFileLines.Add(line);
+						ActiveFileRowVM row;
+						if (rowCount < seg.ActiveFileLines.Count) row = seg.ActiveFileLines[rowCount];
+						else seg.ActiveFileLines.Add(row = new ActiveFileRowVM());
+						rowCount++;
+						// The numeric x/y moved into the gauge; stages without progress keep text only.
+						row.Text = string.IsNullOrEmpty(af.Stage) ? af.File : $"{af.File}  [{af.Stage}]";
+						bool hasProgress = af.StageMax > 0;
+						row.HasProgress = hasProgress;
+						row.Fill = seg.Fill;
+						double frac = hasProgress ? Math.Clamp((double)af.StageCurrent / af.StageMax, 0, 1) : 0;
+						row.Fraction = frac;
+						row.PercentText = hasProgress ? $"{frac * 100:0}%" : string.Empty;
 					}
+				while (seg.ActiveFileLines.Count > rowCount)
+					seg.ActiveFileLines.RemoveAt(seg.ActiveFileLines.Count - 1);
 			}
 			// Live scan always shows; the startup preview (not scanning) still respects
 			// the results-list rule so imported/backup results keep their screen space.
