@@ -1462,7 +1462,7 @@
                                                             </TextBlock>
                                                         </Panel>
                                                         <!-- Leftmost per-drive pause checkbox: unchecked = claim no new files on this drive
-                                                             (in-flight ones finish); re-check resumes. Session-only — every scan starts all-active. -->
+                                                             (in-flight ones finish); re-check resumes. Persisted per drive root. -->
                                                         <CheckBox IsChecked="{Binding IsActive}" HorizontalAlignment="Left" VerticalAlignment="Center"
                                                             Margin="3,0,0,0" MinWidth="0" Width="20" Height="20" MinHeight="0" Padding="0"
                                                             Background="#66000000" BorderThickness="1"

@@ -127,8 +127,9 @@ namespace VDF.Core {
 		}
 		// Live per-drive pause from the status-bar checkbox: a disabled drive claims no new
 		// files (in-flight ones run to completion); re-enabling resumes within a second.
-		// Session-scoped: BuildDriveCounters recreates the counters with Disabled=false, and
-		// the GUI re-pushes an unchecked box every progress tick (same pattern as the caps).
+		// BuildDriveCounters recreates the counters with Disabled=false each scan/stage; the
+		// GUI persists the checkbox per drive root and re-pushes an unchecked box every
+		// progress tick (same pattern as the caps), so the state survives restarts.
 		public void SetDriveEnabled(string root, bool enabled) {
 			var dc = driveCounters;
 			if (dc != null && dc.TryGetValue(root, out var c)) c.Disabled = !enabled;

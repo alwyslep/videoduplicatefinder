@@ -73,6 +73,9 @@ namespace VDF.GUI.ViewModels {
 				DriveSegments.Clear();
 				for (int i = 0; i < drives.Length; i++) {
 					var vm = new DriveProgressVM(drives[i].Root, DriveBrush(i), drives[i].TotalBytes) { SetCap = Scanner.SetDriveCap, SetEnabled = Scanner.SetDriveEnabled };
+					// Restore the persisted pause state (setter pushes it to the engine too).
+					if (SettingsFile.Instance.DriveDisabledDrives.Contains(drives[i].Root))
+						vm.IsActive = false;
 					DriveSegments.Add(vm);
 				}
 			}

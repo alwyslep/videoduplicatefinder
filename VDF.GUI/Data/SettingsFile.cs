@@ -210,6 +210,20 @@ namespace VDF.GUI.Data {
 				this.RaiseAndSetIfChanged(ref _DriveParallelismCaps, d);
 			}
 		}
+		// Drive roots currently unchecked in the status-bar pause checkboxes (absent = active).
+		// Persisted (user request 2026-07-05) so the choice survives scans and app restarts;
+		// the engine's per-scan counters are re-synced from the checkbox every progress tick.
+		HashSet<string> _DriveDisabledDrives = new(StringComparer.OrdinalIgnoreCase);
+		[JsonPropertyName("DriveDisabledDrives")]
+		public HashSet<string> DriveDisabledDrives {
+			get => _DriveDisabledDrives;
+			set {
+				// Same comparer-rewrap trap as DriveParallelismCaps above.
+				var s = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+				if (value != null) foreach (var v in value) s.Add(v);
+				this.RaiseAndSetIfChanged(ref _DriveDisabledDrives, s);
+			}
+		}
 		int _AdaptiveWindowSeconds = 120;
 		[JsonPropertyName("AdaptiveWindowSeconds")]
 		public int AdaptiveWindowSeconds {
