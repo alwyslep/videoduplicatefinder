@@ -1138,9 +1138,18 @@ namespace VDF.Core {
 						await throttle.WaitAsync(token).ConfigureAwait(false);
 						bool retire;
 						try {
-							await globalGate.WaitAsync(token).ConfigureAwait(false);
-							try { await process(entries[i], token).ConfigureAwait(false); }
-							finally { globalGate.Release(); }
+							// Re-check AFTER the permit wait: every pool worker claims an index and
+							// then queues on the throttle, so at cap 2 up to ~22 workers sit here for
+							// minutes holding pre-claimed files. Without this check those stale claims
+							// all ran to completion after the user unchecked the drive — 15+ minutes
+							// of "paused" disk activity. Skipped claims are leftovers for the next run,
+							// same semantics as parking. stopRequested gets the same treatment: safe
+							// stop means in-flight files finish, not the whole queued backlog.
+							if (!stopRequested && !DriveDisabled(root)) {
+								await globalGate.WaitAsync(token).ConfigureAwait(false);
+								try { await process(entries[i], token).ConfigureAwait(false); }
+								finally { globalGate.Release(); }
+							}
 						}
 						finally { retire = throttle.Complete(); }
 						System.Threading.Interlocked.Increment(ref done);
@@ -1471,11 +1480,15 @@ namespace VDF.Core {
 						var keyed = new List<(long Key, FileEntry E)>(kv.Value.Count);
 						foreach (var e in kv.Value) {
 							if (cancelationTokenSource.IsCancellationRequested) break;
+							if (DriveDisabled(kv.Key)) break;   // unchecked mid-walk: stop touching this disk now
 							if ((keyed.Count & 127) == 0)
 								ReportStage(e.Path, lcnLabel, keyed.Count, kv.Value.Count);
 							keyed.Add((LcnUtils.GetFirstLcn(e.Path), e));
 						}
-						if (keyed.Count != kv.Value.Count) break;   // cancelled mid-walk: keep original order
+						if (keyed.Count != kv.Value.Count) {   // aborted mid-walk: keep original order
+							if (cancelationTokenSource.IsCancellationRequested) break;   // whole scan is stopping
+							continue;   // just this drive unchecked — the others still get their sort
+						}
 						keyed.Sort((a, b) => a.Key.CompareTo(b.Key));
 						for (int i = 0; i < keyed.Count; i++) kv.Value[i] = keyed[i].E;
 						Logger.Instance.Info($"[lcn] {kv.Key}: spinning (seek {lat.Value:0.0}ms) — ordered {kv.Value.Count:N0} entries by on-disk position in {lcnSw.ElapsedMilliseconds:N0}ms");
