@@ -2846,6 +2846,45 @@ namespace VDF.Core {
 			DatabaseCleaned?.Invoke(this, new EventArgs());
 		}
 		public static void ClearDatabase() => DatabaseUtils.ClearDatabase();
+
+		// A "ghost" is an entry whose file is gone from a currently-MOUNTED drive and that carries
+		// no comparable data at all — no usable frame hash and no audio fingerprint. Unlike a
+		// tombstone (missing file WITH fingerprints, deliberately kept so a re-download is
+		// recognized — see TOMBSTONE-DESIGN.md), a ghost can never match anything and can never
+		// heal (the file is gone), so it is pure dead weight iterated by every scan. Offline
+		// drives are excluded, same discipline as PathIsTombstone: their files may still exist.
+		static bool IsGhostEntry(FileEntry e, Dictionary<string, bool> driveReadyCache) {
+			if (e.AudioFingerprint != null) return false;
+			if (e.grayBytes != null)
+				foreach (var v in e.grayBytes.Values)
+					if (v != null) return false;   // at least one usable frame hash -> keep as tombstone
+			if (File.Exists(e.Path)) return false;
+			string root = DriveRootOf(e.Path);
+			if (!driveReadyCache.TryGetValue(root, out bool ready))
+				driveReadyCache[root] = ready = IsDriveReady(e.Path);
+			return ready;
+		}
+		/// <summary>Counts what <see cref="PruneGhostEntries"/> would remove (read-only preview).</summary>
+		public static int CountGhostEntries() {
+			var readyCache = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+			int n = 0;
+			foreach (var e in DatabaseUtils.Database)
+				if (IsGhostEntry(e, readyCache)) n++;
+			return n;
+		}
+		/// <summary>Removes ghost entries and saves the database. Do not call during a scan.</summary>
+		public static int PruneGhostEntries() {
+			var readyCache = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+			var ghosts = new List<FileEntry>();
+			foreach (var e in DatabaseUtils.Database)
+				if (IsGhostEntry(e, readyCache)) ghosts.Add(e);
+			foreach (var g in ghosts)
+				DatabaseUtils.Database.Remove(g);
+			if (ghosts.Count > 0)
+				DatabaseUtils.SaveDatabase();
+			Logger.Instance.Info($"Pruned {ghosts.Count:N0} ghost entries (file missing on a mounted drive, no comparable fingerprint data).");
+			return ghosts.Count;
+		}
 		public static bool ExportDataBaseToJson(string jsonFile, JsonSerializerOptions options) => DatabaseUtils.ExportDatabaseToJson(jsonFile, options);
 		public static bool ImportDataBaseFromJson(string jsonFile, JsonSerializerOptions options) => DatabaseUtils.ImportDatabaseFromJson(jsonFile, options);
 
