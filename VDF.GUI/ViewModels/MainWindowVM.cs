@@ -114,6 +114,8 @@ namespace VDF.GUI.ViewModels {
 				// as "this drive was fully re-analysed".
 				seg.Label = $"{d.Root}  {seg.Fraction * 100:0}%  {d.DoneFiles:N0}/{d.TotalFiles:N0}"
 					+ (d.Concurrency > 0 ? $"  ·  {d.FilesPerSec:0.0} f/s  ·  x{d.Concurrency}" : "")
+					// Live segment-decode threads chewing this drive's audio (process-wide gate slots).
+					+ (d.DecodeWorkers > 0 ? $"  ·  {App.Lang["Drive.Decode"]} x{d.DecodeWorkers}" : "")
 					+ (d.Analyzed > 0 ? $"  ·  {App.Lang["Drive.Analyzed"]} {d.Analyzed:N0}" : "")
 					+ (d.Missing > 0 ? $"  ·  {App.Lang["Drive.Missing"]} {d.Missing:N0}" : "")
 					// Cumulative DB inventory (grows across scans), NOT this scan's progress — the

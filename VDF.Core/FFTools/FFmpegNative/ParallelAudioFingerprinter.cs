@@ -14,6 +14,7 @@
 // */
 //
 
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using FFmpeg.AutoGen;
@@ -56,6 +57,13 @@ namespace VDF.Core.FFTools.FFmpegNative {
 		private static int maxDecodeThreads;
 		private static SemaphoreSlim decodeGate = new(1, 1);
 		private static long totalQueuedBytes; // process-wide cloned-packet RAM across concurrent files
+
+		// Live decode-thread count per drive root, for the status-bar label ("decode xN").
+		private static readonly ConcurrentDictionary<string, int> activeDecodeByRoot = new(StringComparer.OrdinalIgnoreCase);
+		internal static int ActiveDecodeCount(string root)
+			=> activeDecodeByRoot.TryGetValue(root, out var n) ? n : 0;
+		private static void DecodeSlot(string root, int delta)
+			=> activeDecodeByRoot.AddOrUpdate(root, Math.Max(0, delta), (_, v) => Math.Max(0, v + delta));
 
 		/// <summary>
 		/// Process-wide decode-thread cap, shared by all drives/files. 0 or 1 disables
@@ -193,6 +201,8 @@ namespace VDF.Core.FFTools.FFmpegNative {
 				Interlocked.Add(ref totalQueuedBytes, -v);
 			};
 			string fileName = Path.GetFileName(filePath);
+			string driveRoot;
+			try { driveRoot = Path.GetPathRoot(filePath) ?? "?"; } catch { driveRoot = "?"; }
 			int prevLogLevel = int.MinValue;
 			var ordered = new OrderedPackets();
 			Task<uint[]?>? ramSeqTask = null;
@@ -288,7 +298,7 @@ namespace VDF.Core.FFTools.FFmpegNative {
 				}
 
 				void Dispatch(Segment seg, long spLocal, int rate) {
-					seg.Work = StartWorker(seg, parPtr, rate, spLocal, fileCts.Token, extendedLogging, fileName, onBytesFreed);
+					seg.Work = StartWorker(seg, parPtr, rate, spLocal, fileCts.Token, extendedLogging, fileName, onBytesFreed, driveRoot);
 					// A failed segment discovered while still reading lets the reader switch
 					// to RAM-sequential early instead of finding out after the whole read.
 					seg.Work.ContinueWith(t => {
@@ -304,7 +314,7 @@ namespace VDF.Core.FFTools.FFmpegNative {
 					fileCts.Cancel();
 					for (int k = nextDispatch; k < segments.Count; k++)
 						FreeSegment(segments[k], onBytesFreed);
-					ramSeqTask = StartRamSeq(ordered, () => Volatile.Read(ref readerDone) == 1, parPtr, ct);
+					ramSeqTask = StartRamSeq(ordered, () => Volatile.Read(ref readerDone) == 1, parPtr, ct, driveRoot);
 				}
 
 				(bool, uint[]?) AwaitRamSeq() {
@@ -562,7 +572,7 @@ namespace VDF.Core.FFTools.FFmpegNative {
 		/// hundreds of queued segments never pin thread-pool threads.
 		/// </summary>
 		private static Task<WorkerResult?> StartWorker(Segment seg, IntPtr par, int srcRate, long sp,
-			CancellationToken ct, bool extendedLogging, string fileName, Action<long> onBytesFreed) {
+			CancellationToken ct, bool extendedLogging, string fileName, Action<long> onBytesFreed, string driveRoot) {
 			// Pin the gate instance: the MaxDecodeThreads setter swaps the static field,
 			// and Wait/Release must always pair on the same semaphore.
 			var gate = decodeGate;
@@ -574,10 +584,12 @@ namespace VDF.Core.FFTools.FFmpegNative {
 					FreeSegment(seg, onBytesFreed);
 					return null;
 				}
+				DecodeSlot(driveRoot, +1);
 				try {
 					return DecodeSegment(seg, par, srcRate, sp, ct, extendedLogging, fileName);
 				}
 				finally {
+					DecodeSlot(driveRoot, -1);
 					FreeSegment(seg, onBytesFreed);
 					gate.Release();
 				}
@@ -585,7 +597,7 @@ namespace VDF.Core.FFTools.FFmpegNative {
 		}
 
 		/// <summary>Queues the RAM-sequential decode behind the global gate (one slot).</summary>
-		private static Task<uint[]?> StartRamSeq(OrderedPackets ordered, Func<bool> readerDone, IntPtr par, CancellationToken ct) {
+		private static Task<uint[]?> StartRamSeq(OrderedPackets ordered, Func<bool> readerDone, IntPtr par, CancellationToken ct, string driveRoot) {
 			var gate = decodeGate; // pin — see StartWorker
 			return Task.Run(async () => {
 				try {
@@ -594,10 +606,12 @@ namespace VDF.Core.FFTools.FFmpegNative {
 				catch (OperationCanceledException) {
 					return null;
 				}
+				DecodeSlot(driveRoot, +1);
 				try {
 					return DecodeOrderedSequential(ordered, readerDone, par, ct);
 				}
 				finally {
+					DecodeSlot(driveRoot, -1);
 					gate.Release();
 				}
 			});

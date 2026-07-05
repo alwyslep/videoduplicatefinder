@@ -45,6 +45,9 @@ namespace VDF.Core {
 		public double FilesPerSec;
 		/// <summary>Adaptive controller's current worker concurrency for this drive (0 in static mode).</summary>
 		public int Concurrency;
+		/// <summary>Segment-parallel audio-decode threads currently working on this drive's files
+		/// (slots of the process-wide decode gate). 0 when the parallel decoder is off/idle.</summary>
+		public int DecodeWorkers;
 		/// <summary>One row per worker currently mid-file on this drive — length tracks live concurrency,
 		/// so a drive running N workers shows N rows. Empty when the drive is idle or finished.</summary>
 		public DriveActiveFile[]? ActiveFiles;

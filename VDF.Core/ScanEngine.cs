@@ -281,7 +281,7 @@ namespace VDF.Core {
 				// the two numbers can legitimately differ for a while during the drain; showing the live
 				// count instead of the target keeps the label truthful throughout that transition instead of
 				// silently claiming "1" while several rows are still visibly active underneath it.
-				arr[i] = new DriveProgress { Root = order[i], TotalBytes = c.TotalBytes, DoneBytes = c.DoneBytes, TotalFiles = c.TotalFiles, DoneFiles = c.DoneFiles, FilesPerSec = c.Rate, Concurrency = active.Length, ActiveFiles = active, Analyzed = c.Analyzed, Missing = c.MissingFiles, Fingerprinted = c.Fingerprinted, FingerprintTarget = c.FingerprintTarget };
+				arr[i] = new DriveProgress { Root = order[i], TotalBytes = c.TotalBytes, DoneBytes = c.DoneBytes, TotalFiles = c.TotalFiles, DoneFiles = c.DoneFiles, FilesPerSec = c.Rate, Concurrency = active.Length, DecodeWorkers = FFTools.FFmpegNative.ParallelAudioFingerprinter.ActiveDecodeCount(order[i]), ActiveFiles = active, Analyzed = c.Analyzed, Missing = c.MissingFiles, Fingerprinted = c.Fingerprinted, FingerprintTarget = c.FingerprintTarget };
 			}
 			return arr;
 		}

@@ -59,6 +59,7 @@
 	"BusyMessages19": "Because two of the same is one too many.",
 	"BusyMessages20": "Stay calm—your files are about to make sense.",
 	"Drive.Analyzed": "analyzed",
+	"Drive.Decode": "decode",
 	"Drive.Missing": "missing",
 	"Drive.Fingerprints": "fp",
 	"Busy.Pausing.Title": "Pausing…",
