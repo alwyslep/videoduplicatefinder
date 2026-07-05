@@ -115,7 +115,11 @@ namespace VDF.Core {
 		// concurrent workers on the same drive each get their own stable slot instead of stomping a single
 		// last-writer-wins field — this is what lets the UI show N rows for N active workers.
 		sealed class ActiveFileState { public string Path = ""; public string? Stage; public int StageCur; public int StageMax; }
-		sealed class DriveCounter { public long TotalBytes; public int TotalFiles; public long DoneBytes; public int DoneFiles; public double Rate; public int CapOverride; public volatile bool Disabled; public int Analyzed; public int MissingFiles; public int Fingerprinted; public int FingerprintTarget; public readonly ConcurrentDictionary<int, ActiveFileState> Active = new(); }
+		// DesiredEnabled = the user's latest checkbox state; Disabled = what the workers obey. They differ
+		// only while a live relist runs (re-enable mid-stage): Disabled stays true so the workers keep
+		// parking until the relist has landed its new files, then the relist applies DesiredEnabled.
+		// LateArrivals feeds files collected after the stage snapshot to the drive's claim loop.
+		sealed class DriveCounter { public long TotalBytes; public int TotalFiles; public long DoneBytes; public int DoneFiles; public double Rate; public int CapOverride; public volatile bool Disabled; public volatile bool DesiredEnabled = true; public int RelistPending; public int Analyzed; public int MissingFiles; public int Fingerprinted; public int FingerprintTarget; public readonly ConcurrentQueue<FileEntry> LateArrivals = new(); public readonly ConcurrentDictionary<int, ActiveFileState> Active = new(); }
 		Dictionary<string, DriveCounter>? driveCounters;
 		string[]? driveOrder;
 		// Live per-drive parallelism override chosen from the status-bar dropdown (0 = auto). RunDriveAdaptive's
@@ -130,9 +134,28 @@ namespace VDF.Core {
 		// BuildDriveCounters recreates the counters with Disabled=false each scan/stage; the
 		// GUI persists the checkbox per drive root and re-pushes an unchecked box every
 		// progress tick (same pattern as the caps), so the state survives restarts.
+		// Re-enabling DURING an adaptive gather stage first live-relists the drive (picks up
+		// files created since the last file-list build) and only then unparks the workers —
+		// unparking first lets them exhaust their claims and exit before the new work lands.
 		public void SetDriveEnabled(string root, bool enabled) {
 			var dc = driveCounters;
-			if (dc != null && dc.TryGetValue(root, out var c)) c.Disabled = !enabled;
+			if (dc == null || !dc.TryGetValue(root, out var c)) return;
+			// Under driveLifecycleLock so a toggle can't interleave with a finishing relist's
+			// "Disabled = !DesiredEnabled" apply — unlocked, that lost the toggle (a re-check
+			// whose CAS failed stayed parked forever; an uncheck could be overwritten and the
+			// "paused" drive kept claiming files). Monitor is reentrant, so the gatherLiveRelist
+			// call below (which takes the same lock) is safe.
+			lock (driveLifecycleLock) {
+				c.DesiredEnabled = enabled;
+				if (!enabled) { c.Disabled = true; return; }
+				var relist = gatherLiveRelist;   // non-null only while the adaptive gather stage runs
+				if (c.Disabled && relist != null) {
+					if (System.Threading.Interlocked.CompareExchange(ref c.RelistPending, 1, 0) == 0)
+						relist(root, c);
+					return;   // the relist task applies DesiredEnabled when it finishes
+				}
+				c.Disabled = false;
+			}
 		}
 		bool DriveDisabled(string root) {
 			var dc = driveCounters;
@@ -142,11 +165,22 @@ namespace VDF.Core {
 		// Parked (paused) drives use it to detect "everyone left is paused" and skip out, so the
 		// stage ends when the checked drives finish instead of waiting forever on unchecked ones.
 		ConcurrentDictionary<string, byte>? runningDriveRoots;
+		// Serializes drive-task lifecycle against the live-relist path: task teardown (root removal +
+		// late-queue drain check), relist enqueue-vs-respawn decisions, and the stage's accepting flag.
+		readonly object driveLifecycleLock = new();
+		// Both are set only while the adaptive gather stage runs (cleared in its finally).
+		Action<string, DriveCounter>? gatherLiveRelist;
+		Action<string, ConcurrentQueue<FileEntry>>? gatherLateRespawn;   // must be invoked under driveLifecycleLock
 		bool AllRemainingDrivesDisabled() {
 			var rr = runningDriveRoots;
 			if (rr == null || rr.IsEmpty) return false;
-			foreach (var r in rr.Keys)
-				if (!DriveDisabled(r)) return false;
+			var dc = driveCounters;
+			foreach (var r in rr.Keys) {
+				if (dc == null || !dc.TryGetValue(r, out var c)) return false;
+				// A pending relist counts as active: the stage must stay open until its collected
+				// files are enqueued or respawned, or they would be orphaned in the database.
+				if (!c.Disabled || System.Threading.Volatile.Read(ref c.RelistPending) != 0) return false;
+			}
 			return true;
 		}
 		static string DriveRootOf(string path) { try { return System.IO.Path.GetPathRoot(path) ?? "?"; } catch { return "?"; } }
@@ -218,6 +252,7 @@ namespace VDF.Core {
 				if (Settings.DriveWorkerCaps.TryGetValue(kv.Key, out var cap) && cap > 0)
 					kv.Value.CapOverride = cap;
 				kv.Value.Disabled = Settings.DriveDisabledDrives.Contains(kv.Key);
+				kv.Value.DesiredEnabled = !kv.Value.Disabled;
 			}
 			var keys = new List<string>(groups.Keys); keys.Sort(StringComparer.OrdinalIgnoreCase);
 			driveCounters = groups; driveOrder = keys.ToArray();
@@ -891,6 +926,40 @@ namespace VDF.Core {
 			return true;
 		}
 
+		// Scoped BuildFileList for a mid-stage drive re-enable: enumerates ONLY this drive's include
+		// folders and adds files the last file-list build hasn't seen. NEW files only — size/timestamp
+		// refresh and move-relink stay in the real BuildFileList stage. DB adds take checkpointLock so
+		// a periodic checkpoint save never serializes the set mid-mutation.
+		List<FileEntry> CollectNewFilesForDrive(string root, CancellationToken token) {
+			var added = new List<FileEntry>();
+			foreach (string path in Settings.IncludeList) {
+				// stopRequested too: safe Stop only sets the flag (no token cancel), and "nothing
+				// new starts" must cover a multi-minute directory walk, not just file claims.
+				if (stopRequested || token.IsCancellationRequested) break;
+				if (!string.Equals(DriveRootOf(path), root, StringComparison.OrdinalIgnoreCase)) continue;
+				if (!Directory.Exists(path)) continue;
+				foreach (FileInfo file in FileUtils.GetFilesRecursive(path, Settings.IgnoreReadOnlyFolders, Settings.IgnoreReparsePoints,
+					Settings.IncludeSubDirectories, Settings.IncludeImages, Settings.BlackList.ToList(), token)) {
+					if (stopRequested || token.IsCancellationRequested) break;
+					FileEntry fEntry;
+					try {
+						fEntry = new(file);
+					}
+					catch (Exception e) {
+						Logger.Instance.Info($"Skipped file '{file}' because of {e}");
+						continue;
+					}
+					bool isNew;
+					lock (checkpointLock) {
+						isNew = !DatabaseUtils.Database.Contains(fEntry);
+						if (isNew) DatabaseUtils.Database.Add(fEntry);
+					}
+					if (isNew) added.Add(fEntry);
+				}
+			}
+			return added;
+		}
+
 		// Check if entry should be excluded from the scan for any reason
 		// Returns true if the entry is invalid (should be excluded)
 		bool InvalidEntry(FileEntry entry, out bool reportProgress, out string? reason) {
@@ -1117,6 +1186,8 @@ namespace VDF.Core {
 			// workers as they each finish their current file. See AdaptiveThrottle.
 			using var throttle = new AdaptiveThrottle(startC, poolSize);
 			using var driveCts = System.Threading.CancellationTokenSource.CreateLinkedTokenSource(token);
+			// Files a mid-stage re-enable collected after this task's entries snapshot was taken.
+			var lateQ = driveCounters != null && driveCounters.TryGetValue(root, out var __lq) ? __lq.LateArrivals : null;
 			var workers = new List<Task>(poolSize);
 			for (int w = 0; w < poolSize; w++) {
 				workers.Add(Task.Run(async () => {
@@ -1134,7 +1205,12 @@ namespace VDF.Core {
 							continue;
 						}
 						int i = System.Threading.Interlocked.Increment(ref idx);
-						if (i >= entries.Count) break;
+						FileEntry? claimed = null;
+						if (i < entries.Count) claimed = entries[i];
+						// Snapshot exhausted: drain files a mid-stage re-enable collected after this
+						// task started (live relist). The ConcurrentQueue hands each file to exactly
+						// one worker; when it's empty too, this worker is done.
+						else if (lateQ == null || !lateQ.TryDequeue(out claimed)) break;
 						await throttle.WaitAsync(token).ConfigureAwait(false);
 						bool retire;
 						try {
@@ -1147,7 +1223,7 @@ namespace VDF.Core {
 							// stop means in-flight files finish, not the whole queued backlog.
 							if (!stopRequested && !DriveDisabled(root)) {
 								await globalGate.WaitAsync(token).ConfigureAwait(false);
-								try { await process(entries[i], token).ConfigureAwait(false); }
+								try { await process(claimed, token).ConfigureAwait(false); }
 								finally { globalGate.Release(); }
 							}
 						}
@@ -1165,7 +1241,7 @@ namespace VDF.Core {
 				while (!driveCts.IsCancellationRequested) {
 					try { await Task.Delay(TimeSpan.FromSeconds(tick), driveCts.Token).ConfigureAwait(false); }
 					catch (OperationCanceledException) { break; }
-					if (System.Threading.Volatile.Read(ref idx) >= entries.Count) break;
+					if (System.Threading.Volatile.Read(ref idx) >= entries.Count && (lateQ == null || lateQ.IsEmpty)) break;
 					if (pauseTokenSource.IsPaused) { prev = -1; before = System.Threading.Interlocked.Read(ref done); elapsed = 0; continue; }
 
 					var dcNow = driveCounters;
@@ -1218,7 +1294,13 @@ namespace VDF.Core {
 			try { await Task.WhenAll(workers).ConfigureAwait(false); }
 			finally {
 				System.Threading.Interlocked.Decrement(ref activeDrives[0]);   // release this drive's CPU share to the survivors
-				runningDriveRoots?.TryRemove(root, out _);
+				lock (driveLifecycleLock) {
+					runningDriveRoots?.TryRemove(root, out _);
+					// A live relist can enqueue between the last worker's final dequeue check and
+					// this teardown. Whatever it left behind gets a fresh drive task — the queue
+					// hands each entry to either a worker or this drain, never both.
+					if (lateQ != null && !lateQ.IsEmpty) gatherLateRespawn?.Invoke(root, lateQ);
+				}
 				driveCts.Cancel();
 				try { await control.ConfigureAwait(false); } catch { }
 			}
@@ -1513,9 +1595,113 @@ namespace VDF.Core {
 					runningDriveRoots = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
 					foreach (var akv in byDrive) runningDriveRoots[akv.Key] = 0;
 					Logger.Instance.Info($"Adaptive per-drive concurrency (fair CPU share): budget {cpuCap} across {byDrive.Count} drive(s), window {(Settings.AdaptiveWindowSeconds > 0 ? Settings.AdaptiveWindowSeconds : 120)}s");
-					var adaptiveTasks = new List<Task>(byDrive.Count);
-					foreach (var akv in byDrive) adaptiveTasks.Add(RunDriveAdaptive(akv.Key, akv.Value, ProcessEntry, globalGate, cpuCap, activeDrives));
-					await Task.WhenAll(adaptiveTasks);
+
+					// ── Live relist: re-enabling a drive mid-stage picks up files created since the
+					// last file-list build. The relist runs while the drive still reads as Disabled
+					// (workers keep parking, AllRemainingDrivesDisabled treats the pending relist as
+					// active), lands its new files, THEN applies the user's checkbox state. lateTasks
+					// collects relist tasks and late-respawned drive tasks; the wave loop below keeps
+					// awaiting until nothing new arrives. All shared state under driveLifecycleLock.
+					bool accepting = true;
+					var lateTasks = new List<Task>();
+					void RelistDrive(string root, DriveCounter c) {
+						int found = 0;
+						try {
+							var addedList = CollectNewFilesForDrive(root, cancelationTokenSource.Token);
+							found = addedList.Count;
+							// On safe Stop: the files are in the database already — leave the totals and
+							// the handoff alone (bumping the max after Stop made the bar jump backwards,
+							// and a respawned task's workers would all break instantly anyway).
+							if (found > 0 && !stopRequested) {
+								long addedBytes = 0; int fpTargets = 0;
+								foreach (var e in addedList) {
+									addedBytes += e.FileSize;
+									if (Settings.EnablePartialClipDetection && !e.IsImage) fpTargets++;
+								}
+								System.Threading.Interlocked.Add(ref c.TotalFiles, found);
+								System.Threading.Interlocked.Add(ref c.TotalBytes, addedBytes);
+								System.Threading.Interlocked.Add(ref c.FingerprintTarget, fpTargets);
+								lock (driveLifecycleLock) {
+									scanProgressMaxValue += found;
+									if (runningDriveRoots != null && runningDriveRoots.ContainsKey(root)) {
+										// Drive task still alive (workers parked behind Disabled): feed its queue.
+										foreach (var e in addedList) c.LateArrivals.Enqueue(e);
+									}
+									else if (accepting) {
+										// Drive already finished its snapshot: give the new files their own task.
+										runningDriveRoots![root] = 0;
+										System.Threading.Interlocked.Increment(ref activeDrives[0]);
+										lateTasks.Add(RunDriveAdaptive(root, addedList, ProcessEntry, globalGate, cpuCap, activeDrives));
+									}
+									else
+										Logger.Instance.Info($"[relist] {root}: stage ended first — {found} new file(s) are in the database and will be processed next run");
+								}
+							}
+							Logger.Instance.Info($"[relist] {root}: re-enabled — {found} new file(s) since the last file-list build");
+						}
+						catch (Exception ex) {
+							Logger.Instance.Info($"[relist] {root} failed (drive resumes with its existing queue): {ex}");
+						}
+						finally {
+							// Same lock as SetDriveEnabled: the apply must be atomic against a
+							// concurrent toggle or the toggle is silently lost (see SetDriveEnabled).
+							// Disabled before the pending flag, so the drive never reads as fully
+							// parked mid-handoff.
+							lock (driveLifecycleLock) {
+								c.Disabled = !c.DesiredEnabled;
+								System.Threading.Interlocked.Exchange(ref c.RelistPending, 0);
+							}
+							PushProgressSnapshot();
+						}
+					}
+					gatherLiveRelist = (root, c) => {
+						lock (driveLifecycleLock) {
+							if (!accepting) {
+								c.Disabled = !c.DesiredEnabled;
+								System.Threading.Interlocked.Exchange(ref c.RelistPending, 0);
+								return;
+							}
+							lateTasks.Add(Task.Run(() => RelistDrive(root, c)));
+						}
+					};
+					gatherLateRespawn = (root, q) => {   // invoked under driveLifecycleLock (task teardown)
+						var orphans = new List<FileEntry>();
+						while (q.TryDequeue(out var e)) orphans.Add(e);
+						if (orphans.Count == 0) return;
+						if (!accepting || stopRequested) {
+							Logger.Instance.Info($"[relist] {root}: stage ended before {orphans.Count} late file(s) could run — they will be processed next run");
+							return;
+						}
+						runningDriveRoots![root] = 0;
+						System.Threading.Interlocked.Increment(ref activeDrives[0]);
+						lateTasks.Add(RunDriveAdaptive(root, orphans, ProcessEntry, globalGate, cpuCap, activeDrives));
+						Logger.Instance.Info($"[relist] {root}: respawned drive task for {orphans.Count} late file(s)");
+					};
+					try {
+						var wave = new List<Task>(byDrive.Count);
+						foreach (var akv in byDrive) wave.Add(RunDriveAdaptive(akv.Key, akv.Value, ProcessEntry, globalGate, cpuCap, activeDrives));
+						while (true) {
+							await Task.WhenAll(wave);
+							lock (driveLifecycleLock) {
+								if (lateTasks.Count == 0) { accepting = false; break; }
+								wave = new List<Task>(lateTasks);
+								lateTasks.Clear();
+							}
+						}
+					}
+					finally {
+						// Exception/cancel path: stop accepting, then drain in-flight relist tasks so
+						// none of them mutates the database while the stage-end save serializes it.
+						List<Task>? drain = null;
+						lock (driveLifecycleLock) {
+							accepting = false;
+							if (lateTasks.Count > 0) { drain = new List<Task>(lateTasks); lateTasks.Clear(); }
+						}
+						gatherLiveRelist = null;
+						gatherLateRespawn = null;
+						if (drain != null)
+							try { await Task.WhenAll(drain).ConfigureAwait(false); } catch { }
+					}
 				}
 				else {
 				int ssdDop = Settings.MaxDegreeOfParallelism;                       // -1, or a positive total CPU budget
