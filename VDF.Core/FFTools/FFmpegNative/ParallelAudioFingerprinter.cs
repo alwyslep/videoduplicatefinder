@@ -65,6 +65,34 @@ namespace VDF.Core.FFTools.FFmpegNative {
 		private static void DecodeSlot(string root, int delta)
 			=> activeDecodeByRoot.AddOrUpdate(root, Math.Max(0, delta), (_, v) => Math.Max(0, v + delta));
 
+		// One reader per drive at a time: with a worker cap of 2+, the second file's
+		// read would otherwise thrash heads against the first one's. The gate is held
+		// only while a file actually READS (open → EOF) and released before its decode
+		// tail, so file N+1 reads while file N finishes decoding — recovering the disk
+		// idle gaps RAM-sequential tails leave (measured 35% on FC2-heavy folders).
+		private static readonly ConcurrentDictionary<string, SemaphoreSlim> readGates = new(StringComparer.OrdinalIgnoreCase);
+		private static SemaphoreSlim ReadGateFor(string root) => readGates.GetOrAdd(root, _ => new SemaphoreSlim(1, 1));
+
+		private sealed class GateReleaser : IDisposable {
+			SemaphoreSlim? _gate;
+			public GateReleaser(SemaphoreSlim gate) => _gate = gate;
+			public void Dispose() => Interlocked.Exchange(ref _gate, null)?.Release();
+		}
+
+		/// <summary>
+		/// Serializes whole-file disk reads per drive for the SEQUENTIAL fingerprint
+		/// paths (they interleave read+decode, so they hold the gate for the whole
+		/// call). No-op when the parallel decoder is disabled — classic behaviour.
+		/// </summary>
+		internal static IDisposable? AcquireReadGate(string filePath, CancellationToken ct) {
+			if (!Enabled) return null;
+			string root;
+			try { root = Path.GetPathRoot(filePath) ?? "?"; } catch { root = "?"; }
+			var gate = ReadGateFor(root);
+			gate.Wait(ct);
+			return new GateReleaser(gate);
+		}
+
 		/// <summary>
 		/// Process-wide decode-thread cap, shared by all drives/files. 0 or 1 disables
 		/// the parallel path.  Set at scan start only — never while fingerprints are
@@ -225,11 +253,25 @@ namespace VDF.Core.FFTools.FFmpegNative {
 				return (false, null);
 			}
 
+			SemaphoreSlim? readGate = null;
+			bool readGateHeld = false;
+			void ReleaseReadGate() {
+				if (!readGateHeld) return;
+				readGateHeld = false;
+				readGate!.Release();
+			}
+
 			try {
 				// Same noisy-warning suppression as the sequential native path — without it
 				// the reader plus N workers flood stderr at FFmpeg's default INFO level.
 				prevLogLevel = ffmpeg.av_log_get_level();
 				ffmpeg.av_log_set_level(extendedLogging ? ffmpeg.AV_LOG_ERROR : ffmpeg.AV_LOG_FATAL);
+
+				// One reader per drive: block here (not after opening) so a second worker's
+				// open/probe never touches the disk while another file is still reading.
+				readGate = ReadGateFor(driveRoot);
+				readGate.Wait(ct);
+				readGateHeld = true;
 
 				fmt = ffmpeg.avformat_alloc_context();
 				if (fmt == null) return Fallback("failed to allocate format context");
@@ -448,6 +490,16 @@ namespace VDF.Core.FFTools.FFmpegNative {
 
 				Volatile.Write(ref readerDone, 1);
 
+				// Disk work for this file is over — close the input and free the drive's
+				// read gate NOW, so the next file starts reading while this one finishes
+				// decoding (segment tails, RAM-sequential backlog, seam merge).
+				if (fmt != null) {
+					var fmtDone = fmt;
+					ffmpeg.avformat_close_input(&fmtDone);
+					fmt = null;
+				}
+				ReleaseReadGate();
+
 				// RAM-sequential mode engaged mid-read: the decoder has been consuming the
 				// ordered list in parallel with the remaining disk read — just await it.
 				if (ramSeqTask != null)
@@ -480,11 +532,6 @@ namespace VDF.Core.FFTools.FFmpegNative {
 				lastSeg.EmitEndPkt = long.MaxValue;
 				while (nextDispatch < segments.Count)
 					Dispatch(segments[nextDispatch++], sp, srcRate);
-
-				// The file handle is no longer needed — workers run from RAM.
-				var fmtToClose = fmt;
-				ffmpeg.avformat_close_input(&fmtToClose);
-				fmt = null;
 
 				var results = new WorkerResult?[segments.Count];
 				for (int i = 0; i < segments.Count; i++)
@@ -534,8 +581,10 @@ namespace VDF.Core.FFTools.FFmpegNative {
 				return (false, null);
 			}
 			finally {
-				// Unblock the RAM-sequential consumer on abnormal exits BEFORE joining it.
+				// Unblock the RAM-sequential consumer on abnormal exits BEFORE joining it,
+				// and free the drive's read gate first so error paths never hold the disk.
 				Volatile.Write(ref readerDone, 1);
+				ReleaseReadGate();
 				if (pkt != null) {
 					var p = pkt;
 					ffmpeg.av_packet_free(&p);

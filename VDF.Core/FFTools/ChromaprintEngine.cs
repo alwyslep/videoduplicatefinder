@@ -50,7 +50,14 @@ namespace VDF.Core.FFTools {
 					if (ct.IsCancellationRequested) return null;
 				}
 				try {
+					// The disk-sequential path interleaves read+decode, so it holds the drive's
+					// read gate for the whole call (no-op when the parallel decoder is off) —
+					// a second worker's read never thrashes against another file's.
+					using var readHold = ParallelAudioFingerprinter.AcquireReadGate(filePath, ct);
 					return ExtractFingerprintNative(filePath, extendedLogging, ct, onProgress);
+				}
+				catch (OperationCanceledException) {
+					return null;
 				}
 				catch (Exception e) {
 					Logger.Instance.Info(
@@ -58,7 +65,13 @@ namespace VDF.Core.FFTools {
 						$"falling back to process mode. Exception: {e.Message}");
 				}
 			}
-			return ExtractFingerprintProcess(filePath, extendedLogging, ct);
+			try {
+				using var readHold = ParallelAudioFingerprinter.AcquireReadGate(filePath, ct);
+				return ExtractFingerprintProcess(filePath, extendedLogging, ct);
+			}
+			catch (OperationCanceledException) {
+				return null;
+			}
 		}
 
 		/// <summary>Native path: uses FFmpeg.AutoGen bindings — no process spawning.</summary>
