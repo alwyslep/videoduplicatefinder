@@ -100,6 +100,79 @@ namespace VDF.Core.FFTools.FFmpegNative {
 		}
 
 		/// <summary>
+		/// Ordered master copy of every audio packet read so far. Payload buffers are
+		/// refcount-shared with the segment clones, so while the parallel path is healthy
+		/// the real extra memory is only packet-struct overhead. Purpose: ANY failure
+		/// after open — profile violation, worker failure, seam mismatch — can decode
+		/// these packets sequentially from RAM instead of re-reading the whole file from
+		/// disk (fallback-heavy folders previously paid up to a double read).
+		/// </summary>
+		private sealed class OrderedPackets {
+			private readonly List<IntPtr> _packets = new();
+			private long _bytes;
+			public bool Overflowed { get; private set; }
+
+			public unsafe void Add(AVPacket* src) {
+				if (Overflowed) return;
+				if (Interlocked.Read(ref _bytes) > QueuedBytesCap) {
+					// Extremely high-bitrate audio: give up the RAM-recovery capability
+					// (behaviour degrades to the old disk re-read fallback), keep parallel.
+					Overflowed = true;
+					FreeAll();
+					return;
+				}
+				AVPacket* clone = ffmpeg.av_packet_clone(src);
+				if (clone == null) {
+					Overflowed = true;
+					FreeAll();
+					return;
+				}
+				long size = clone->size;
+				lock (_packets) _packets.Add((IntPtr)clone);
+				Interlocked.Add(ref _bytes, size);
+				Interlocked.Add(ref totalQueuedBytes, size);
+			}
+
+			/// <summary>Packet at <paramref name="index"/>, or Zero when not yet read.</summary>
+			public IntPtr Peek(int index) {
+				lock (_packets) return index < _packets.Count ? _packets[index] : IntPtr.Zero;
+			}
+
+			public unsafe void FreePacket(int index) {
+				IntPtr p;
+				lock (_packets) {
+					if (index >= _packets.Count || _packets[index] == IntPtr.Zero) return;
+					p = _packets[index];
+					_packets[index] = IntPtr.Zero;
+				}
+				AVPacket* pkt = (AVPacket*)p;
+				long size = pkt->size;
+				ffmpeg.av_packet_free(&pkt);
+				Interlocked.Add(ref _bytes, -size);
+				Interlocked.Add(ref totalQueuedBytes, -size);
+			}
+
+			public unsafe void FreeAll() {
+				List<IntPtr> toFree;
+				lock (_packets) {
+					toFree = new List<IntPtr>(_packets);
+					_packets.Clear();
+				}
+				long freed = 0;
+				foreach (var p in toFree) {
+					if (p == IntPtr.Zero) continue;
+					AVPacket* pkt = (AVPacket*)p;
+					freed += pkt->size;
+					ffmpeg.av_packet_free(&pkt);
+				}
+				if (freed > 0) {
+					Interlocked.Add(ref _bytes, -freed);
+					Interlocked.Add(ref totalQueuedBytes, -freed);
+				}
+			}
+		}
+
+		/// <summary>
 		/// Attempts segment-parallel extraction.  Handled=false means the file does not
 		/// fit the supported profile (or a seam mismatch was detected) and the caller
 		/// must run the sequential path.  Handled=true returns the fingerprint —
@@ -121,6 +194,14 @@ namespace VDF.Core.FFTools.FFmpegNative {
 			};
 			string fileName = Path.GetFileName(filePath);
 			int prevLogLevel = int.MinValue;
+			var ordered = new OrderedPackets();
+			Task<uint[]?>? ramSeqTask = null;
+			string ramSeqReason = string.Empty;
+			int readerDone = 0;
+			int workerFailed = 0;
+			// Cancels only THIS file's segment workers when switching to RAM-sequential
+			// (their results become irrelevant and they should free their gate slots fast).
+			using var fileCts = System.Threading.CancellationTokenSource.CreateLinkedTokenSource(ct);
 
 			// Interrupt callback state — same per-operation deadline scheme as AudioStreamDecoder.
 			long timeoutTicks = (long)(ReadTimeoutMs / 1000.0 * Stopwatch.Frequency);
@@ -207,7 +288,40 @@ namespace VDF.Core.FFTools.FFmpegNative {
 				}
 
 				void Dispatch(Segment seg, long spLocal, int rate) {
-					seg.Work = StartWorker(seg, parPtr, rate, spLocal, ct, extendedLogging, fileName, onBytesFreed);
+					seg.Work = StartWorker(seg, parPtr, rate, spLocal, fileCts.Token, extendedLogging, fileName, onBytesFreed);
+					// A failed segment discovered while still reading lets the reader switch
+					// to RAM-sequential early instead of finding out after the whole read.
+					seg.Work.ContinueWith(t => {
+						if (t.Status != TaskStatus.RanToCompletion || t.Result == null)
+							Interlocked.Exchange(ref workerFailed, 1);
+					}, TaskContinuationOptions.ExecuteSynchronously);
+				}
+
+				void SwitchToRamSeq(string reason) {
+					ramSeqReason = reason;
+					// Recall in-flight segment workers (results unused) and drop queued segments;
+					// the ordered master list already holds every packet read so far.
+					fileCts.Cancel();
+					for (int k = nextDispatch; k < segments.Count; k++)
+						FreeSegment(segments[k], onBytesFreed);
+					ramSeqTask = StartRamSeq(ordered, () => Volatile.Read(ref readerDone) == 1, parPtr, ct);
+				}
+
+				(bool, uint[]?) AwaitRamSeq() {
+					var fp = ramSeqTask!.GetAwaiter().GetResult();
+					if (ct.IsCancellationRequested) return (true, null);
+					if (fp == null) return Fallback($"{ramSeqReason}; ram-sequential failed");
+					Logger.Instance.Info($"[ParallelFp] {fileName}: {ramSeqReason} -> ram-sequential ok" +
+						(extendedLogging ? $" ({sw!.ElapsedMilliseconds}ms, blocks={fp.Length})" : string.Empty));
+					return (true, fp);
+				}
+
+				// Post-read failures (worker null, seam mismatch, ...): the ordered list is
+				// complete at this point, so decode it from RAM — no second disk pass.
+				(bool, uint[]?) RamSeqRescue(string reason) {
+					if (ordered.Overflowed) return Fallback(reason);
+					SwitchToRamSeq(reason);
+					return AwaitRamSeq();
 				}
 
 				while (true) {
@@ -220,71 +334,95 @@ namespace VDF.Core.FFTools.FFmpegNative {
 
 					if (pkt->stream_index != streamIdx) continue;
 
-					// Constant samples-per-packet profile check via packet duration.
-					long dur = pkt->duration;
-					if (dur <= 0) return Fallback("packet without duration");
-					long durSamples = dur * tbNum * srcRate;
-					if (durSamples % tbDen != 0) return Fallback("non-integral packet duration");
-					long pktSamples = durSamples / tbDen;
+					// Ordered master copy — the RAM-recovery source for any later failure.
+					ordered.Add(pkt);
 
-					if (sp == 0) {
-						sp = pktSamples;
-						if (sp <= 0 || sp > 65536) return Fallback($"unsupported packet size ({sp})");
-						step = cycle / Gcd(sp, cycle);
-						segPkts = Math.Max(step, (long)(SegmentSeconds * (double)srcRate / sp) / step * step);
-						warmupPkts = CeilToMultiple((long)Math.Ceiling(WarmupSeconds * srcRate / sp), step);
-						shadowPkts = (long)Math.Ceiling(ShadowSeconds * srcRate / sp) + 1;
-					}
-					else if (shortPktIndex >= 0) {
-						return Fallback("short packet mid-stream");
-					}
-					else if (pktSamples != sp) {
-						if (pktSamples < sp)
-							shortPktIndex = pktIndex;  // may be the final packet — verified at EOF
-						else
-							return Fallback($"variable packet size ({pktSamples} vs {sp})");
-					}
+					if (ramSeqTask == null) {
+						// Constant samples-per-packet profile check via packet duration.
+						string? violation = null;
+						long pktSamples = -1;
+						long dur = pkt->duration;
+						if (dur <= 0) violation = "packet without duration";
+						else {
+							long durSamples = dur * tbNum * srcRate;
+							if (durSamples % tbDen != 0) violation = "non-integral packet duration";
+							else pktSamples = durSamples / tbDen;
+						}
+						if (violation == null) {
+							if (sp == 0) {
+								sp = pktSamples;
+								if (sp <= 0 || sp > 65536) violation = $"unsupported packet size ({sp})";
+								else {
+									step = cycle / Gcd(sp, cycle);
+									segPkts = Math.Max(step, (long)(SegmentSeconds * (double)srcRate / sp) / step * step);
+									warmupPkts = CeilToMultiple((long)Math.Ceiling(WarmupSeconds * srcRate / sp), step);
+									shadowPkts = (long)Math.Ceiling(ShadowSeconds * srcRate / sp) + 1;
+								}
+							}
+							else if (shortPktIndex >= 0) violation = "short packet mid-stream";
+							else if (pktSamples != sp) {
+								if (pktSamples < sp)
+									shortPktIndex = pktIndex;  // may be the final packet — verified at EOF
+								else
+									violation = $"variable packet size ({pktSamples} vs {sp})";
+							}
+						}
+						if (violation == null && Volatile.Read(ref workerFailed) == 1)
+							violation = "segment worker failed";
 
-					// Route the packet into every segment whose decode range covers it (≤ 3).
-					int k0 = (int)(pktIndex / segPkts);
-					for (int k = Math.Max(0, k0 - 1); k <= k0 + 1; k++) {
-						long decodeStart = Math.Max(0, k * segPkts - warmupPkts);
-						long decodeEnd = (k + 1) * segPkts + shadowPkts;
-						if (pktIndex < decodeStart || pktIndex >= decodeEnd) continue;
-						AVPacket* clone = ffmpeg.av_packet_clone(pkt);
-						if (clone == null) return Fallback("packet clone failed");
-						var seg = GetSegment(k);
-						seg.Packets.Add((IntPtr)clone);
-						seg.PacketBytes += clone->size;
-						Interlocked.Add(ref queuedBytes, clone->size);
-						Interlocked.Add(ref totalQueuedBytes, clone->size);
-					}
+						if (violation != null) {
+							// Keep reading (sequentially, no seek) and decode from RAM —
+							// the disk is read exactly once whatever the file turns out to be.
+							if (ordered.Overflowed) return Fallback(violation);
+							SwitchToRamSeq(violation);
+						}
+						else {
+							// Route the packet into every segment whose decode range covers it (≤ 3).
+							int k0 = (int)(pktIndex / segPkts);
+							for (int k = Math.Max(0, k0 - 1); k <= k0 + 1; k++) {
+								long decodeStart = Math.Max(0, k * segPkts - warmupPkts);
+								long decodeEnd = (k + 1) * segPkts + shadowPkts;
+								if (pktIndex < decodeStart || pktIndex >= decodeEnd) continue;
+								AVPacket* clone = ffmpeg.av_packet_clone(pkt);
+								if (clone == null) return Fallback("packet clone failed");
+								var seg = GetSegment(k);
+								seg.Packets.Add((IntPtr)clone);
+								seg.PacketBytes += clone->size;
+								Interlocked.Add(ref queuedBytes, clone->size);
+								Interlocked.Add(ref totalQueuedBytes, clone->size);
+							}
 
-					// Dispatch segments whose decode range the reader has fully passed.
-					// (Such a segment can never be the file's last one: any packet at or
-					// beyond its emit end has already materialised the next segment.)
-					while (nextDispatch < segments.Count && pktIndex >= (nextDispatch + 1) * segPkts + shadowPkts)
-						Dispatch(segments[nextDispatch++], sp, srcRate);
+							// Dispatch segments whose decode range the reader has fully passed.
+							// (Such a segment can never be the file's last one: any packet at or
+							// beyond its emit end has already materialised the next segment.)
+							while (nextDispatch < segments.Count && pktIndex >= (nextDispatch + 1) * segPkts + shadowPkts)
+								Dispatch(segments[nextDispatch++], sp, srcRate);
 
-					// RAM backstop — decode normally outruns the disk, so this rarely trips.
-					// Stall on the per-file cap, or on the global cap when this file holds a
-					// non-trivial share. Progress guarantee: bytes only drain via dispatched
-					// workers, so if everything this file holds is undispatched (the reader
-					// itself is the only thing that could free them) fall back instead of
-					// sleeping forever — e.g. one >512 MB segment of very-high-bitrate audio.
-					while (true) {
-						long own = Interlocked.Read(ref queuedBytes);
-						long global = Interlocked.Read(ref totalQueuedBytes);
-						bool stall = own > QueuedBytesCap ||
-							(global > GlobalQueuedBytesCap && own > PerFileFloorBytes);
-						if (!stall) break;
-						if (ct.IsCancellationRequested) return (true, null);
-						long undispatched = 0;
-						for (int k = nextDispatch; k < segments.Count; k++)
-							undispatched += segments[k].PacketBytes;
-						if (undispatched >= own)
-							return Fallback("segment bytes exceed RAM cap");
-						Thread.Sleep(5);
+							// RAM backstop — decode normally outruns the disk, so this rarely trips.
+							// Stall on the per-file cap, or on the global cap when this file holds a
+							// non-trivial share. Progress guarantee: bytes only drain via dispatched
+							// workers, so if everything this file holds is undispatched (the reader
+							// itself is the only thing that could free them) switch to RAM-sequential
+							// (or plain sequential) instead of sleeping forever — e.g. one >512 MB
+							// segment of very-high-bitrate audio.
+							while (ramSeqTask == null) {
+								long own = Interlocked.Read(ref queuedBytes);
+								long global = Interlocked.Read(ref totalQueuedBytes);
+								bool stall = own > QueuedBytesCap ||
+									(global > GlobalQueuedBytesCap && own > PerFileFloorBytes);
+								if (!stall) break;
+								if (ct.IsCancellationRequested) return (true, null);
+								long undispatched = 0;
+								for (int k = nextDispatch; k < segments.Count; k++)
+									undispatched += segments[k].PacketBytes;
+								if (undispatched >= own) {
+									if (ordered.Overflowed) return Fallback("segment bytes exceed RAM cap");
+									SwitchToRamSeq("segment bytes exceed RAM cap");
+									break;
+								}
+								Thread.Sleep(5);
+							}
+						}
 					}
 
 					pktIndex++;
@@ -298,9 +436,17 @@ namespace VDF.Core.FFTools.FFmpegNative {
 					}
 				}
 
-				if (sp == 0 || pktIndex == 0 || segments.Count == 0) return Fallback("no audio packets");
+				Volatile.Write(ref readerDone, 1);
+
+				// RAM-sequential mode engaged mid-read: the decoder has been consuming the
+				// ordered list in parallel with the remaining disk read — just await it.
+				if (ramSeqTask != null)
+					return AwaitRamSeq();
+
+				if (pktIndex == 0) return Fallback("no audio packets");
+				if (sp == 0 || segments.Count == 0) return RamSeqRescue("no parallel segments");
 				if (shortPktIndex >= 0 && shortPktIndex != pktIndex - 1)
-					return Fallback("short packet mid-stream");
+					return RamSeqRescue("short packet mid-stream");
 
 				// EOF: a tail segment materialised only by the warmup lookahead — or left
 				// without a single completable frame window — can never emit, which would
@@ -337,7 +483,7 @@ namespace VDF.Core.FFTools.FFmpegNative {
 				if (ct.IsCancellationRequested) return (true, null);
 				for (int i = 0; i < results.Length; i++)
 					if (results[i] == null)
-						return Fallback($"segment {i} unsupported/failed");
+						return RamSeqRescue($"segment {i} unsupported/failed");
 
 				// Seam verification: shadow(k) must equal the head of emitted(k+1).
 				for (int i = 0; i + 1 < results.Length; i++) {
@@ -345,10 +491,10 @@ namespace VDF.Core.FFTools.FFmpegNative {
 					var nextEmitted = results[i + 1]!.Emitted;
 					int checkCount = Math.Min(shadow.Count, Math.Min(nextEmitted.Count, ShadowFrames));
 					if (checkCount == 0)
-						return Fallback($"seam {i}: no overlap frames to verify");
+						return RamSeqRescue($"seam {i}: no overlap frames to verify");
 					for (int j = 0; j < checkCount; j++)
 						if (shadow[j].Index != nextEmitted[j].Index || shadow[j].Fp != nextEmitted[j].Fp)
-							return Fallback($"seam {i}: mismatch at frame {nextEmitted[j].Index}");
+							return RamSeqRescue($"seam {i}: mismatch at frame {nextEmitted[j].Index}");
 				}
 
 				// Merge, verifying global frame continuity across segment borders.
@@ -357,10 +503,10 @@ namespace VDF.Core.FFTools.FFmpegNative {
 					var emitted = r!.Emitted;
 					if (emitted.Count == 0) continue;
 					if (all.Count > 0 && emitted[0].Index != all[^1].Index + 1)
-						return Fallback($"frame gap at segment border ({all[^1].Index} -> {emitted[0].Index})");
+						return RamSeqRescue($"frame gap at segment border ({all[^1].Index} -> {emitted[0].Index})");
 					all.AddRange(emitted);
 				}
-				if (all.Count == 0) return Fallback("produced no frames");
+				if (all.Count == 0) return RamSeqRescue("produced no frames");
 
 				var fingerprint = FrameFingerprinter.AggregateFrames(all);
 
@@ -378,6 +524,8 @@ namespace VDF.Core.FFTools.FFmpegNative {
 				return (false, null);
 			}
 			finally {
+				// Unblock the RAM-sequential consumer on abnormal exits BEFORE joining it.
+				Volatile.Write(ref readerDone, 1);
 				if (pkt != null) {
 					var p = pkt;
 					ffmpeg.av_packet_free(&p);
@@ -394,6 +542,11 @@ namespace VDF.Core.FFTools.FFmpegNative {
 					}
 					FreeSegment(seg, onBytesFreed); // idempotent — keeps the global byte counter honest
 				}
+				// Join the RAM-sequential decoder before freeing what it reads (packets, codecpar).
+				if (ramSeqTask != null) {
+					try { ramSeqTask.GetAwaiter().GetResult(); } catch { }
+				}
+				ordered.FreeAll();
 				if (parCopy != null) {
 					var pc = parCopy;
 					ffmpeg.avcodec_parameters_free(&pc);
@@ -429,6 +582,144 @@ namespace VDF.Core.FFTools.FFmpegNative {
 					gate.Release();
 				}
 			});
+		}
+
+		/// <summary>Queues the RAM-sequential decode behind the global gate (one slot).</summary>
+		private static Task<uint[]?> StartRamSeq(OrderedPackets ordered, Func<bool> readerDone, IntPtr par, CancellationToken ct) {
+			var gate = decodeGate; // pin — see StartWorker
+			return Task.Run(async () => {
+				try {
+					await gate.WaitAsync(ct).ConfigureAwait(false);
+				}
+				catch (OperationCanceledException) {
+					return null;
+				}
+				try {
+					return DecodeOrderedSequential(ordered, readerDone, par, ct);
+				}
+				finally {
+					gate.Release();
+				}
+			});
+		}
+
+		/// <summary>
+		/// Sequential decode of the ordered in-RAM packet list — bit-identical to the
+		/// disk-sequential path by construction: the exact same packet sequence with the
+		/// same skip-on-error and flush semantics feeds the same ChromaContext, no seam
+		/// math involved. Consumes packets as the reader appends them, so on mid-read
+		/// fallbacks the decode overlaps the remaining single disk pass.
+		/// </summary>
+		private static unsafe uint[]? DecodeOrderedSequential(OrderedPackets ordered, Func<bool> readerDone,
+			IntPtr parPtr, CancellationToken ct) {
+
+			AVCodecParameters* par = (AVCodecParameters*)parPtr;
+			AVCodecContext* codecCtx = null;
+			SwrContext* swr = null;
+			AVFrame* frame = null;
+			byte[] outBuf = new byte[8192];
+
+			try {
+				AVCodec* codec = ffmpeg.avcodec_find_decoder(par->codec_id);
+				if (codec == null) return null;
+				codecCtx = ffmpeg.avcodec_alloc_context3(codec);
+				if (codecCtx == null) return null;
+				if (ffmpeg.avcodec_parameters_to_context(codecCtx, par) < 0) return null;
+				if (ffmpeg.avcodec_open2(codecCtx, codec, null) < 0) return null;
+
+				var outLayout = new AVChannelLayout();
+				ffmpeg.av_channel_layout_default(&outLayout, 1);
+				var inLayout = codecCtx->ch_layout;
+				SwrContext* swrLocal = null;
+				if (ffmpeg.swr_alloc_set_opts2(&swrLocal,
+						&outLayout, AVSampleFormat.AV_SAMPLE_FMT_S16, TargetRate,
+						&inLayout, codecCtx->sample_fmt, codecCtx->sample_rate,
+						0, null) < 0) return null;
+				swr = swrLocal;
+				if (ffmpeg.swr_init(swr) < 0) return null;
+
+				frame = ffmpeg.av_frame_alloc();
+				if (frame == null) return null;
+
+				var ctx = new ChromaContext();
+				ctx.Start();
+				long totalSamples = 0;
+
+				void Convert(byte** inputData, int inputSamples) {
+					int outSamples = ffmpeg.swr_get_out_samples(swr, inputSamples);
+					if (outSamples <= 0) return;
+					int requiredBytes = outSamples * 2;
+					if (outBuf.Length < requiredBytes)
+						outBuf = new byte[requiredBytes];
+					int converted;
+					fixed (byte* outPtr = outBuf) {
+						byte* op = outPtr;
+						converted = ffmpeg.swr_convert(swr, &op, outSamples, inputData, inputSamples);
+					}
+					if (converted <= 0) return;
+					var span = MemoryMarshal.Cast<byte, short>(outBuf.AsSpan(0, converted * 2));
+					totalSamples += span.Length;
+					ctx.Feed(span);
+				}
+
+				// Same drain shape as AudioStreamDecoder.DecodeAll: hard send errors skip
+				// the packet (sequential's corrupted-packet behaviour), receive errors abort.
+				bool Drain() {
+					for (int iter = 0; iter < MaxFramesPerPacket; iter++) {
+						int recvRet = ffmpeg.avcodec_receive_frame(codecCtx, frame);
+						if (recvRet == ffmpeg.AVERROR(ffmpeg.EAGAIN) || recvRet == ffmpeg.AVERROR_EOF)
+							return true;
+						if (recvRet < 0) return false;
+						Convert(frame->extended_data, frame->nb_samples);
+						ffmpeg.av_frame_unref(frame);
+					}
+					return true;
+				}
+
+				int i = 0;
+				while (true) {
+					if (ct.IsCancellationRequested) return null;
+					IntPtr pp = ordered.Peek(i);
+					if (pp == IntPtr.Zero) {
+						if (readerDone()) break;
+						Thread.Sleep(2); // reader is slower than decode; brief poll
+						continue;
+					}
+					AVPacket* p = (AVPacket*)pp;
+					int sendRet = ffmpeg.avcodec_send_packet(codecCtx, p);
+					if (!(sendRet < 0 && sendRet != ffmpeg.AVERROR(ffmpeg.EAGAIN))) {
+						if (!Drain()) return null;
+					}
+					ordered.FreePacket(i);
+					i++;
+				}
+
+				// Flush decoder and resampler exactly like the sequential tail.
+				ffmpeg.avcodec_send_packet(codecCtx, null);
+				if (!Drain()) return null;
+				Convert(null, 0);
+
+				if (totalSamples < Chroma.FrameSize) return null; // too short to fingerprint
+				ctx.Finish();
+				return ctx.GetRawFingerprint();
+			}
+			catch {
+				return null;
+			}
+			finally {
+				if (frame != null) {
+					var f = frame;
+					ffmpeg.av_frame_free(&f);
+				}
+				if (swr != null) {
+					var s = swr;
+					ffmpeg.swr_free(&s);
+				}
+				if (codecCtx != null) {
+					var c = codecCtx;
+					ffmpeg.avcodec_free_context(&c);
+				}
+			}
 		}
 
 		/// <summary>
