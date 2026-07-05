@@ -619,6 +619,12 @@ namespace VDF.GUI.ViewModels {
 			// The directory tab is the startup tab, so its tree may have indexed an empty DB while
 			// this load was still running — re-snapshot now that the real database is in memory.
 			RefreshDirectoryTree();
+			// Pre-scan drive preview: draw the per-drive bars from cumulative DB state right
+			// away, so the pause checkboxes and worker caps can be configured BEFORE starting
+			// a stage (they were previously reachable only once a scan emitted progress).
+			SyncCoreSettings();
+			var preview = await System.Threading.Tasks.Task.Run(Scanner.GetDrivePreview);
+			UpdateDriveSegments(preview);
 		}
 
 		void CheckScheduledScan() {

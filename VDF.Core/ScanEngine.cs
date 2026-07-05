@@ -210,6 +210,43 @@ namespace VDF.Core {
 			preseededFiles = preseeded;
 			processedFiles = preseeded;   // global counter starts at the cumulative baseline too
 		}
+
+		/// <summary>
+		/// Cumulative per-drive DB state for display BEFORE any stage runs, so the status-bar
+		/// pause checkboxes and worker caps have a surface to configure ahead of starting a
+		/// scan. Same aggregation as <see cref="BuildDriveCounters"/> but pure — no scan state
+		/// is touched. Requires the database to be loaded; uses the CURRENT settings (include
+		/// scope, partial-clip toggle, thumbnail count), so sync GUI settings first.
+		/// </summary>
+		public DriveProgress[] GetDrivePreview() {
+			if (DatabaseUtils.Database.Count == 0) return Array.Empty<DriveProgress>();
+			BuildPositionList(); // EntryIsAlreadyComplete evaluates cached frames against it
+			var groups = new Dictionary<string, DriveProgress>(StringComparer.OrdinalIgnoreCase);
+			foreach (var e in DatabaseUtils.Database) {
+				if (!Settings.ScanAgainstEntireDatabase && !IsInIncludeScope(e)) continue;
+				var root = DriveRootOf(e.Path);
+				groups.TryGetValue(root, out var dp);
+				dp.Root = root;
+				dp.TotalBytes += e.FileSize;
+				dp.TotalFiles++;
+				if (EntryIsAlreadyComplete(e)) {
+					dp.DoneBytes += e.FileSize;
+					dp.DoneFiles++;
+				}
+				if (Settings.EnablePartialClipDetection && !e.IsImage) {
+					if (e.AudioFingerprint != null) {
+						dp.Fingerprinted++;
+						dp.FingerprintTarget++;
+					}
+					else if (!e.Flags.Has(EntryFlags.NoAudioTrack) &&
+							 !e.Flags.Has(EntryFlags.AudioFingerprintError) &&
+							 !e.Flags.Has(EntryFlags.SilentAudioTrack))
+						dp.FingerprintTarget++;
+				}
+				groups[root] = dp;
+			}
+			return groups.Values.OrderBy(d => d.Root, StringComparer.OrdinalIgnoreCase).ToArray();
+		}
 		DriveProgress[]? DriveSnapshot() {
 			var dc = driveCounters; var order = driveOrder;
 			if (dc == null || order == null) return null;
