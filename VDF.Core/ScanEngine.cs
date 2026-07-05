@@ -138,6 +138,17 @@ namespace VDF.Core {
 			var dc = driveCounters;
 			return dc != null && dc.TryGetValue(root, out var c) && c.Disabled;
 		}
+		// Drive roots whose GatherInfos loop has not finished yet (adaptive AND static paths).
+		// Parked (paused) drives use it to detect "everyone left is paused" and skip out, so the
+		// stage ends when the checked drives finish instead of waiting forever on unchecked ones.
+		ConcurrentDictionary<string, byte>? runningDriveRoots;
+		bool AllRemainingDrivesDisabled() {
+			var rr = runningDriveRoots;
+			if (rr == null || rr.IsEmpty) return false;
+			foreach (var r in rr.Keys)
+				if (!DriveDisabled(r)) return false;
+			return true;
+		}
 		static string DriveRootOf(string path) { try { return System.IO.Path.GetPathRoot(path) ?? "?"; } catch { return "?"; } }
 		// Records the calling worker's in-progress file (+ optional sub-stage) under its own thread-id slot.
 		void SetDriveCurrent(string path, string? stage = null, int stageCurrent = 0, int stageMax = 0) {
@@ -200,11 +211,14 @@ namespace VDF.Core {
 						dc.FingerprintTarget++;
 				}
 			}
-			// Seed saved per-drive caps BEFORE any worker launches, so a capped drive starts AT its cap.
-			// The GUI's SetDriveCap push (first progress event) still handles live mid-scan changes.
-			foreach (var kv in groups)
+			// Seed saved per-drive caps AND the pause checkboxes BEFORE any worker launches, so a
+			// capped drive starts AT its cap and a paused drive never claims a file (the GUI's
+			// live pushes only land after the first progress event — too late for scan start).
+			foreach (var kv in groups) {
 				if (Settings.DriveWorkerCaps.TryGetValue(kv.Key, out var cap) && cap > 0)
 					kv.Value.CapOverride = cap;
+				kv.Value.Disabled = Settings.DriveDisabledDrives.Contains(kv.Key);
+			}
 			var keys = new List<string>(groups.Keys); keys.Sort(StringComparer.OrdinalIgnoreCase);
 			driveCounters = groups; driveOrder = keys.ToArray();
 			preseededFiles = preseeded;
@@ -1111,6 +1125,10 @@ namespace VDF.Core {
 						// Per-drive checkbox pause: park BEFORE claiming an index or any permit,
 						// so in-flight files finish and no global decode slot is held while paused.
 						if (DriveDisabled(root)) {
+							// Once every still-running drive is paused, skip out instead of parking
+							// forever — the stage ends when the checked drives finish; a paused
+							// drive's leftovers wait for the next run.
+							if (AllRemainingDrivesDisabled()) break;
 							try { await Task.Delay(200, token).ConfigureAwait(false); }
 							catch (OperationCanceledException) { break; }
 							continue;
@@ -1181,6 +1199,7 @@ namespace VDF.Core {
 			try { await Task.WhenAll(workers).ConfigureAwait(false); }
 			finally {
 				System.Threading.Interlocked.Decrement(ref activeDrives[0]);   // release this drive's CPU share to the survivors
+				runningDriveRoots?.TryRemove(root, out _);
 				driveCts.Cancel();
 				try { await control.ConfigureAwait(false); } catch { }
 			}
@@ -1417,7 +1436,9 @@ namespace VDF.Core {
 				// (A headless harness "worked", which is how this hid — no UI thread to block.)
 				await Task.Run(() => {
 				foreach (var kv in byDrive) {
-					bool inScopeDrive = driveCounters != null && driveCounters.ContainsKey(kv.Key);
+					// Paused drives are skipped like out-of-scope ones: no probe, no LCN walk —
+					// the checkbox exists precisely to keep that disk untouched.
+					bool inScopeDrive = driveCounters != null && driveCounters.ContainsKey(kv.Key) && !DriveDisabled(kv.Key);
 					if (inScopeDrive) ReportStage(kv.Key, lcnLabel);
 					seekLat[kv.Key] = inScopeDrive ? ProbeSeekLatencyMs(kv.Value) : null;
 				}
@@ -1430,6 +1451,7 @@ namespace VDF.Core {
 				if (OperatingSystem.IsWindows()) {
 					foreach (var kv in byDrive) {
 						if (driveCounters == null || !driveCounters.ContainsKey(kv.Key)) continue;   // nothing in scope: never read this scan
+						if (DriveDisabled(kv.Key)) continue;   // paused via checkbox: don't touch the disk
 						double? lat = seekLat[kv.Key];
 						if (lat == null || lat.Value < SsdHddLatencyThresholdMs) {
 							Logger.Instance.Info($"[lcn] {kv.Key}: fast/unprobed (seek {(lat.HasValue ? lat.Value.ToString("0.0") : "?")}ms) — keeping database order");
@@ -1465,6 +1487,8 @@ namespace VDF.Core {
 					int cpuCap = Environment.ProcessorCount;
 					using var globalGate = new System.Threading.SemaphoreSlim(cpuCap, cpuCap);
 					int[] activeDrives = { byDrive.Count };
+					runningDriveRoots = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
+					foreach (var akv in byDrive) runningDriveRoots[akv.Key] = 0;
 					Logger.Instance.Info($"Adaptive per-drive concurrency (fair CPU share): budget {cpuCap} across {byDrive.Count} drive(s), window {(Settings.AdaptiveWindowSeconds > 0 ? Settings.AdaptiveWindowSeconds : 120)}s");
 					var adaptiveTasks = new List<Task>(byDrive.Count);
 					foreach (var akv in byDrive) adaptiveTasks.Add(RunDriveAdaptive(akv.Key, akv.Value, ProcessEntry, globalGate, cpuCap, activeDrives));
@@ -1488,24 +1512,37 @@ namespace VDF.Core {
 				}
 				// Static-path variant of the per-drive checkbox pause: the adaptive path parks in
 				// its own worker loop; here each drive's ForEachAsync holds no cross-drive permits,
-				// so waiting inside the body only blocks this drive's own slots.
+				// so waiting inside the body only blocks this drive's own slots. When every
+				// still-running drive is paused, entries are skipped so the stage can end.
 				async ValueTask GatedProcess(string root, FileEntry entry, CancellationToken tk) {
-					while (DriveDisabled(root) && !stopRequested && !tk.IsCancellationRequested)
+					while (DriveDisabled(root) && !stopRequested && !tk.IsCancellationRequested) {
+						if (AllRemainingDrivesDisabled()) return;   // skip — paused leftovers wait for the next run
 						await Task.Delay(200, tk).ConfigureAwait(false);
+					}
+					if (DriveDisabled(root)) return;
 					await ProcessEntry(entry, tk).ConfigureAwait(false);
 				}
+				async Task RunStaticGroup(string root, List<FileEntry> entries, int dop) {
+					try {
+						await Parallel.ForEachAsync(entries, new ParallelOptions { CancellationToken = cancelationTokenSource.Token, MaxDegreeOfParallelism = dop }, (e, tk) => GatedProcess(root, e, tk));
+					}
+					finally {
+						runningDriveRoots?.TryRemove(root, out _);
+					}
+				}
+				runningDriveRoots = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
+				foreach (var g in groups) runningDriveRoots[g.Root] = 0;
 				if (forceSerial) {
 					// preserve the pre-stage-3 single-thread guarantee: one drive, one file at a time
 					foreach (var g in groups)
-						await Parallel.ForEachAsync(g.Entries, new ParallelOptions { CancellationToken = cancelationTokenSource.Token, MaxDegreeOfParallelism = 1 }, (e, tk) => GatedProcess(g.Root, e, tk));
+						await RunStaticGroup(g.Root, g.Entries, 1);
 				}
 				else {
 					var driveTasks = new List<Task>(groups.Count);
 					foreach (var g in groups) {
 						int dop = DopFor(g.Lat);
-						var root = g.Root;
 						Logger.Instance.Info($"Drive {g.Root}: {g.Entries.Count:N0} file(s), concurrency = {dop}" + (g.Lat != null ? $" (seek {g.Lat.Value:0.0}ms)" : " (unprobed)"));
-						driveTasks.Add(Parallel.ForEachAsync(g.Entries, new ParallelOptions { CancellationToken = cancelationTokenSource.Token, MaxDegreeOfParallelism = dop }, (e, tk) => GatedProcess(root, e, tk)));
+						driveTasks.Add(RunStaticGroup(g.Root, g.Entries, dop));
 					}
 					await Task.WhenAll(driveTasks);
 				}

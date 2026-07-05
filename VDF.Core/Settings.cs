@@ -71,6 +71,10 @@ namespace VDF.Core {
 		// after the first progress event, by which time an uncapped launch has already spun up extra workers
 		// that then have to drain (visible as "starts at 4, shrinks to 1" after every restart).
 		public Dictionary<string, int> DriveWorkerCaps = new(StringComparer.OrdinalIgnoreCase);
+		// Drive roots whose status-bar pause checkbox is unchecked, seeded at scan START so a
+		// paused drive never probes, never LCN-sorts and never claims a single file — the GUI's
+		// live push (progress ticks) only covers mid-scan toggles, which raced the first files.
+		public HashSet<string> DriveDisabledDrives { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
 		// Segment-parallel audio fingerprint decode: 0 or 1 = existing sequential path
 		// (default), N>1 = decode each file in parallel segments with a process-wide

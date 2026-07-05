@@ -1433,10 +1433,12 @@
                                     </ItemsControl.ItemsPanel>
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate x:DataType="vm:DriveProgressVM">
-                                            <StackPanel Orientation="Vertical" Margin="0,0,0,2">
-                                                <Border BorderBrush="{actipro:ThemeResource ButtonForegroundBrush}"
-                                                    BorderThickness="0,0,0,1"
-                                                    ClipToBounds="True"
+                                            <!-- The white separator sits under the WHOLE drive block (bar + its
+                                                 processing rows), so the line always marks the boundary BETWEEN drives. -->
+                                            <Border BorderBrush="{actipro:ThemeResource ButtonForegroundBrush}"
+                                                    BorderThickness="0,0,0,1" Margin="0,0,0,2">
+                                            <StackPanel Orientation="Vertical">
+                                                <Border ClipToBounds="True"
                                                     ToolTip.Tip="{Binding Label}">
                                                     <Grid>
                                                         <ProgressBar Minimum="0" Maximum="1" Value="{Binding Fraction}"
@@ -1491,6 +1493,7 @@
                                                     </ItemsControl.ItemTemplate>
                                                 </ItemsControl>
                                             </StackPanel>
+                                            </Border>
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
                                 </ItemsControl>

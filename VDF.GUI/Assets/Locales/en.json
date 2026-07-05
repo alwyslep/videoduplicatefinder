@@ -286,7 +286,7 @@
 	"MainWindow.Settings.MaxDegreeOfParallelism": "Max Degree Of Parallelism:",
 	"MainWindow.Settings.MaxDegreeOfParallelismTooltip": "Limits concurrent tasks in the CPU-bound compare phases. Per-drive read parallelism during fingerprint gathering is controlled separately by the per-drive dropdowns (A/1/2/...) in the status bar. -1 = let the system decide (recommended); 1 = strictly single-threaded everywhere (most stable).",
 	"MainWindow.DriveCap.Tooltip": "Concurrent read tasks for this drive. A = auto (fair CPU share). Lower to 1-2 for drives sharing one bus (e.g. a multi-bay USB enclosure) to stop seek thrashing. Changes apply within seconds and are remembered per drive.",
-	"MainWindow.DriveEnable.Tooltip": "Pause/resume this drive. Unchecked: files already in progress finish, but no new files are claimed on this drive. Re-check to resume within seconds. Remembered per drive across scans and app restarts.",
+	"MainWindow.DriveEnable.Tooltip": "Pause/resume this drive. Unchecked: the drive is fully excluded — no disk-order sort, no new files claimed (in-flight files finish) — and once all checked drives finish, the stage ends too; leftovers wait for the next run. Re-check to resume within seconds. Remembered per drive across scans and app restarts.",
 	"MainWindow.Settings.Misc": "Misc",
 	"MainWindow.Settings.Scanning": "Scanning",
 	"MainWindow.Settings.Directories": "Directories",
