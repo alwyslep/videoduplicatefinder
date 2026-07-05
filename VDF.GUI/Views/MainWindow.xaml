@@ -1507,9 +1507,12 @@
                                                 <ItemsControl ItemsSource="{Binding ActiveFileLines}" Margin="10,1,4,1">
                                                     <ItemsControl.ItemTemplate>
                                                         <DataTemplate x:DataType="vm:ActiveFileRowVM">
-                                                            <Grid ColumnDefinitions="*,8,Auto,4,34">
+                                                            <!-- Text sizes to content; the gauge stretches across ALL remaining row width
+                                                                 (user: 길쭉하게) with the percent pinned at the right edge. -->
+                                                            <Grid ColumnDefinitions="Auto,10,*,6,34">
                                                                 <TextBlock Grid.Column="0" FontSize="11" Text="{Binding Text}" TextTrimming="CharacterEllipsis" />
-                                                                <ProgressBar Grid.Column="2" Width="90" Height="7" MinWidth="0" MinHeight="0"
+                                                                <ProgressBar Grid.Column="2" Height="9" MinWidth="0" MinHeight="0"
+                                                                             HorizontalAlignment="Stretch"
                                                                              Minimum="0" Maximum="1" Value="{Binding Fraction}"
                                                                              Foreground="{Binding Fill}" VerticalAlignment="Center"
                                                                              IsVisible="{Binding HasProgress}" />
