@@ -52,6 +52,18 @@ namespace VDF.GUI.ViewModels {
 			get => _ShowDriveProgress;
 			set => this.RaiseAndSetIfChanged(ref _ShowDriveProgress, value);
 		}
+		// Single current-file/compare text next to the bars — shown only during the
+		// compare phases now that the drive bars stay visible through them.
+		bool _ShowCompareText;
+		public bool ShowCompareText {
+			get => _ShowCompareText;
+			set => this.RaiseAndSetIfChanged(ref _ShowCompareText, value);
+		}
+		// Drive bars are a persistent dashboard (user rule 2026-07-05): visible whenever
+		// segments exist EXCEPT while the duplicate-results list holds items. Live scan
+		// events force-show separately in UpdateDriveSegments; this applies at rest
+		// points and on every results-collection change (including deleting the last row).
+		void UpdateDriveBarVisibility() => ShowDriveProgress = DriveSegments.Count > 0 && Duplicates.Count == 0;
 		static readonly IBrush[] _drivePalette = {
 			new SolidColorBrush(Color.Parse("#4FC3F7")), new SolidColorBrush(Color.Parse("#81C784")),
 			new SolidColorBrush(Color.Parse("#FFB74D")), new SolidColorBrush(Color.Parse("#BA68C8")),
@@ -61,10 +73,11 @@ namespace VDF.GUI.ViewModels {
 		static IBrush DriveBrush(int i) => _drivePalette[((i % _drivePalette.Length) + _drivePalette.Length) % _drivePalette.Length];
 		// Rebuild segments only when the drive set changes; otherwise just refresh each fraction/label.
 		void UpdateDriveSegments(DriveProgress[]? drives) {
-			// Compare phases run with driveCounters nulled (InitProgress), so their Progress events carry
-			// no drives at all — hide the whole per-drive block so the single ScanProgressText (gated on
-			// !ShowDriveProgress) can show the live "comparing X/Y" text instead of a stale gather-phase state.
-			if (drives == null || drives.Length == 0) { ShowDriveProgress = false; return; }
+			// Compare phases run with driveCounters nulled (InitProgress), so their Progress events
+			// carry no drives — keep the bars as they are (persistent dashboard) and surface the
+			// live "comparing X/Y" text alongside them via ShowCompareText.
+			if (drives == null || drives.Length == 0) { ShowCompareText = true; return; }
+			ShowCompareText = false;
 			bool sameSet = DriveSegments.Count == drives.Length;
 			if (sameSet)
 				for (int i = 0; i < drives.Length; i++)
@@ -117,7 +130,9 @@ namespace VDF.GUI.ViewModels {
 						seg.ActiveFileLines.Add(line);
 					}
 			}
-			ShowDriveProgress = true;
+			// Live scan always shows; the startup preview (not scanning) still respects
+			// the results-list rule so imported/backup results keep their screen space.
+			ShowDriveProgress = IsScanning || Duplicates.Count == 0;
 		}
 		public ObservableCollection<string> LogItems { get; } = new();
 		List<HashSet<string>> GroupBlacklist = new();
@@ -420,6 +435,9 @@ namespace VDF.GUI.ViewModels {
 			_FileType = TypeFilters[0];
 			Scanner.ScanAborted += Scanner_ScanAborted;
 			Scanner.ScanDone += Scanner_ScanDone;
+			// Persistent drive-bar rule: any change to the results list (populate, clean,
+			// user deleting the last row) re-evaluates the bars' visibility.
+			Duplicates.CollectionChanged += (_, _) => UpdateDriveBarVisibility();
 			Scanner.BuildingHashesDone += Scanner_BuildingHashesDone;
 			Scanner.Progress += Scanner_Progress;
 			Scanner.ThumbnailProgress += Scanner_ThumbnailProgress;
@@ -570,8 +588,10 @@ namespace VDF.GUI.ViewModels {
 			ScanProgressMaxValue = 100;
 			ThumbnailRetrievalProgressText = string.Empty;
 			ShowThumbnailRetrievalProgressBar = false;
-			DriveSegments.Clear();
-			ShowDriveProgress = false;
+			// Keep the segments: the bars are a persistent dashboard now and reappear
+			// automatically when the results list empties.
+			ShowCompareText = false;
+			UpdateDriveBarVisibility();
 #pragma warning disable CS4014
 			if (SettingsFile.Instance.BackupAfterListChanged)
 				ExportScanResults(BackupScanResultsFile);
@@ -735,6 +755,8 @@ namespace VDF.GUI.ViewModels {
 				IsGathered = false;
 				scheduledScanInProgress = false;
 				stageOnlyRunInProgress = false;
+				ShowCompareText = false;
+				UpdateDriveBarVisibility();
 			});
 
 		// A full scan fires BuildingHashesDone too (right before it chains into compare) — only a
@@ -756,7 +778,8 @@ namespace VDF.GUI.ViewModels {
 				ScanProgressText = string.Empty;
 				RemainingTime = TimeSpan.Zero.Format();
 				ScanProgressValue = 0;
-				ShowDriveProgress = false;
+				ShowCompareText = false;
+				UpdateDriveBarVisibility();   // gather-only run: bars stay (results list untouched)
 				RefreshDirectoryTree();   // directory-selection tab: DB changed, refresh unscanned counts
 			});
 
@@ -770,7 +793,9 @@ namespace VDF.GUI.ViewModels {
 				RemainingTime = TimeSpan.Zero.Format();
 				ScanProgressValue = 0;
 				RefreshDirectoryTree();   // directory-selection tab: DB changed, refresh unscanned counts
-				ShowDriveProgress = false;
+				ShowCompareText = false;
+				// Bars hide only when duplicates actually land in the list below (the
+				// Duplicates.CollectionChanged hook re-evaluates on every add).
 				var completedScheduledScan = scheduledScanInProgress;
 				scheduledScanInProgress = false;
 				stageOnlyRunInProgress = false;

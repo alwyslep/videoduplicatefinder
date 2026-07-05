@@ -1560,9 +1560,10 @@
                                         <Run Text="{Binding RemainingTime, Mode=OneWay}" />
                                     </TextBlock>
                                     <Border Width="1" Margin="3,2" Background="{actipro:ThemeResource ButtonForegroundBrush}" />
-                                    <!-- Single current-file text: compare phases etc. Hidden while the per-drive block above carries the same info. -->
+                                    <!-- Single current-file text for the compare phases. The drive bars stay visible
+                                         through them now (persistent dashboard), so this shows alongside, not instead. -->
                                     <TextBlock FontSize="12" Margin="2,0" Text="{Binding ScanProgressText, Mode=OneWay}"
-                                        IsVisible="{Binding !ShowDriveProgress}"
+                                        IsVisible="{Binding ShowCompareText}"
                                         TextTrimming="CharacterEllipsis" MaxWidth="500" />
                                 </StackPanel>
                             </WrapPanel>
