@@ -1452,8 +1452,16 @@ namespace VDF.Core {
 		}
 
 	
-	static void ExtractAudioFingerprint(FileEntry entry, CancellationToken ct = default, Action<double>? onProgress = null) {
+	internal static void ExtractAudioFingerprint(FileEntry entry, CancellationToken ct = default, Action<double>? onProgress = null) {
 		uint[]? fp = FFTools.ChromaprintEngine.ExtractFingerprint(entry.Path, false, ct, onProgress);
+		if (fp == null && ct.IsCancellationRequested) {
+			// Stop/cancel mid-file is not a file error. Flagging here poisoned the entry
+			// permanently: both the AudioFingerprintError flag and the non-null empty
+			// fingerprint block every retry gate (EntryIsAlreadyComplete and the
+			// ProcessEntry audio checks), so the file would never be fingerprinted again.
+			// Leave the entry untouched and let the next scan retry it.
+			return;
+		}
 		if (fp == null) {
 			// null = extraction failed (error or no audio stream)
 			entry.Flags.Set(EntryFlags.AudioFingerprintError);
