@@ -196,9 +196,25 @@ namespace VDF.Core {
 		// drive's CUMULATIVE completion state, not this scan's throughput (the LCN ordering killed
 		// the old start-of-scan flythrough that used to fake this) — and marks those entries so
 		// their instant pass-through isn't counted a second time. Keep in sync with ProcessEntry.
+		// A sampling-failed entry is permanently done — skipped, no more retries — when retry is off,
+		// or when it has burned through the retry budget (a corrupt/truncated file never heals, so
+		// retrying it every scan is pure waste). maxAttempts <= 0 disables the cap (retry forever).
+		internal static bool SamplingPermanentlyFailed(bool hasThumbnailError, bool retryEnabled, int failCount, int maxAttempts)
+			=> hasThumbnailError && (!retryEnabled || (maxAttempts > 0 && failCount >= maxAttempts));
+
+		// Records one failed sampling attempt (saturating) and logs once, when the entry crosses the
+		// retry budget, so the permanent skip is visible rather than silent.
+		void NoteSamplingFailure(FileEntry entry) {
+			if (entry.SamplingFailCount < byte.MaxValue)
+				entry.SamplingFailCount++;
+			int cap = Settings.MaxSamplingRetryAttempts;
+			if (cap > 0 && Settings.AlwaysRetryFailedSampling && entry.SamplingFailCount == cap)
+				Logger.Instance.Info($"Frame sampling failed {cap}x for '{entry.Path}' — permanently skipping it in future scans (fix the file or delete its DB entry to retry).");
+		}
+
 		bool EntryIsAlreadyComplete(FileEntry e) {
 			if (e.Flags.Has(EntryFlags.ThumbnailError))
-				return !Settings.AlwaysRetryFailedSampling;   // permanently skipped unless retry is on
+				return SamplingPermanentlyFailed(true, Settings.AlwaysRetryFailedSampling, e.SamplingFailCount, Settings.MaxSamplingRetryAttempts);
 			if (!e.IsImage && e.mediaInfo == null) return false;
 			if (e.grayBytes == null || (e.IsImage && e.grayBytes.Count == 0)) return false;
 			if (!e.IsImage)
@@ -1358,9 +1374,12 @@ namespace VDF.Core {
 						bool skipEntry = false;
 						string? skipReason = null;
 						skipEntry |= entry.invalid;
-						if (!skipEntry && entry.Flags.Has(EntryFlags.ThumbnailError) && !Settings.AlwaysRetryFailedSampling) {
+						if (!skipEntry && entry.Flags.Has(EntryFlags.ThumbnailError) &&
+							SamplingPermanentlyFailed(true, Settings.AlwaysRetryFailedSampling, entry.SamplingFailCount, Settings.MaxSamplingRetryAttempts)) {
 							skipEntry = true;
-							skipReason = "previous thumbnail sampling failed and retry is disabled";
+							skipReason = Settings.AlwaysRetryFailedSampling
+								? $"frame sampling failed {entry.SamplingFailCount}x — retry budget exhausted, permanently skipped"
+								: "previous thumbnail sampling failed and retry is disabled";
 						}
 
 						if (!skipEntry && !Settings.ScanAgainstEntireDatabase && !IsInIncludeScope(entry)) {
@@ -1464,10 +1483,22 @@ namespace VDF.Core {
 							int totalSamples = positionList.Count;
 							string samplingLabel = T("Scan.Stage.SamplingFrames");
 							MarkAnalyzed();
-							if (!FfmpegEngine.GetGrayBytesFromVideo(entry, positionList, Settings.MaxSamplingDurationSeconds,
+							bool sampled = FfmpegEngine.GetGrayBytesFromVideo(entry, positionList, Settings.MaxSamplingDurationSeconds,
 									Settings.ExtendedFFToolsLogging,
-									onSampleComplete: (done) => ReportStage(entryPath, samplingLabel, done, totalSamples)))
+									onSampleComplete: (done) => ReportStage(entryPath, samplingLabel, done, totalSamples));
+							if (!sampled) {
 								entry.invalid = true;
+								// Count only genuine decode failures (ThumbnailError). TooDark is a real
+								// property of the frames, not a retryable failure, so it must not burn the budget.
+								if (entry.Flags.Has(EntryFlags.ThumbnailError))
+									NoteSamplingFailure(entry);
+							}
+							else {
+								// Fully sampled: clear any prior failure state so a healed file (e.g. an
+								// earlier transient lock) stops being treated as incomplete.
+								entry.Flags.Set(EntryFlags.ThumbnailError, false);
+								entry.SamplingFailCount = 0;
+							}
 						}
 
 						// Audio fingerprint — videos only, only when enabled,
@@ -1501,6 +1532,7 @@ namespace VDF.Core {
 						Logger.Instance.Info($"Unhandled error processing '{entry.Path}': {ex}");
 						entry.invalid = true;
 						entry.Flags.Set(EntryFlags.ThumbnailError);
+						NoteSamplingFailure(entry);
 						if (!preCounted)
 							IncrementProgress(entry.Path, entry.FileSize);
 						return ValueTask.CompletedTask;

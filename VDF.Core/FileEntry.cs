@@ -89,6 +89,15 @@ namespace VDF.Core {
 		[MemoryPackOrder(10)]
 		public string? OsHash;
 
+		/// <summary>
+		/// Consecutive failed frame-sampling attempts (corrupt/truncated video). Once it reaches
+		/// <see cref="Settings.MaxSamplingRetryAttempts"/> the file is skipped even with
+		/// AlwaysRetryFailedSampling on; reset to 0 on a successful sampling. Rides on the entry so a
+		/// relinked move keeps the count instead of restarting the wasted retries.
+		/// </summary>
+		[MemoryPackOrder(11)]
+		public byte SamplingFailCount;
+
 		[MemoryPackIgnore]
 		internal bool invalid = true;
 

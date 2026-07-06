@@ -35,6 +35,12 @@ namespace VDF.Core {
 		public bool ExtendedFFToolsLogging;
 		public bool LogExcludedFiles;
 		public bool AlwaysRetryFailedSampling;
+		// With AlwaysRetryFailedSampling on, a file whose frame sampling keeps failing (corrupt/
+		// truncated — it will never decode) would otherwise be re-decoded every scan: pure waste.
+		// After this many consecutive failed attempts it is treated as permanently failed and skipped
+		// even with retry on; transient failures (locked/offline) still get this many chances first.
+		// The count rides on the entry, so a moved file keeps it. 0 = no cap (retry forever, old behaviour).
+		public int MaxSamplingRetryAttempts = 2;
 		public bool IgnoreBlackPixels;
 		public bool IgnoreWhitePixels;
 		public bool CompareHorizontallyFlipped;
