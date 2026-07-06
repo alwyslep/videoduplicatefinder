@@ -161,11 +161,22 @@ namespace VDF.Core.Utils {
 				SerializeDatabaseStreaming(stream, DbWrapper);
 			//Reason: https://github.com/0x90d/videoduplicatefinder/issues/247
 			// Retry the atomic replace: an external reader (backup, antivirus, a DB probe) holding the
-			// file open without FileShare.Delete makes MoveFile-overwrite fail transiently with Access
-			// Denied. ponytail: 5×200ms backoff; a lock outlasting ~1s rethrows to the caller, which
-			// logs it and keeps results in memory for the next save instead of hanging the scan.
+			// file open without FileShare.Delete makes the replace fail transiently with Access Denied.
+			// ponytail: 5×200ms backoff; a lock outlasting ~1s rethrows to the caller, which logs it and
+			// keeps results in memory for the next save instead of hanging the scan.
+			// File.Replace atomically swaps in the new DB AND demotes the PREVIOUS one to <db>.bak in a
+			// single op (a free rolling one-generation backup: rename, not a 500MB copy) — same crash
+			// safety as Move (old file stays intact on failure) plus a rollback point that never goes
+			// stale. First-ever save has no current DB to back up, so Move it into place.
+			string backupPath = CurrentDatabasePath + ".bak";
 			for (int attempt = 0; ; attempt++) {
-				try { File.Move(TempDatabasePath, CurrentDatabasePath, true); break; }
+				try {
+					if (File.Exists(CurrentDatabasePath))
+						File.Replace(TempDatabasePath, CurrentDatabasePath, backupPath, ignoreMetadataErrors: true);
+					else
+						File.Move(TempDatabasePath, CurrentDatabasePath, true);
+					break;
+				}
 				catch (Exception e) when (attempt < 4 && (e is IOException || e is UnauthorizedAccessException)) {
 					System.Threading.Thread.Sleep(200);
 				}
