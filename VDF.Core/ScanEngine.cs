@@ -1332,6 +1332,17 @@ namespace VDF.Core {
 					if (Settings.ScanAgainstEntireDatabase || IsInIncludeScope(e)) inScopeCount++;
 				InitProgress(inScopeCount);
 				BuildDriveCounters();
+				// Snapshot the content fingerprints (OsHash) of files that still exist, so 'Missing' (부재)
+				// counts only UNIQUELY-deleted files: a gone entry whose content is still present elsewhere
+				// under the same OsHash is a deleted DUPLICATE, not a loss, and must not inflate the count.
+				// Off the UI thread — this stats every DB path (see the async-prefix rule). The matching
+				// entries are also removed from the DB entirely by PruneRelocatedOrphans at scan end.
+				var liveOsHashes = new HashSet<string>(StringComparer.Ordinal);
+				await Task.Run(() => {
+					foreach (var e in DatabaseUtils.Database)
+						if (e.OsHash != null && IsDriveReady(e.Path) && File.Exists(e.Path))
+							liveOsHashes.Add(e.OsHash);
+				}).ConfigureAwait(false);
 				ValueTask ProcessEntry(FileEntry entry, CancellationToken token) {
 					// Park BEFORE the stop check: a worker sleeping through a pause has already claimed this
 					// entry, and Stop-while-paused resumes it to wake it up — with the check first, every
@@ -1448,7 +1459,10 @@ namespace VDF.Core {
 						if (!File.Exists(entry.Path)) {
 							entry.invalid = true;
 							var dcM = driveCounters;
-							if (dcM != null && dcM.TryGetValue(DriveRootOf(entry.Path), out var cM))
+							// Count as 부재 only for a UNIQUE deletion: a gone entry whose content still exists
+							// elsewhere under the same OsHash is a deleted duplicate, not a loss (user request).
+							if (dcM != null && (entry.OsHash == null || !liveOsHashes.Contains(entry.OsHash)) &&
+								dcM.TryGetValue(DriveRootOf(entry.Path), out var cM))
 								System.Threading.Interlocked.Increment(ref cM.MissingFiles);
 							if (!preCounted)
 								IncrementProgress(entry.Path, entry.FileSize);
