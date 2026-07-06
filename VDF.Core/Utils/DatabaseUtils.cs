@@ -160,7 +160,16 @@ namespace VDF.Core.Utils {
 			using (FileStream stream = new(TempDatabasePath, FileMode.Create))
 				SerializeDatabaseStreaming(stream, DbWrapper);
 			//Reason: https://github.com/0x90d/videoduplicatefinder/issues/247
-			File.Move(TempDatabasePath, CurrentDatabasePath, true);
+			// Retry the atomic replace: an external reader (backup, antivirus, a DB probe) holding the
+			// file open without FileShare.Delete makes MoveFile-overwrite fail transiently with Access
+			// Denied. ponytail: 5×200ms backoff; a lock outlasting ~1s rethrows to the caller, which
+			// logs it and keeps results in memory for the next save instead of hanging the scan.
+			for (int attempt = 0; ; attempt++) {
+				try { File.Move(TempDatabasePath, CurrentDatabasePath, true); break; }
+				catch (Exception e) when (attempt < 4 && (e is IOException || e is UnauthorizedAccessException)) {
+					System.Threading.Thread.Sleep(200);
+				}
+			}
 		}
 
 		/// <summary>

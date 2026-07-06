@@ -575,7 +575,8 @@ namespace VDF.Core {
 			// Save before signaling completion: consumers (e.g. the CLI) may treat the
 			// event as "done" and exit the process, which previously killed this thread
 			// mid-write and left a torn ScannedFiles_new.db behind.
-			DatabaseUtils.SaveDatabase();
+			try { DatabaseUtils.SaveDatabase(); }
+			catch (Exception e) { Logger.Instance.Info($"WARNING: database save failed, keeping results in memory: {e.Message}"); }
 			BuildingHashesDone?.Invoke(this, new EventArgs());
 			if (!cancelationTokenSource.IsCancellationRequested && !stopRequested) {
 				if (searchAndCompare)
@@ -646,7 +647,12 @@ namespace VDF.Core {
 		// Shared tail of the search-side stages — mirrors StartSearch's searchAndCompare:false path.
 		void FinishSearchSideStage() {
 			// Save before signaling completion — see the matching comment in StartSearch.
-			DatabaseUtils.SaveDatabase();
+			// A failed save (e.g. the DB file momentarily locked by an external reader while MoveFile
+			// replaces it) must NOT skip the state reset below — otherwise the throw propagates out of
+			// this async-void stage and the UI stays stuck in "stopping…" forever (observed 2026-07-06).
+			// Keep results in memory, finish the stage, and let the next save retry.
+			try { DatabaseUtils.SaveDatabase(); }
+			catch (Exception e) { Logger.Instance.Info($"WARNING: database save failed, keeping results in memory: {e.Message}"); }
 			if (cancelationTokenSource.IsCancellationRequested || stopRequested) {
 				ScanAborted?.Invoke(this, new EventArgs());
 				Logger.Instance.Info(T("Log.ScanAborted"));
