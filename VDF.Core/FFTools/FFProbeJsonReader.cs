@@ -214,7 +214,34 @@ namespace VDF.Core.FFTools {
 			if (!foundBitRate && info.Streams.Length > 0 && format.ContainsKey("bit_rate") && long.TryParse((string)format["bit_rate"], out var formatBitrate))
 				info.Streams[0].BitRate = formatBitrate;
 
+			// Real video-stream duration (see MediaInfo.VideoDurationSeconds): the shortest non-cover
+			// video stream that reports a duration. Frame sampling maps container-based positions onto
+			// this so a container inflated by a long/broken audio track or an attached cover-art stream
+			// doesn't seek past the video's end.
+			double videoDur = 0;
+			for (int i = 0; i < streams.Count; i++) {
+				if (!(streams[i].TryGetValue("codec_type", out var ctv) && ctv as string == "video")) continue;
+				if (streams[i].TryGetValue("attached_pic", out var apv) && apv is int api && api == 1) continue; // cover art
+				var cn = streams[i].TryGetValue("codec_name", out var cnv) ? cnv as string : null;
+				if (cn is "mjpeg" or "png" or "gif" or "bmp" or "webp") continue;                                 // typical cover-art codecs
+				if (streams[i].TryGetValue("duration", out var dv) && dv is string ds) {
+					double sec = ParseDurationSeconds(ds);
+					if (sec > 0) videoDur = videoDur == 0 ? sec : Math.Min(videoDur, sec);
+				}
+			}
+			info.VideoDurationSeconds = videoDur;
+
 			return info;
+		}
+
+		// FFprobe emits durations either as plain seconds ("837.098") or, with -sexagesimal, as
+		// "H:MM:SS.ffffff". Parse both to seconds; 0 on failure/absence.
+		static double ParseDurationSeconds(string s) {
+			if (double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var sec) && sec >= 0)
+				return sec;
+			if (TimeSpan.TryParse(s, CultureInfo.InvariantCulture, out var ts))
+				return ts.TotalSeconds;
+			return 0;
 		}
 		static string ComputeHdrFormat(string? colorTransfer, string? sideDataTypes) {
 			if (string.IsNullOrEmpty(colorTransfer)) return string.Empty;

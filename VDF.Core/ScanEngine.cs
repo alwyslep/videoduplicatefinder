@@ -1483,9 +1483,23 @@ namespace VDF.Core {
 							int totalSamples = positionList.Count;
 							string samplingLabel = T("Scan.Stage.SamplingFrames");
 							MarkAnalyzed();
-							bool sampled = FfmpegEngine.GetGrayBytesFromVideo(entry, positionList, Settings.MaxSamplingDurationSeconds,
+							bool Sample() => FfmpegEngine.GetGrayBytesFromVideo(entry, positionList, Settings.MaxSamplingDurationSeconds,
 									Settings.ExtendedFFToolsLogging,
 									onSampleComplete: (done) => ReportStage(entryPath, samplingLabel, done, totalSamples));
+							bool sampled = Sample();
+							// Rescue for pre-fix cached probes: they lack VideoDurationSeconds, so a container
+							// inflated by a long audio track / cover art seeks past the video's end and fails
+							// on a good file. Re-probe once; if the fresh probe reveals a shorter video stream,
+							// retry with the corrected (mapped) seeks before counting a failure.
+							if (!sampled && entry.mediaInfo != null && entry.mediaInfo.VideoDurationSeconds == 0) {
+								var fresh = FFProbeEngine.GetMediaInfo(entry.Path, Settings.ExtendedFFToolsLogging);
+								if (fresh != null && fresh.VideoDurationSeconds > 0 &&
+									fresh.VideoDurationSeconds < fresh.Duration.TotalSeconds) {
+									entry.mediaInfo = fresh;
+									entry.Flags.Set(EntryFlags.ThumbnailError, false);
+									sampled = Sample();
+								}
+							}
 							if (!sampled) {
 								entry.invalid = true;
 								// Count only genuine decode failures (ThumbnailError). TooDark is a real

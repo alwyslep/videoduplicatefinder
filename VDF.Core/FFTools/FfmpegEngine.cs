@@ -213,8 +213,9 @@ namespace VDF.Core.FFTools {
 							continue;
 						}
 
-						if (!vsd.TryDecodeFrame(out var srcFrame, TimeSpan.FromSeconds(position)))
-							throw new Exception($"TryDecodeFrame failed at pos={position} for '{videoFile.Path}'");
+						double seekPos = videoFile.SeekSecondsForSample(position);
+						if (!vsd.TryDecodeFrame(out var srcFrame, TimeSpan.FromSeconds(seekPos)))
+							throw new Exception($"TryDecodeFrame failed at pos={seekPos} (key {position}) for '{videoFile.Path}'");
 
 						// HW decode reports the real (downloaded) sw_format on the frame itself,
 						// not on the codec context, so we read it post-decode. SW decode keeps it
@@ -639,7 +640,7 @@ namespace VDF.Core.FFTools {
 
 				var data = GetThumbnail(new FfmpegSettings {
 					File = videoFile.Path,
-					Position = TimeSpan.FromSeconds(position),
+					Position = TimeSpan.FromSeconds(videoFile.SeekSecondsForSample(position)),
 					GrayScale = 1,
 				}, extendedLogging);
 				if (data == null) {

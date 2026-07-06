@@ -154,6 +154,20 @@ namespace VDF.Core {
 				durationSeconds = maxSamplingDurationSeconds.Value;
 			return durationSeconds * position;
 		}
+		/// <summary>
+		/// Maps a container-duration-based sample position (the <see cref="grayBytes"/> KEY) onto the
+		/// real video stream's timeline for SEEKING. When the container duration is inflated by a long
+		/// audio track or attached cover art, the raw position seeks past the video's end and the decode
+		/// fails on a perfectly good file; scaling it by videoDuration/containerDuration keeps the four
+		/// samples spread across the actual video. The stored key is left unchanged (so previously
+		/// sampled files stay comparable). No-op when the video duration is unknown or not shorter.
+		/// </summary>
+		public double SeekSecondsForSample(double keyPositionSeconds) {
+			double vid = mediaInfo?.VideoDurationSeconds ?? 0;
+			double cont = mediaInfo?.Duration.TotalSeconds ?? 0;
+			return vid > 0 && cont > 0 && vid < cont ? keyPositionSeconds * vid / cont : keyPositionSeconds;
+		}
+
 		public override bool Equals(object? obj) =>
 			obj is FileEntry entry &&
 			Path.Equals(entry.Path, CoreUtils.IsWindows ?

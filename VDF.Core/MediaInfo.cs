@@ -28,6 +28,15 @@ namespace VDF.Core {
 		[MemoryPackOrder(1)]
 		public TimeSpan Duration { get; set; }
 
+		/// <summary>
+		/// Duration (seconds) of the real video stream — as opposed to <see cref="Duration"/>, which is
+		/// the container/format duration and can be far longer when a file carries a long/broken audio
+		/// track or an attached cover-art stream (common in JAV/FC2 mp4s). Frame sampling maps its
+		/// positions onto this so seeks stay within decodable range. 0 = unknown (fall back to Duration).
+		/// </summary>
+		[MemoryPackOrder(2)]
+		public double VideoDurationSeconds { get; set; }
+
 		[MemoryPackable(GenerateType.VersionTolerant)]
 		public partial class StreamInfo {
 
