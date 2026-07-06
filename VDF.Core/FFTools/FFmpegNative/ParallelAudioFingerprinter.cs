@@ -534,8 +534,17 @@ namespace VDF.Core.FFTools.FFmpegNative {
 					Dispatch(segments[nextDispatch++], sp, srcRate);
 
 				var results = new WorkerResult?[segments.Count];
-				for (int i = 0; i < segments.Count; i++)
+				// The read (which drove progress so far) is done, but decode/seam/merge tails
+				// still run. Climb the per-file gauge from wherever the read-based report left
+				// off (≤98%) up to 100% as each segment finalises, instead of freezing at the
+				// read cap — landing ~96% because container duration ≥ audio — until the row
+				// vanishes. Segments dispatched mid-read are already done, so GetResult returns
+				// instantly and the bar jumps forward, then waits on the genuinely-last segment.
+				double tailStart = Math.Clamp(lastReportedPercent, 0, 98) / 100.0;
+				for (int i = 0; i < segments.Count; i++) {
 					results[i] = segments[i].Work!.GetAwaiter().GetResult();
+					onProgress?.Invoke(tailStart + (1.0 - tailStart) * (i + 1) / segments.Count);
+				}
 
 				if (ct.IsCancellationRequested) return (true, null);
 				for (int i = 0; i < results.Length; i++)
