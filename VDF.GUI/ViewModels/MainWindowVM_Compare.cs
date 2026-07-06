@@ -37,6 +37,12 @@ namespace VDF.GUI.ViewModels {
 		// ponytail: 이 머신 전용 통합이라 GridPlayer venv 경로 하드코딩. 옮기면 이 한 줄만 수정.
 		const string GridPlayerPythonW = @"C:\Users\geech\dev\gridplayer\.venv\Scripts\pythonw.exe";
 
+		// GridPlayer 는 한 그룹의 모든 파일을 한 창에 동시 mpv 로 로드 → 큰 그룹은 시스템 부하(불안정).
+		// 그룹을 이 크기 이하의 균등 청크로 쪼개 PgDn 페이지로 순회한다: 동시 mpv ≤ 이 값, 중복 무손실
+		// (20개 → [4,4,4,4,4], 5개 → [3,2]). 여러 청크로 나뉜 그룹은 순회 비교를 다시 눌러 생존자끼리
+		// 재대조하면 수렴. ponytail: 4=2×2 안정치. GPU/RAM 여유 크면 상향, 불안정하면 2로.
+		const int CompareMaxPerGroup = 4;
+
 		// 외부(GridPlayer) 삭제 → 목록 실시간 반영용 사이드카 감시 상태. 앱 1개 감시기 재사용.
 		FileSystemWatcher? _compareWatcher;
 		long _compareSidecarOffset;
@@ -56,6 +62,7 @@ namespace VDF.GUI.ViewModels {
 							  .Distinct(StringComparer.OrdinalIgnoreCase)
 							  .ToList())
 				.Where(paths => paths.Count >= 2)                      // 2편+만 비교 의미 있음
+				.SelectMany(paths => ListChunker.ChunkEvenly(paths, CompareMaxPerGroup))  // 동시 mpv ≤ 상한
 				.ToList();
 
 			if (groups.Count == 0) {
