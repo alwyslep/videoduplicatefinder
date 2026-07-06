@@ -238,6 +238,38 @@ namespace VDF.Core.Utils {
 			return false;
 		}
 
+		/// <summary>
+		/// Sends files to the system recycle bin / trash (recoverable). Windows: one batched
+		/// SHFileOperation with FOF_ALLOWUNDO (a per-file shell round-trip is far slower); elsewhere
+		/// per-file <see cref="MoveToTrash"/>. Never permanently deletes — a corrupt/undecodable
+		/// original that turns out fine stays recoverable. Returns the paths that are gone from disk
+		/// afterwards (= actually recycled; the shell may silently skip some).
+		/// </summary>
+		internal static List<string> RecycleFiles(IReadOnlyList<string> paths) {
+			var existing = new List<string>();
+			foreach (var p in paths)
+				if (File.Exists(p)) existing.Add(p);
+			var recycled = new List<string>();
+			if (existing.Count == 0) return recycled;
+
+			if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) {
+				var fs = new SHFILEOPSTRUCT {
+					wFunc = FileOperationType.FO_DELETE,
+					pFrom = string.Join('\0', existing) + "\0\0",   // shell expects a double-null-terminated list
+					fFlags = FileOperationFlags.FOF_ALLOWUNDO | FileOperationFlags.FOF_NOCONFIRMATION |
+							 FileOperationFlags.FOF_NOERRORUI | FileOperationFlags.FOF_SILENT
+				};
+				SHFileOperation(ref fs);
+				foreach (var p in existing)
+					if (!File.Exists(p)) recycled.Add(p);   // per-file success = it's gone now
+			}
+			else {
+				foreach (var p in existing)
+					if (MoveToTrash(p) && !File.Exists(p)) recycled.Add(p);
+			}
+			return recycled;
+		}
+
 		static bool MoveToTrashLinux(string filePath) {
 			// Freedesktop.org Trash specification: https://specifications.freedesktop.org/trash-spec/
 			string dataHome = Environment.GetEnvironmentVariable("XDG_DATA_HOME")

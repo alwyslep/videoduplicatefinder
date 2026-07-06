@@ -41,6 +41,13 @@ namespace VDF.Core {
 		// even with retry on; transient failures (locked/offline) still get this many chances first.
 		// The count rides on the entry, so a moved file keeps it. 0 = no cap (retry forever, old behaviour).
 		public int MaxSamplingRetryAttempts = 2;
+		// Opt-in (default OFF, destructive): at scan end, move videos whose frame sampling stayed
+		// permanently failed (ThumbnailError + SamplingFailCount >= MaxSamplingRetryAttempts, i.e. a
+		// genuinely undecodable/corrupt video that survived the retry budget AND the re-probe rescue)
+		// to the RECYCLE BIN and drop their DB entry. Recoverable by design — a rare "VDF can't decode
+		// this codec but the file is fine" case is undeletably lost only if permanently deleted, which
+		// this never does. Audio state is irrelevant (a corrupt video is garbage even with good audio).
+		public bool AutoDeleteUnrecoverableFiles;
 		public bool IgnoreBlackPixels;
 		public bool IgnoreWhitePixels;
 		public bool CompareHorizontallyFlipped;

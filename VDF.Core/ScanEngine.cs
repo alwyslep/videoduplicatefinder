@@ -202,6 +202,14 @@ namespace VDF.Core {
 		internal static bool SamplingPermanentlyFailed(bool hasThumbnailError, bool retryEnabled, int failCount, int maxAttempts)
 			=> hasThumbnailError && (!retryEnabled || (maxAttempts > 0 && failCount >= maxAttempts));
 
+		// A video whose frame sampling stayed permanently failed after burning the whole retry budget —
+		// a genuinely undecodable/corrupt file (the container-duration inflation is already auto-repaired
+		// by the re-probe rescue, so a survivor here is real corruption). The auto-delete trigger. Images
+		// and the cap-disabled case (maxSamplingAttempts <= 0) are never auto-deleted.
+		internal static bool IsUnrecoverableVideo(FileEntry e, int maxSamplingAttempts)
+			=> !e.IsImage && e.Flags.Has(EntryFlags.ThumbnailError) &&
+			   maxSamplingAttempts > 0 && e.SamplingFailCount >= maxSamplingAttempts;
+
 		// Records one failed sampling attempt (saturating) and logs once, when the entry crosses the
 		// retry budget, so the permanent skip is visible rather than silent.
 		void NoteSamplingFailure(FileEntry entry) {
@@ -1833,8 +1841,13 @@ namespace VDF.Core {
 			// identified, so drop any stale duplicate the relink missed (moved file whose content is
 			// already present elsewhere). Clean finish only — a cancelled stage may not have backfilled
 			// every twin, which would make a present copy look absent and spare a real orphan.
-			if (!cancelationTokenSource.IsCancellationRequested && !stopRequested)
+			if (!cancelationTokenSource.IsCancellationRequested && !stopRequested) {
 				PruneRelocatedOrphans();
+				// Opt-in destructive cleanup: recycle videos that never decoded after the full retry
+				// budget (genuinely corrupt). Off by default; recycle bin only, every file logged.
+				if (Settings.AutoDeleteUnrecoverableFiles)
+					AutoDeleteUnrecoverableVideos(Settings.MaxSamplingRetryAttempts);
+			}
 		}
 
 	
@@ -3014,6 +3027,39 @@ namespace VDF.Core {
 				Logger.Instance.Info($"Removed {orphans.Count:N0} relocated-orphan DB entr{(orphans.Count == 1 ? "y" : "ies")} " +
 					"(file moved away, identical content already present elsewhere — relink missed it; the live copy supersedes it).");
 			return orphans.Count;
+		}
+
+		// Opt-in (Settings.AutoDeleteUnrecoverableFiles): recycle videos that stayed unrecoverable after
+		// the full retry budget and drop their DB entries. Runs at scan end, off the parallel workers.
+		// Recycle bin only (recoverable); files gone/offline are skipped; the shell may leave some, so
+		// only paths that actually disappeared are removed from the DB. Every deletion is logged.
+		static int AutoDeleteUnrecoverableVideos(int maxSamplingAttempts) {
+			var readyCache = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+			bool Ready(string path) {
+				string root = DriveRootOf(path);
+				if (!readyCache.TryGetValue(root, out bool r))
+					readyCache[root] = r = IsDriveReady(path);
+				return r;
+			}
+			var victims = new List<FileEntry>();
+			foreach (var e in DatabaseUtils.Database)
+				if (IsUnrecoverableVideo(e, maxSamplingAttempts) && Ready(e.Path) && File.Exists(e.Path))
+					victims.Add(e);
+			if (victims.Count == 0) return 0;
+
+			var recycled = new HashSet<string>(
+				FileUtils.RecycleFiles(victims.Select(v => v.Path).ToList()),
+				CoreUtils.IsWindows ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+			int removed = 0;
+			foreach (var v in victims)
+				if (recycled.Contains(v.Path)) {
+					DatabaseUtils.Database.Remove(v);
+					Logger.Instance.Info($"Auto-deleted unrecoverable video to recycle bin (frame decode failed {v.SamplingFailCount}x): '{v.Path}'");
+					removed++;
+				}
+			if (removed > 0)
+				Logger.Instance.Info($"Auto-deleted {removed:N0} unrecoverable video(s) to the recycle bin.");
+			return removed;
 		}
 		public static bool ExportDataBaseToJson(string jsonFile, JsonSerializerOptions options) => DatabaseUtils.ExportDatabaseToJson(jsonFile, options);
 		public static bool ImportDataBaseFromJson(string jsonFile, JsonSerializerOptions options) => DatabaseUtils.ImportDatabaseFromJson(jsonFile, options);
