@@ -1761,6 +1761,12 @@ namespace VDF.Core {
 			finally {
 				LogExcludedSummary();
 			}
+			// Post-backfill DB hygiene: in-scope live entries now carry OsHash and gone entries are
+			// identified, so drop any stale duplicate the relink missed (moved file whose content is
+			// already present elsewhere). Clean finish only — a cancelled stage may not have backfilled
+			// every twin, which would make a present copy look absent and spare a real orphan.
+			if (!cancelationTokenSource.IsCancellationRequested && !stopRequested)
+				PruneRelocatedOrphans();
 		}
 
 	
@@ -2884,6 +2890,54 @@ namespace VDF.Core {
 				DatabaseUtils.SaveDatabase();
 			Logger.Instance.Info($"Pruned {ghosts.Count:N0} ghost entries (file missing on a mounted drive, no comparable fingerprint data).");
 			return ghosts.Count;
+		}
+
+		/// <summary>
+		/// Pure core of <see cref="PruneRelocatedOrphans"/>, split out so it is testable without a
+		/// filesystem: given the OsHashes of files that still exist, a relocated orphan is any gone
+		/// entry whose OsHash is among them — its exact content lives on at another (present) path.
+		/// </summary>
+		internal static List<FileEntry> SelectRelocatedOrphans(HashSet<string> liveOsHashes, IEnumerable<FileEntry> goneEntries) {
+			var orphans = new List<FileEntry>();
+			foreach (var g in goneEntries)
+				if (g.OsHash != null && liveOsHashes.Contains(g.OsHash))
+					orphans.Add(g);
+			return orphans;
+		}
+
+		// A "relocated orphan" is an entry whose file is gone from a MOUNTED drive while its exact
+		// content (same OsHash) still exists at another path. BuildFileList's relink missed the move —
+		// the old entry had no OsHash yet when the new copy was first enumerated, so that copy was
+		// analysed fresh instead of re-keyed — leaving a stale duplicate that inflates 'Missing' every
+		// scan and can never heal. Removing it loses nothing: a tombstone flags a re-download of GONE
+		// content, but this content is present (the live copy supersedes it, and inherits the tombstone
+		// role itself if it is later deleted). Runs at the end of GatherInfos, once in-scope live
+		// entries have had their OsHash backfilled. Offline drives are skipped (their files may exist).
+		static int PruneRelocatedOrphans() {
+			var readyCache = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+			bool Ready(string path) {
+				string root = DriveRootOf(path);
+				if (!readyCache.TryGetValue(root, out bool r))
+					readyCache[root] = r = IsDriveReady(path);
+				return r;
+			}
+			// One existence check per OsHash-bearing entry on a mounted drive: present -> its content
+			// is a valid twin target; absent -> a candidate orphan.
+			var liveOsHashes = new HashSet<string>(StringComparer.Ordinal);
+			var gone = new List<FileEntry>();
+			foreach (var e in DatabaseUtils.Database) {
+				if (e.OsHash == null || !Ready(e.Path)) continue;
+				if (File.Exists(e.Path)) liveOsHashes.Add(e.OsHash);
+				else gone.Add(e);
+			}
+			if (liveOsHashes.Count == 0 || gone.Count == 0) return 0;
+			var orphans = SelectRelocatedOrphans(liveOsHashes, gone);
+			foreach (var o in orphans)
+				DatabaseUtils.Database.Remove(o);
+			if (orphans.Count > 0)
+				Logger.Instance.Info($"Removed {orphans.Count:N0} relocated-orphan DB entr{(orphans.Count == 1 ? "y" : "ies")} " +
+					"(file moved away, identical content already present elsewhere — relink missed it; the live copy supersedes it).");
+			return orphans.Count;
 		}
 		public static bool ExportDataBaseToJson(string jsonFile, JsonSerializerOptions options) => DatabaseUtils.ExportDatabaseToJson(jsonFile, options);
 		public static bool ImportDataBaseFromJson(string jsonFile, JsonSerializerOptions options) => DatabaseUtils.ImportDatabaseFromJson(jsonFile, options);
