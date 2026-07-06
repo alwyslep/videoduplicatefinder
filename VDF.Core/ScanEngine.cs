@@ -789,19 +789,24 @@ namespace VDF.Core {
 			}
 			NormalizeScanPaths();
 			if (DatabaseUtils.Database.Count == 0) {
-				// Also a compare-only concern: the database is normally loaded by
+				// Compare-only in a fresh process: the database is normally loaded by
 				// StartSearch's BuildFileList, which never ran in this process (issue #790).
 				DatabaseUtils.CustomDatabaseFolder = Settings.CustomDatabaseFolder;
 				DatabaseUtils.InvalidateDatabaseFolder();
 				DatabaseUtils.LoadDatabase();
-				// The invalid flag is not persisted and defaults to true; it is normally
-				// cleared per entry by StartSearch's hashing pass. Without this pass a
-				// compare-only run sees every imported entry as invalid (0 files compared).
-				foreach (FileEntry entry in DatabaseUtils.Database) {
-					entry.invalid = InvalidEntry(entry, out _, out string? reason);
-					if (entry.invalid && reason != null)
-						LogExcludedFile(entry, reason);
-				}
+			}
+			// entry.invalid defaults to true and is NOT persisted; it is only ever cleared by a
+			// hashing pass (BuildFileList/GatherInfos). A compare-only run when the DB is ALREADY
+			// in memory — the GUI preloads it at startup, and a completed/aborted gather leaves it
+			// loaded — would otherwise see every entry as invalid and compare 0 files. Observed
+			// 2026-07-07: clicking "시각 지문 비교" right after restart logged "Scanning for
+			// duplicates in 0 files" three times while the DB held 17k analysed videos. Recompute
+			// for every entry here, UNCONDITIONALLY, so compare always reflects the current scope/
+			// filters. (Was gated on Count==0, which silently missed the preloaded-DB case.)
+			foreach (FileEntry entry in DatabaseUtils.Database) {
+				entry.invalid = InvalidEntry(entry, out _, out string? reason);
+				if (entry.invalid && reason != null)
+					LogExcludedFile(entry, reason);
 			}
 
 			CancelAllTasks();
