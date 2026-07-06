@@ -98,6 +98,15 @@ namespace VDF.Core {
 		[MemoryPackOrder(11)]
 		public byte SamplingFailCount;
 
+		/// <summary>
+		/// Consecutive failed audio-fingerprint attempts. Once it reaches
+		/// <see cref="Settings.MaxSamplingRetryAttempts"/> the audio is marked permanently failed
+		/// (<see cref="EntryFlags.AudioFingerprintError"/>); reset to 0 on a definitive result. Rides on
+		/// the entry so a relinked move keeps it — the visual-sampling counter's audio twin.
+		/// </summary>
+		[MemoryPackOrder(12)]
+		public byte AudioFingerprintFailCount;
+
 		[MemoryPackIgnore]
 		internal bool invalid = true;
 

@@ -1449,7 +1449,8 @@ namespace VDF.Core {
 									ReportStage(cachedAudioPath, audioStageLabel);
 									MarkAnalyzed();
 									ExtractAudioFingerprint(entry, cancelationTokenSource.Token,
-										onProgress: p => ReportStage(cachedAudioPath, audioStageLabel, (int)(p * 100), 100));
+										onProgress: p => ReportStage(cachedAudioPath, audioStageLabel, (int)(p * 100), 100),
+									maxFailAttempts: Settings.MaxSamplingRetryAttempts);
 									MarkFingerprinted();
 								}
 								if (!preCounted)
@@ -1548,7 +1549,8 @@ namespace VDF.Core {
 							ReportStage(audioPath, audioLabel);
 							MarkAnalyzed();
 							ExtractAudioFingerprint(entry, cancelationTokenSource.Token,
-								onProgress: p => ReportStage(audioPath, audioLabel, (int)(p * 100), 100));
+								onProgress: p => ReportStage(audioPath, audioLabel, (int)(p * 100), 100),
+								maxFailAttempts: Settings.MaxSamplingRetryAttempts);
 							MarkFingerprinted();
 						}
 
@@ -1836,7 +1838,7 @@ namespace VDF.Core {
 		}
 
 	
-	internal static void ExtractAudioFingerprint(FileEntry entry, CancellationToken ct = default, Action<double>? onProgress = null) {
+	internal static void ExtractAudioFingerprint(FileEntry entry, CancellationToken ct = default, Action<double>? onProgress = null, int maxFailAttempts = 1) {
 		uint[]? fp = FFTools.ChromaprintEngine.ExtractFingerprint(entry.Path, false, ct, onProgress);
 		if (fp == null && ct.IsCancellationRequested) {
 			// Stop/cancel mid-file is not a file error. Flagging here poisoned the entry
@@ -1847,11 +1849,19 @@ namespace VDF.Core {
 			return;
 		}
 		if (fp == null) {
-			// null = extraction failed (error or no audio stream)
-			entry.Flags.Set(EntryFlags.AudioFingerprintError);
-			entry.AudioFingerprint = Array.Empty<uint>();
+			// Extraction failed. Mirror the visual-sampling retry budget: give it a few chances
+			// (transient lock/offline) before marking it permanently failed, instead of the old
+			// immediate-permanent skip. Leave AudioFingerprint null until the budget is spent so the
+			// next scan retries; the count rides on the entry (survives a relinked move).
+			if (entry.AudioFingerprintFailCount < byte.MaxValue) entry.AudioFingerprintFailCount++;
+			if (maxFailAttempts > 0 && entry.AudioFingerprintFailCount >= maxFailAttempts) {
+				entry.Flags.Set(EntryFlags.AudioFingerprintError);
+				entry.AudioFingerprint = Array.Empty<uint>();
+			}
+			return;
 		}
-		else if (fp.Length == 0) {
+		entry.AudioFingerprintFailCount = 0;   // a definitive result below clears the retry budget
+		if (fp.Length == 0) {
 			// FFmpeg ran but produced no samples (file has no usable audio)
 			entry.Flags.Set(EntryFlags.NoAudioTrack);
 			entry.AudioFingerprint = Array.Empty<uint>();
