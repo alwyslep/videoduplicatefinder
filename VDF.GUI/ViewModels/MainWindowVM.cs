@@ -239,7 +239,7 @@ namespace VDF.GUI.ViewModels {
 		bool _IsPauseDraining;
 		public bool IsPauseDraining {
 			get => _IsPauseDraining;
-			set => this.RaiseAndSetIfChanged(ref _IsPauseDraining, value);
+			set { this.RaiseAndSetIfChanged(ref _IsPauseDraining, value); this.RaisePropertyChanged(nameof(BusyBarIsIndeterminate)); }
 		}
 		// True while a phase-level stage (e.g. "disk layout ordering") has replaced the overlay
 		// quip — the phase's closing push restores the quip exactly once.
@@ -257,8 +257,13 @@ namespace VDF.GUI.ViewModels {
 		bool _IsPaused;
 		public bool IsPaused {
 			get => _IsPaused;
-			set => this.RaiseAndSetIfChanged(ref _IsPaused, value);
+			set { this.RaiseAndSetIfChanged(ref _IsPaused, value); this.RaisePropertyChanged(nameof(BusyBarIsIndeterminate)); }
 		}
+		// The "please wait" overlay bar shows a real fill % during counted stages (compare, gather —
+		// ShowScanProgressBar drives ScanProgressValue/Max), and falls back to an indeterminate sweep
+		// for uncounted busy states (loading/cleaning DB) and while a pause is draining. Notified from
+		// the three inputs' setters below.
+		public bool BusyBarIsIndeterminate => IsPauseDraining || (!IsPaused && !ShowScanProgressBar);
 		bool _ShowThumbnailRetrievalProgressBar;
 		public bool ShowThumbnailRetrievalProgressBar {
 			get => _ShowThumbnailRetrievalProgressBar;
@@ -301,7 +306,7 @@ namespace VDF.GUI.ViewModels {
 		bool _ShowScanProgressBar;
 		public bool ShowScanProgressBar {
 			get => _ShowScanProgressBar;
-			set => this.RaiseAndSetIfChanged(ref _ShowScanProgressBar, value);
+			set { this.RaiseAndSetIfChanged(ref _ShowScanProgressBar, value); this.RaisePropertyChanged(nameof(BusyBarIsIndeterminate)); }
 		}
 		bool _IsBusy;
 		public bool IsBusy {
