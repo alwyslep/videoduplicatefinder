@@ -1578,7 +1578,7 @@
                                         <Border Width="1" Margin="5,2" Background="{actipro:ThemeResource ButtonForegroundBrush}" />
                                     </StackPanel>
                                     <!-- Scan progress -->
-                                    <ProgressBar Name="PbScanProgress" MinWidth="80" Height="12"
+                                    <ProgressBar Name="PbScanProgress" MinWidth="80" Height="12" IsVisible="{Binding ShowScanProgressBar}"
                                         Maximum="{Binding ScanProgressMaxValue, Mode=OneWay}"
                                         Value="{Binding ScanProgressValue, Mode=OneWay}" />
                                     <TextBlock FontSize="12" Margin="6,0,2,0" VerticalAlignment="Center"

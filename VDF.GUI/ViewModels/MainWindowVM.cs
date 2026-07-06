@@ -294,6 +294,15 @@ namespace VDF.GUI.ViewModels {
 			get => _ScanProgressValue;
 			set => this.RaiseAndSetIfChanged(ref _ScanProgressValue, value);
 		}
+		// Status-bar scan bar visibility: shown while a run reports progress, then held at 100%
+		// for a beat on completion (FlashScanCompleteThenHide) before hiding, so a finished run
+		// reads as "done" instead of vanishing at ~97% (the denominator counts paused-drive/out-
+		// of-scope entries this run never processes, so the live counter never reaches the max).
+		bool _ShowScanProgressBar;
+		public bool ShowScanProgressBar {
+			get => _ShowScanProgressBar;
+			set => this.RaiseAndSetIfChanged(ref _ShowScanProgressBar, value);
+		}
 		bool _IsBusy;
 		public bool IsBusy {
 			get => _IsBusy;
@@ -730,6 +739,7 @@ namespace VDF.GUI.ViewModels {
 				RemainingTime = e.Remaining.Format();
 				ScanProgressValue = e.CurrentPosition;
 				ScanProgressCount = $"{e.CurrentPosition:N0} / {e.MaxPosition:N0}";
+					ShowScanProgressBar = true;
 				TimeElapsed = e.Elapsed.Format();
 				ScanProgressMaxValue = e.MaxPosition;
 				UpdateDriveSegments(e.Drives);
@@ -764,6 +774,17 @@ namespace VDF.GUI.ViewModels {
 				}
 			});
 
+		// The scan progress denominator (MaxPosition) counts in-scope DB entries this run never
+		// processes — paused-drive entries, out-of-scope skips — so the live counter tops out a
+		// few % short (~97%). On a genuine finish, snap the bar to full so it reads 100%, hold a
+		// beat, then hide it. Not called on abort/stop (those didn't complete).
+		async void FlashScanCompleteThenHide() {
+			ScanProgressValue = ScanProgressMaxValue;
+			await Task.Delay(1000);
+			if (!IsScanning)   // a new scan may have started during the hold — don't hide its bar
+				ShowScanProgressBar = false;
+		}
+
 		void Scanner_ScanAborted(object? sender, EventArgs e) =>
 			Dispatcher.UIThread.InvokeAsync(() => {
 				IsScanning = false;
@@ -797,6 +818,7 @@ namespace VDF.GUI.ViewModels {
 				ScanProgressValue = 0;
 				ShowCompareText = false;
 				UpdateDriveBarVisibility();   // gather-only run: bars stay (results list untouched)
+					FlashScanCompleteThenHide();   // hold the bar at 100% for a beat, then hide it
 				RefreshDirectoryTree();   // directory-selection tab: DB changed, refresh unscanned counts
 			});
 
@@ -813,7 +835,9 @@ namespace VDF.GUI.ViewModels {
 				ShowCompareText = false;
 				// Bars hide only when duplicates actually land in the list below (the
 				// Duplicates.CollectionChanged hook re-evaluates on every add).
-				var completedScheduledScan = scheduledScanInProgress;
+				FlashScanCompleteThenHide();   // hold the bar at 100% for a beat, then hide it
+
+					var completedScheduledScan = scheduledScanInProgress;
 				scheduledScanInProgress = false;
 				stageOnlyRunInProgress = false;
 
