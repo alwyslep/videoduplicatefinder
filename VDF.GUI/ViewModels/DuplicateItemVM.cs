@@ -50,12 +50,16 @@ namespace VDF.GUI.ViewModels {
 			ItemInfo.ThumbnailsUpdated += () => {
 				try {
 
-					// Width is part of the key so thumbnails generated at different
-					// ThumbnailMaxWidth values don't collide. Without it, re-scanning at a
-					// larger width keeps serving the old, lower-resolution JPEG (AppendIfMissing
-					// never overwrites), which the UI then upscales -> fuzzy/pixelated (issue #776).
+					// Key on the content oshash (falling back to path) so a moved/renamed file keeps
+					// its cached strip instead of regenerating and orphaning the old pack entry —
+					// same reasoning as SurvivorThumbArchive. null oshash (sub-64KB / not yet hashed)
+					// falls back to path (old behaviour). Width stays in the key so thumbnails at
+					// different ThumbnailMaxWidth values don't collide; without it a re-scan at a larger
+					// width keeps serving the old lower-res JPEG (AppendIfMissing never overwrites) and
+					// the UI upscales it -> fuzzy (issue #776).
+					string contentKey = VDF.Core.ScanEngine.GetOsHash(ItemInfo.Path) ?? ItemInfo.Path;
 					var key = ThumbCacheHelpers.XxHash64Hex(
-						ItemInfo.Path + "|w=" + SettingsFile.Instance.ThumbnailMaxWidth);
+						contentKey + "|w=" + SettingsFile.Instance.ThumbnailMaxWidth);
 
 					ThumbCacheHelpers.Provider?.AppendIfMissing(key, stream => {
 						var uiBmp = ImageUtils.JoinImages(ItemInfo.ImageList, stream);

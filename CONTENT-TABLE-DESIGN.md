@@ -2,8 +2,19 @@
 
 > Fork feature for `alwyslep/videoduplicatefinder` (branch `add-korean-localization`).
 > Sibling of `TOMBSTONE-DESIGN.md` — read that first; tombstones become one column here.
-> Status: **DESIGN ONLY. No code yet.** This doc exists to agree the model, the schema, the
-> migration, and — most importantly — the collision/null hazards, before any implementation.
+> Status: **NOT IMPLEMENTED — closed after measurement (2026-07-07).** Before writing any schema,
+> `dbprobe --content` simulated this tier on the live 19,611-row DB. The payoff is **zero**:
+> **0 identical-copy groups, ~0 MB frame de-dup, 0 oshash collisions, 5 live null-oshash files**
+> (18,957 distinct oshashes / 18,957 hashed rows — every content is unique). VDF's find-and-delete
+> workflow already keeps the DB at ~1 row per unique content, so a content tier has nothing to
+> de-duplicate and Stage 3 (its only net-new value, and its only real risk) buys nothing. The ad-hoc
+> oshash overlay the fork already has — relink, missing/orphan accounting, survivor archive, and the
+> not-a-match blacklist — is the right and sufficient amount of content-addressing for this workload.
+> The one remaining path-fragile "same content" spot, the thumbnail-strip cache, was switched to an
+> oshash key separately (`DuplicateItemVM`). **The design below is retained as the record of *why not*.**
+>
+> Original intent (for context): agree the model, schema, migration, and collision/null hazards
+> before any implementation.
 
 ## Why this exists
 
