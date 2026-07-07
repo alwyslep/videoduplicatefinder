@@ -99,6 +99,7 @@ namespace VDF.GUI.ViewModels {
 				try {
 					File.WriteAllText(sidecar, "");
 					_compareSidecarOffset = 0;
+					Logger.Instance.Info($"[compare-sync] armed; watching {sidecar}");
 				}
 				catch (Exception) { return; }
 				if (_compareWatcher is null) {
@@ -136,6 +137,8 @@ namespace VDF.GUI.ViewModels {
 				}
 				catch (Exception) { return; }
 			}
+			if (lines.Count > 0)
+				Logger.Instance.Info($"[compare-sync] drained {lines.Count} path(s) from sidecar");
 			foreach (string p in lines)
 				Dispatcher.UIThread.Post(() => ApplyExternalRemoval(p));
 		}
@@ -143,7 +146,9 @@ namespace VDF.GUI.ViewModels {
 		// 파일이 실제로 사라졌으면 해당 행 제거 + 2편 미만 그룹 collapse(VDF 자체 삭제 흐름 DropSingletonGroups 재사용).
 		// VDF가 존재 재확인하므로, GridPlayer가 병합 시 생존자 옛 경로를 함께 기록해도 리네임 안 됐으면 유지됨.
 		void ApplyExternalRemoval(string path) {
-			if (File.Exists(path))
+			bool stillExists = File.Exists(path);
+			Logger.Instance.Info($"[compare-sync] recv '{path}' exists={stillExists}");
+			if (stillExists)
 				return;
 
 			// Which duplicate group does this deleted file belong to? Capture it before its row goes.
@@ -174,6 +179,7 @@ namespace VDF.GUI.ViewModels {
 					Duplicates.RemoveAt(i);
 					rowRemoved = true;
 				}
+			Logger.Instance.Info($"[compare-sync] applied '{path}' rowRemoved={rowRemoved} dbRemoved={dbRemoved} tombstone={keepAsTombstone}");
 			if (!dbRemoved && !rowRemoved && !keepAsTombstone)
 				return;
 			if (rowRemoved) {
