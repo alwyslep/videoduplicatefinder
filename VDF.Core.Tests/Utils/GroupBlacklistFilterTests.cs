@@ -23,7 +23,7 @@ public class GroupBlacklistFilterTests {
 	static readonly Guid G2 = Guid.Parse("22222222-2222-2222-2222-222222222222");
 	static readonly Guid G3 = Guid.Parse("33333333-3333-3333-3333-333333333333");
 
-	static (Guid, string) Item(Guid g, string p) => (g, p);
+	static (Guid, string, string?) Item(Guid g, string p) => (g, p, null);
 
 	[Fact]
 	public void EmptyBlacklist_ReturnsEmpty() {
@@ -42,7 +42,7 @@ public class GroupBlacklistFilterTests {
 	[Fact]
 	public void NoItems_ReturnsEmpty() {
 		var blacklist = new List<HashSet<string>> { new() { "a", "b" } };
-		var result = GroupBlacklistFilter.ComputeBlacklistedGroupIds(Array.Empty<(Guid, string)>(), blacklist);
+		var result = GroupBlacklistFilter.ComputeBlacklistedGroupIds(Array.Empty<(Guid, string, string?)>(), blacklist);
 		Assert.Empty(result);
 	}
 
@@ -144,6 +144,35 @@ public class GroupBlacklistFilterTests {
 		var result = GroupBlacklistFilter.ComputeBlacklistedGroupIds(items, blacklist);
 
 		Assert.Contains(G1, result);
+	}
+
+	[Fact]
+	public void OsHashMatch_SurvivesPathChange() {
+		// User marked {old-a, old-b}; the entry also stored their oshashes. Both files then move,
+		// so a later scan yields new paths but the same oshashes -> group still filtered out.
+		var items = new[] { (G1, "new-a", (string?)"H1"), (G1, "new-b", (string?)"H2") };
+		var blacklist = new List<HashSet<string>> {
+			new() { "old-a", "old-b",
+				GroupBlacklistFilter.OsHashToken("H1"), GroupBlacklistFilter.OsHashToken("H2") }
+		};
+
+		var result = GroupBlacklistFilter.ComputeBlacklistedGroupIds(items, blacklist);
+
+		Assert.Contains(G1, result);
+	}
+
+	[Fact]
+	public void OsHashMissingForOneMember_NotCovered() {
+		// One moved member matches by neither path nor oshash -> the whole group is not covered.
+		var items = new[] { (G1, "new-a", (string?)"H1"), (G1, "new-b", (string?)"HX") };
+		var blacklist = new List<HashSet<string>> {
+			new() { "old-a", "old-b",
+				GroupBlacklistFilter.OsHashToken("H1"), GroupBlacklistFilter.OsHashToken("H2") }
+		};
+
+		var result = GroupBlacklistFilter.ComputeBlacklistedGroupIds(items, blacklist);
+
+		Assert.Empty(result);
 	}
 
 	[Fact]

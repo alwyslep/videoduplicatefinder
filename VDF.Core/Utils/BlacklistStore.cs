@@ -69,9 +69,14 @@ namespace VDF.Core.Utils {
 			exists ??= File.Exists;
 			int before = groups.Count;
 			groups.RemoveAll(entry => {
-				foreach (var p in entry)
-					if (!exists(p)) return true;
-				return false;
+				bool hasOsHash = false, anyMissing = false;
+				foreach (var p in entry) {
+					if (GroupBlacklistFilter.IsOsHashToken(p)) { hasOsHash = true; continue; }
+					if (!exists(p)) anyMissing = true;
+				}
+				// An oshash-bearing entry can still match a moved/renamed file, so a missing path is
+				// not dead weight — keep it. Legacy path-only entries keep the old rule (any missing = dead).
+				return anyMissing && !hasOsHash;
 			});
 			return before - groups.Count;
 		}

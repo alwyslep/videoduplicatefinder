@@ -27,10 +27,13 @@ namespace VDF.GUI.ViewModels {
 	public sealed class BlacklistEntryVM {
 		public HashSet<string> Source { get; }
 		public string PathsDisplay { get; }
-		public int Count => Source.Count;
+		public int Count { get; }
 		public BlacklistEntryVM(HashSet<string> source) {
 			Source = source;
-			PathsDisplay = string.Join(Environment.NewLine, source.OrderBy(p => p, StringComparer.Ordinal));
+			// oshash tokens are internal keys, not user-facing paths — hide from the list.
+			var paths = source.Where(p => !GroupBlacklistFilter.IsOsHashToken(p)).ToList();
+			PathsDisplay = string.Join(Environment.NewLine, paths.OrderBy(p => p, StringComparer.Ordinal));
+			Count = paths.Count;
 		}
 	}
 

@@ -863,7 +863,7 @@ namespace VDF.GUI.ViewModels {
 				stageOnlyRunInProgress = false;
 
 				var blacklistedGids = ComputeBlacklistedGroupIds(
-					Scanner.Duplicates.Select(d => (d.GroupId, d.Path)));
+					Scanner.Duplicates.Select(d => (d.GroupId, d.Path, ScanEngine.GetOsHash(d.Path))));
 				if (blacklistedGids.Count > 0)
 					Scanner.Duplicates.RemoveWhere(d => blacklistedGids.Contains(d.GroupId));
 
@@ -1286,7 +1286,7 @@ namespace VDF.GUI.ViewModels {
 
 				// Apply not-a-match blacklist; saved results may pre-date marks made just before a crash.
 				var importBlacklistedGids = ComputeBlacklistedGroupIds(
-					items.Select(i => (i.ItemInfo.GroupId, i.ItemInfo.Path)));
+					items.Select(i => (i.ItemInfo.GroupId, i.ItemInfo.Path, ScanEngine.GetOsHash(i.ItemInfo.Path))));
 				if (importBlacklistedGids.Count > 0) {
 					int removed = items.RemoveAll(i => importBlacklistedGids.Contains(i.ItemInfo.GroupId));
 					if (removed > 0)
@@ -1961,8 +1961,13 @@ Non-Windows setup:
 				var gid = data.ItemInfo.GroupId;
 
 				HashSet<string> blacklist = new HashSet<string>(PathComparer.ForCurrentPlatform);
-				foreach (DuplicateItemVM duplicateItem in Duplicates.Where(d => d.ItemInfo.GroupId == gid))
+				foreach (DuplicateItemVM duplicateItem in Duplicates.Where(d => d.ItemInfo.GroupId == gid)) {
 					blacklist.Add(duplicateItem.ItemInfo.Path);
+					// Also store the content oshash so this mark survives a later move/rename.
+					string? oshash = ScanEngine.GetOsHash(duplicateItem.ItemInfo.Path);
+					if (!string.IsNullOrEmpty(oshash))
+						blacklist.Add(GroupBlacklistFilter.OsHashToken(oshash));
+				}
 				GroupBlacklist.Add(blacklist);
 				try {
 					await BlacklistStore.SaveAsync(BlacklistedGroupsFile, GroupBlacklist);
@@ -1974,10 +1979,9 @@ Non-Windows setup:
 				}
 
 				// Remove all items in this group from the list
-				foreach (var path in blacklist.ToList())
-					for (int i = Duplicates.Count - 1; i >= 0; i--)
-						if (Duplicates[i].ItemInfo.GroupId == gid && Duplicates[i].ItemInfo.Path == path)
-							Duplicates.RemoveAt(i);
+				for (int i = Duplicates.Count - 1; i >= 0; i--)
+					if (Duplicates[i].ItemInfo.GroupId == gid)
+						Duplicates.RemoveAt(i);
 
 				// Drop singleton groups
 				DropSingletonGroups();
@@ -1994,7 +1998,7 @@ Non-Windows setup:
 			}
 		});
 
-		private HashSet<Guid> ComputeBlacklistedGroupIds(IEnumerable<(Guid GroupId, string Path)> items) =>
+		private HashSet<Guid> ComputeBlacklistedGroupIds(IEnumerable<(Guid GroupId, string Path, string? OsHash)> items) =>
 			GroupBlacklistFilter.ComputeBlacklistedGroupIds(items, GroupBlacklist);
 
 		public ReactiveCommand<Unit, Unit> OpenBlacklistManagerCommand => ReactiveCommand.Create(() => {

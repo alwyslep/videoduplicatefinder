@@ -1113,6 +1113,11 @@ namespace VDF.Core {
 		public static Task<bool> LoadDatabase() => Task.Run(DatabaseUtils.LoadDatabase);
 		public static void SaveDatabase() => DatabaseUtils.SaveDatabase();
 		public static bool RemoveFromDatabase(FileEntry dbEntry) => DatabaseUtils.Database.Remove(dbEntry);
+		// OsHash of a DB entry by path (null if absent or not yet hashed). Path-only probe so it never
+		// stats/throws on a tombstone. Used to key the "not a match" blacklist on content, so a mark
+		// survives a move/rename. See GroupBlacklistFilter.
+		public static string? GetOsHash(string path) =>
+			DatabaseUtils.Database.TryGetValue(new FileEntry { Path = path }, out FileEntry? fe) ? fe.OsHash : null;
 		// A DB entry can outlive its file. We tell an intentional deletion from a temporarily
 		// offline drive by the file's ROOT: drive mounted but file gone = the user deleted it
 		// (a "tombstone" whose fingerprint we keep so a re-download is recognized); drive itself

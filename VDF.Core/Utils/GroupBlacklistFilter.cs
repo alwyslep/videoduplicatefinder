@@ -22,39 +22,48 @@ namespace VDF.Core.Utils {
 	/// covered by some single blacklist entry.
 	/// </summary>
 	public static class GroupBlacklistFilter {
+		/// <summary>Prefix marking an oshash content-fingerprint token stored alongside paths in a
+		/// blacklist entry. Keeping it in the same string set (rather than a new field) means the mark
+		/// survives a file move/rename — path changes, oshash doesn't — with no blacklist-file format
+		/// change. A real path can't collide: on Windows a bare "oshash:x" has no drive/root.</summary>
+		public const string OsHashPrefix = "oshash:";
+		public static string OsHashToken(string oshash) => OsHashPrefix + oshash;
+		public static bool IsOsHashToken(string value) => value.StartsWith(OsHashPrefix, StringComparison.Ordinal);
+
 		/// <summary>
 		/// Returns the set of GroupIds that are fully covered by some entry in
-		/// <paramref name="blacklist"/> (i.e. every current path in the group appears
-		/// in that blacklist entry). Subset semantics are intentional: if the user
-		/// marked {A,B,C} as not a match, a later scan finding only {A,B} as
-		/// duplicates is still treated as not a match.
+		/// <paramref name="blacklist"/> — every current member is matched by that entry, via its
+		/// path OR (surviving a move) its oshash token. Subset semantics are intentional: if the user
+		/// marked {A,B,C} as not a match, a later scan finding only {A,B} is still treated as not a match.
 		/// </summary>
 		public static HashSet<Guid> ComputeBlacklistedGroupIds(
-			IEnumerable<(Guid GroupId, string Path)> items,
+			IEnumerable<(Guid GroupId, string Path, string? OsHash)> items,
 			IReadOnlyList<HashSet<string>> blacklist) {
 
 			if (blacklist == null || blacklist.Count == 0)
 				return new HashSet<Guid>();
 
-			var groupPaths = new Dictionary<Guid, List<string>>();
-			foreach (var (gid, path) in items) {
-				if (!groupPaths.TryGetValue(gid, out var list))
-					groupPaths[gid] = list = new List<string>();
-				list.Add(path);
+			var groupItems = new Dictionary<Guid, List<(string Path, string? OsHash)>>();
+			foreach (var (gid, path, oshash) in items) {
+				if (!groupItems.TryGetValue(gid, out var list))
+					groupItems[gid] = list = new List<(string, string?)>();
+				list.Add((path, oshash));
 			}
 
-			// Manual subset check via blackListedGroup.Contains so we always defer
+			// Manual coverage check via blackListedGroup.Contains so we always defer
 			// to the blacklist set's comparer (which BlacklistStore configures with
 			// the platform's path comparer for case sensitivity).
 			var result = new HashSet<Guid>();
-			foreach (var kv in groupPaths) {
+			foreach (var kv in groupItems) {
 				foreach (var blackListedGroup in blacklist) {
 					bool covered = true;
-					foreach (var path in kv.Value) {
-						if (!blackListedGroup.Contains(path)) {
-							covered = false;
-							break;
-						}
+					foreach (var (path, oshash) in kv.Value) {
+						if (blackListedGroup.Contains(path))
+							continue;   // matched by path (unmoved)
+						if (oshash != null && blackListedGroup.Contains(OsHashToken(oshash)))
+							continue;   // matched by content oshash (moved/renamed)
+						covered = false;
+						break;
 					}
 					if (covered) {
 						result.Add(kv.Key);
