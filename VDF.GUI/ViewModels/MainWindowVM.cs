@@ -1821,6 +1821,7 @@ Non-Windows setup:
 			Scanner.Settings.MaximumFileSize = SettingsFile.Instance.MaximumFileSize;
 			Scanner.Settings.MinimumFileSize = SettingsFile.Instance.MinimumFileSize;
 			Scanner.Settings.EnablePartialClipDetection = SettingsFile.Instance.EnablePartialClipDetection;
+			Scanner.Settings.AudioCompareMethod = SettingsFile.Instance.AudioCompareMethod;
 			Scanner.Settings.PartialClipMinRatio = SettingsFile.Instance.PartialClipMinRatioPercent / 100.0;
 			Scanner.Settings.PartialClipSimilarityThreshold = SettingsFile.Instance.PartialClipSimilarityThresholdPercent / 100.0;
 			Scanner.Settings.PartialClipRequireVisualMatch = SettingsFile.Instance.PartialClipRequireVisualMatch;

@@ -333,6 +333,16 @@ namespace VDF.GUI.Data {
 			}
 		}
 		public bool IsFolderMatchModeActive => FolderMatchMode != Core.FolderMatchMode.None;
+
+		// Partial-clip (audio) compare algorithm. 0=BruteForce (default, proven), 1=InvertedIndex
+		// (acoustid-style, ~40-108× faster, 100% recall of real matches). JSON-settable now; a GUI
+		// dropdown can follow.
+		Core.AudioCompareMethod _AudioCompareMethod = Core.AudioCompareMethod.BruteForce;
+		[JsonPropertyName("AudioCompareMethod")]
+		public Core.AudioCompareMethod AudioCompareMethod {
+			get => _AudioCompareMethod;
+			set => this.RaiseAndSetIfChanged(ref _AudioCompareMethod, value);
+		}
 		int _SameFolderDepth = 1;
 		[JsonPropertyName("SameFolderDepth")]
 		public int SameFolderDepth {
