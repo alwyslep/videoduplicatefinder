@@ -348,8 +348,6 @@
                                     </MenuItem.Header>
                                 </MenuItem>
                                 <MenuItem
-                                    Command="{Binding StartScanCommand}"
-                                    CommandParameter="StagePartialCompare"
                                     IsVisible="{Binding !IsScanning}"
                                     ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Tooltip.StagePartialCompare]}">
                                     <MenuItem.Header>
@@ -365,6 +363,12 @@
                                                 Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Command.StagePartialCompare]}" />
                                         </StackPanel>
                                     </MenuItem.Header>
+                                    <MenuItem Command="{Binding StartScanCommand}" CommandParameter="StagePartialCompareIndex"
+                                              Header="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Command.AudioCompareIndex]}"
+                                              ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Tooltip.AudioCompareIndex]}" />
+                                    <MenuItem Command="{Binding StartScanCommand}" CommandParameter="StagePartialCompareBrute"
+                                              Header="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Command.AudioCompareBrute]}"
+                                              ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Tooltip.AudioCompareBrute]}" />
                                 </MenuItem>
                                 <MenuItem Command="{Binding ResumeScanCommand}" IsVisible="{Binding IsScanning}">
                                     <MenuItem.Header>
@@ -1916,6 +1920,9 @@
                                                         <CheckBox Content="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.AlwaysRetryFailedSampling]}"
                                                                   IsChecked="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=AlwaysRetryFailedSampling}" IsThreeState="False"
                                                                   ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.AlwaysRetryFailedSamplingTooltip]}" />
+                                                        <CheckBox Content="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.LowerPriorityDuringScan]}"
+                                                                  IsChecked="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=LowerPriorityDuringScan}" IsThreeState="False"
+                                                                  ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.LowerPriorityDuringScanTooltip]}" />
                                                         <CheckBox Content="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.ScanAgainstEntireDatabase]}"
                                                                   IsChecked="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=ScanAgainstEntireDatabase}" IsThreeState="False"
                                                                   ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.ScanAgainstEntireDatabaseTooltip]}" />

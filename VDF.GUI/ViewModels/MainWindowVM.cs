@@ -218,7 +218,23 @@ namespace VDF.GUI.ViewModels {
 		bool _IsScanning;
 		public bool IsScanning {
 			get => _IsScanning;
-			set => this.RaiseAndSetIfChanged(ref _IsScanning, value);
+			set {
+				this.RaiseAndSetIfChanged(ref _IsScanning, value);
+				ApplyScanProcessPriority(value);
+			}
+		}
+
+		// Yield to other apps during a scan when the user opted in (see LowerPriorityDuringScan). Only
+		// touches priority when the toggle is on, and always restores Normal when the scan ends.
+		static void ApplyScanProcessPriority(bool scanning) {
+			if (!SettingsFile.Instance.LowerPriorityDuringScan)
+				return;
+			try {
+				System.Diagnostics.Process.GetCurrentProcess().PriorityClass = scanning
+					? System.Diagnostics.ProcessPriorityClass.BelowNormal
+					: System.Diagnostics.ProcessPriorityClass.Normal;
+			}
+			catch { /* priority is best-effort; never break a scan over it */ }
 		}
 		string _IsBusyOverlayText = string.Empty;
 		public string IsBusyOverlayText {
@@ -1714,6 +1730,12 @@ Non-Windows setup:
 			case "StageCompare":
 				stageOnly = Core.ScanStage.Compare;
 				break;
+			case "StagePartialCompareIndex":
+				SettingsFile.Instance.AudioCompareMethod = Core.AudioCompareMethod.InvertedIndex;
+				goto case "StagePartialCompare";
+			case "StagePartialCompareBrute":
+				SettingsFile.Instance.AudioCompareMethod = Core.AudioCompareMethod.BruteForce;
+				goto case "StagePartialCompare";
 			case "StagePartialCompare":
 				// The stage compares audio fingerprints, which stage 2 only extracts while
 				// this setting is on — without it the run would silently find nothing.

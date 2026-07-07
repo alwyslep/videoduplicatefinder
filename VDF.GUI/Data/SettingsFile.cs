@@ -343,6 +343,16 @@ namespace VDF.GUI.Data {
 			get => _AudioCompareMethod;
 			set => this.RaiseAndSetIfChanged(ref _AudioCompareMethod, value);
 		}
+
+		// Run the process at BelowNormal priority while a scan is active so a 100%-CPU scan doesn't
+		// starve other apps — the OS favours foreground apps, and VDF still uses idle cores at full
+		// speed (finish time is barely affected). Applied on the IsScanning transition.
+		bool _LowerPriorityDuringScan;
+		[JsonPropertyName("LowerPriorityDuringScan")]
+		public bool LowerPriorityDuringScan {
+			get => _LowerPriorityDuringScan;
+			set => this.RaiseAndSetIfChanged(ref _LowerPriorityDuringScan, value);
+		}
 		int _SameFolderDepth = 1;
 		[JsonPropertyName("SameFolderDepth")]
 		public int SameFolderDepth {
