@@ -99,7 +99,6 @@ namespace VDF.GUI.ViewModels {
 				try {
 					File.WriteAllText(sidecar, "");
 					_compareSidecarOffset = 0;
-					Logger.Instance.Info($"[compare-sync] armed; watching {sidecar}");
 				}
 				catch (Exception) { return; }
 				if (_compareWatcher is null) {
@@ -137,18 +136,23 @@ namespace VDF.GUI.ViewModels {
 				}
 				catch (Exception) { return; }
 			}
-			if (lines.Count > 0)
-				Logger.Instance.Info($"[compare-sync] drained {lines.Count} path(s) from sidecar");
-			foreach (string p in lines)
-				Dispatcher.UIThread.Post(() => ApplyExternalRemoval(p));
+			// 탭 있는 줄 = 병합 리네임(old<TAB>new) → 행 갱신; 없으면 삭제 → 행 제거.
+			foreach (string p in lines) {
+				int tab = p.IndexOf('\t');
+				if (tab > 0) {
+					string oldP = p.Substring(0, tab);
+					string newP = p.Substring(tab + 1);
+					Dispatcher.UIThread.Post(() => ApplyExternalRename(oldP, newP));
+				}
+				else
+					Dispatcher.UIThread.Post(() => ApplyExternalRemoval(p));
+			}
 		}
 
 		// 파일이 실제로 사라졌으면 해당 행 제거 + 2편 미만 그룹 collapse(VDF 자체 삭제 흐름 DropSingletonGroups 재사용).
 		// VDF가 존재 재확인하므로, GridPlayer가 병합 시 생존자 옛 경로를 함께 기록해도 리네임 안 됐으면 유지됨.
 		void ApplyExternalRemoval(string path) {
-			bool stillExists = File.Exists(path);
-			Logger.Instance.Info($"[compare-sync] recv '{path}' exists={stillExists}");
-			if (stillExists)
+			if (File.Exists(path))
 				return;
 
 			// Which duplicate group does this deleted file belong to? Capture it before its row goes.
@@ -179,7 +183,6 @@ namespace VDF.GUI.ViewModels {
 					Duplicates.RemoveAt(i);
 					rowRemoved = true;
 				}
-			Logger.Instance.Info($"[compare-sync] applied '{path}' rowRemoved={rowRemoved} dbRemoved={dbRemoved} tombstone={keepAsTombstone}");
 			if (!dbRemoved && !rowRemoved && !keepAsTombstone)
 				return;
 			if (rowRemoved) {
@@ -191,6 +194,24 @@ namespace VDF.GUI.ViewModels {
 			// interactively (seconds apart) so this is fine; debounce if a bulk purge janks.
 			if (dbRemoved || keepAsTombstone)
 				ScanEngine.SaveDatabase();
+		}
+
+		// 병합(Shift+Del) 생존자 리네임: 사이드카 old<TAB>new. 행을 제거하지 말고 새 경로로 갱신 →
+		// 3편+ 그룹에서 남은 중복쌍이 통째로 사라지지 않게(옛 경로만 지우면 생존자 행까지 collapse됐음).
+		// DB 엔트리는 손대지 않음 — 다음 스캔의 oshash relink가 old→new 자가치유(재분석 0).
+		void ApplyExternalRename(string oldPath, string newPath) {
+			if (!File.Exists(newPath) || File.Exists(oldPath))
+				return;   // 새 경로 실재 + 옛 경로 소멸일 때만(리네임 실패/롤백 방어)
+			bool updated = false;
+			foreach (DuplicateItemVM d in Duplicates)
+				if (string.Equals(d.ItemInfo.Path, oldPath, StringComparison.OrdinalIgnoreCase)) {
+					d.ItemInfo.Path = newPath;   // DuplicateItem.Path setter가 OnPropertyChanged → 셀 갱신
+					updated = true;
+				}
+			if (updated) {
+				Logger.Instance.Info($"[compare-sync] survivor renamed '{oldPath}' -> '{newPath}'");
+				view?.Refresh();
+			}
 		}
 
 		// 순수 로직 자가검증용(빌드와 별개): 그룹핑 규칙이 깨지면 실패. 호출부에서 직접 쓸 수 있음.
