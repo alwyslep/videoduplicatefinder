@@ -894,6 +894,7 @@ namespace VDF.GUI.ViewModels {
 				}
 
 				AutoCheckTombstoneMatches();
+				CollapseAllTombstoneGroups();
 
 				if (completedScheduledScan && SettingsFile.Instance.NotifyOnScheduledScanComplete) {
 					_ = MessageBoxService.Show(App.Lang["Message.ScheduledScanCompleted"]);
@@ -926,6 +927,35 @@ namespace VDF.GUI.ViewModels {
 				}
 			if (autoChecked > 0)
 				Logger.Instance.Info($"Auto-checked {autoChecked} re-download(s) matching previously deleted content.");
+		}
+
+		// A group whose members are ALL tombstones (files gone, drive mounted) has no live re-download
+		// to act on -- pure noise in the list. Keep ONE fingerprint (still catches a future re-download)
+		// and drop the redundant rest from the DB, then remove the whole group from the results. Groups
+		// with any offline member (drive unplugged) are left alone -- the drive may return. This is the
+		// deferred "dedupe multiple tombstones of the same content" item in TOMBSTONE-DESIGN.md.
+		void CollapseAllTombstoneGroups() {
+			var rowsToDrop = new List<DuplicateItemVM>();
+			int dbRemoved = 0;
+			foreach (var group in Duplicates.GroupBy(d => d.ItemInfo.GroupId)) {
+				var members = group.ToList();
+				if (members.Count < 2 || !members.All(d => d.IsTombstone))
+					continue;   // any live/offline member -> keep the group as-is
+				foreach (var d in members.Skip(1))   // keep the first fingerprint, drop the rest
+					if (ScanEngine.RemoveFromDatabase(new FileEntry { Path = d.ItemInfo.Path }))
+						dbRemoved++;
+				rowsToDrop.AddRange(members);   // whole group leaves the list (nothing actionable left)
+			}
+			if (rowsToDrop.Count == 0)
+				return;
+			var drop = new HashSet<DuplicateItemVM>(rowsToDrop, ReferenceEqualityComparer<DuplicateItemVM>.Instance);
+			for (int i = Duplicates.Count - 1; i >= 0; i--)
+				if (drop.Contains(Duplicates[i]))
+					Duplicates.RemoveAt(i);
+			ScanEngine.SaveDatabase();
+			RefreshGroupStats();
+			view?.Refresh();
+			Logger.Instance.Info($"Collapsed all-tombstone group(s): removed {dbRemoved} redundant fingerprint(s), cleared {rowsToDrop.Count} list row(s).");
 		}
 
 		void BuildDuplicatesView() {
