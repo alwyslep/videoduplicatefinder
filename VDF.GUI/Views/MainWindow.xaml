@@ -578,6 +578,11 @@
                                                 <TextBlock VerticalAlignment="Center" Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Selection.RemoveCheckedItemsFromList]}" />
                                             </MenuItem.Header>
                                         </MenuItem>
+                                        <MenuItem Command="{Binding DeleteCheckedItemsFromDbCommand}">
+                                            <MenuItem.Header>
+                                                <TextBlock VerticalAlignment="Center" Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Selection.DeleteCheckedItemsFromDb]}" />
+                                            </MenuItem.Header>
+                                        </MenuItem>
                                         <MenuItem Command="{Binding CopyCheckedItemsCommand}">
                                             <MenuItem.Header>
                                                 <TextBlock VerticalAlignment="Center" Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Selection.CopyCheckedItemsToFolder]}" />
