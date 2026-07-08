@@ -251,44 +251,6 @@
                                         <WrapPanel />
                                     </ItemsPanelTemplate>
                                 </Menu.ItemsPanel>
-                                <MenuItem
-                                    Command="{Binding StartScanCommand}"
-                                    CommandParameter="FullScan"
-                                    IsVisible="{Binding !IsScanning}">
-                                    <MenuItem.Header>
-                                        <StackPanel Orientation="Horizontal">
-                                            <Viewbox Width="20" Height="20">
-                                                <Canvas Width="24" Height="24">
-                                                    <Path Data="M8,5.14V19.14L19,12.14L8,5.14Z" Fill="Green" />
-                                                </Canvas>
-                                            </Viewbox>
-                                            <TextBlock
-                                                Margin="5,0,0,0"
-                                                VerticalAlignment="Center"
-                                                Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Command.Scan]}" />
-                                        </StackPanel>
-                                    </MenuItem.Header>
-                                </MenuItem>
-                                <MenuItem
-                                    Command="{Binding StartScanCommand}"
-                                    CommandParameter="CompareOnly"
-                                    IsEnabled="{Binding IsReadyToCompare}"
-                                    IsVisible="{Binding !IsScanning}"
-                                    ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Tooltip.Rescan]}">
-                                    <MenuItem.Header>
-                                        <StackPanel Orientation="Horizontal">
-                                            <Viewbox Width="20" Height="20">
-                                                <Canvas Width="24" Height="24">
-                                                    <Path Data="m19.3809,4.64738l-1.69658,1.69658c-3.12529,-3.12529 -8.21505,-3.12529 -11.34034,0c-3.12529,3.12529 -3.12529,8.21505 0,11.34034c1.518,1.60729 3.57176,2.41094 5.62553,2.41094s4.10753,-0.80365 5.71483,-2.32165c0.71435,-0.71435 0.71435,-1.78588 0,-2.50024s-1.78588,-0.71435 -2.50024,0c-1.69658,1.78588 -4.554,1.69658 -6.33988,0c-0.89294,-0.89294 -1.33941,-2.05376 -1.33941,-3.21459s0.44647,-2.32165 1.33941,-3.12529c1.69658,-1.78588 4.554,-1.78588 6.33988,0l-1.60729,1.60729c-0.53577,0.53577 -0.17859,1.518 0.62505,1.518l5.80411,0c0.53577,0 0.89294,-0.35717 0.89294,-0.89294l0,-5.89341c0,-0.80365 -0.98224,-1.16083 -1.518,-0.62505l-0.00001,0.00001l0.00001,-0.00001z" Fill="Orange" />
-                                                </Canvas>
-                                            </Viewbox>
-                                            <TextBlock
-                                                Margin="5,0,0,0"
-                                                VerticalAlignment="Center"
-                                                Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Command.Rescan]}" />
-                                        </StackPanel>
-                                    </MenuItem.Header>
-                                </MenuItem>
                                 <!--  The four pipeline stages of a full scan, placed in execution order  -->
                                 <MenuItem
                                     Command="{Binding StartScanCommand}"
@@ -415,113 +377,6 @@
                                                 Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Command.Stop]}" />
                                         </StackPanel>
                                     </MenuItem.Header>
-                                </MenuItem>
-                                <MenuItem IsVisible="{Binding !IsScanning}">
-                                    <MenuItem.Header>
-                                        <StackPanel Orientation="Horizontal">
-                                            <TextBlock
-                                                Margin="5,0,0,0"
-                                                VerticalAlignment="Center"
-                                                Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Menu.Database]}" />
-                                            <Path
-                                                Margin="4,2,0,0"
-                                                VerticalAlignment="Center"
-                                                Data="M 0 0 L 6 6 L 12 0 Z"
-                                                Fill="{actipro:ThemeResource ButtonForegroundBrush}" />
-                                        </StackPanel>
-                                    </MenuItem.Header>
-                                    <!-- Hidden by the tombstone policy: removing missing-file entries would destroy
-                                         the deleted-content fingerprints we deliberately keep. See TOMBSTONE-DESIGN.md. -->
-                                    <MenuItem IsVisible="False" Command="{Binding CleanDatabaseCommand}" ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Tooltip.CleanDatabase]}">
-                                        <MenuItem.Header>
-                                            <StackPanel Orientation="Horizontal">
-                                                <Viewbox Width="16" Height="16">
-                                                    <Canvas Width="24" Height="24">
-                                                        <Path Data="M19.36,2.72L20.78,4.14L15.06,9.85C16.13,11.39 16.28,13.24 15.38,14.44L9.06,8.12C10.26,7.22 12.11,7.37 13.65,8.44L19.36,2.72M5.93,17.57C3.92,15.56 2.69,13.16 2.35,10.92L7.23,8.83L14.67,16.27L12.58,21.15C10.34,20.81 7.94,19.58 5.93,17.57Z" Fill="{actipro:ThemeResource ButtonForegroundBrush}" />
-                                                    </Canvas>
-                                                </Viewbox>
-                                                <TextBlock
-                                                    Margin="5,0,0,0"
-                                                    VerticalAlignment="Center"
-                                                    Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Database.Cleanup]}" />
-                                            </StackPanel>
-                                        </MenuItem.Header>
-                                    </MenuItem>
-                                    <!-- Tombstone-safe replacement for the cleanup above: only removes entries that are
-                                         BOTH missing from a mounted drive AND carry no comparable fingerprint data. -->
-                                    <MenuItem Command="{Binding PruneGhostEntriesCommand}" ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Tooltip.PruneGhostEntries]}">
-                                        <MenuItem.Header>
-                                            <StackPanel Orientation="Horizontal">
-                                                <Viewbox Width="16" Height="16">
-                                                    <Canvas Width="24" Height="24">
-                                                        <Path Data="M19.36,2.72L20.78,4.14L15.06,9.85C16.13,11.39 16.28,13.24 15.38,14.44L9.06,8.12C10.26,7.22 12.11,7.37 13.65,8.44L19.36,2.72M5.93,17.57C3.92,15.56 2.69,13.16 2.35,10.92L7.23,8.83L14.67,16.27L12.58,21.15C10.34,20.81 7.94,19.58 5.93,17.57Z" Fill="{actipro:ThemeResource ButtonForegroundBrush}" />
-                                                    </Canvas>
-                                                </Viewbox>
-                                                <TextBlock
-                                                    Margin="5,0,0,0"
-                                                    VerticalAlignment="Center"
-                                                    Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Database.PruneGhostEntries]}" />
-                                            </StackPanel>
-                                        </MenuItem.Header>
-                                    </MenuItem>
-                                    <MenuItem Command="{Binding EditDataBaseCommand}">
-                                        <MenuItem.Header>
-                                            <TextBlock
-                                                Margin="5,0,0,0"
-                                                VerticalAlignment="Center"
-                                                Text="{Binding Source={x:Static local:App.Lang}, Path=[Dialog.EditEllipsis]}" />
-                                        </MenuItem.Header>
-                                    </MenuItem>
-                                    <MenuItem Command="{Binding RelocateDatabaseFilesCommand}">
-                                        <MenuItem.Header>
-                                            <TextBlock
-                                                Margin="5,0,0,0"
-                                                VerticalAlignment="Center"
-                                                Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Database.RelocateFiles]}" />
-                                        </MenuItem.Header>
-                                    </MenuItem>
-                                    <Separator />
-                                    <MenuItem Command="{Binding ExportDataBaseToJsonCommand}">
-                                        <MenuItem.Header>
-                                            <TextBlock
-                                                Margin="5,0,0,0"
-                                                VerticalAlignment="Center"
-                                                Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Database.ExportJson]}" />
-                                        </MenuItem.Header>
-                                    </MenuItem>
-                                    <MenuItem Command="{Binding ExportDataBaseToJsonPrettyCommand}">
-                                        <MenuItem.Header>
-                                            <TextBlock
-                                                Margin="5,0,0,0"
-                                                VerticalAlignment="Center"
-                                                Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Database.ExportJsonPretty]}" />
-                                        </MenuItem.Header>
-                                    </MenuItem>
-                                    <Separator />
-                                    <MenuItem Command="{Binding ImportDataBaseFromJsonCommand}">
-                                        <MenuItem.Header>
-                                            <TextBlock
-                                                Margin="5,0,0,0"
-                                                VerticalAlignment="Center"
-                                                Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Database.ImportJson]}" />
-                                        </MenuItem.Header>
-                                    </MenuItem>
-                                    <Separator />
-                                    <MenuItem Command="{Binding ClearDatabaseCommand}">
-                                        <MenuItem.Header>
-                                            <StackPanel Orientation="Horizontal">
-                                                <Viewbox Width="16" Height="16">
-                                                    <Canvas Width="24" Height="24">
-                                                        <Path Data="M20 6.91L17.09 4L12 9.09L6.91 4L4 6.91L9.09 12L4 17.09L6.91 20L12 14.91L17.09 20L20 17.09L14.91 12L20 6.91Z" Fill="Red" />
-                                                    </Canvas>
-                                                </Viewbox>
-                                                    <TextBlock
-                                                        Margin="5,0,0,0"
-                                                        VerticalAlignment="Center"
-                                                        Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Database.Clear]}" />
-                                            </StackPanel>
-                                        </MenuItem.Header>
-                                    </MenuItem>
                                 </MenuItem>
                                 <MenuItem IsVisible="{Binding !!Duplicates.Count}">
                                     <MenuItem.Header>
@@ -2440,6 +2295,151 @@
                 </TabControl>
                 <!-- Tools dropdown: utility actions not tied to the duplicate list; floats at the right of the tab bar -->
                 <Menu HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,2,8,0" Background="Transparent">
+                    <MenuItem
+                        Command="{Binding StartScanCommand}"
+                        CommandParameter="FullScan"
+                        IsVisible="{Binding !IsScanning}">
+                        <MenuItem.Header>
+                            <StackPanel Orientation="Horizontal">
+                                <Viewbox Width="20" Height="20">
+                                    <Canvas Width="24" Height="24">
+                                        <Path Data="M8,5.14V19.14L19,12.14L8,5.14Z" Fill="Green" />
+                                    </Canvas>
+                                </Viewbox>
+                                <TextBlock
+                                    Margin="5,0,0,0"
+                                    VerticalAlignment="Center"
+                                    Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Command.Scan]}" />
+                            </StackPanel>
+                        </MenuItem.Header>
+                    </MenuItem>
+                    <MenuItem
+                        Command="{Binding StartScanCommand}"
+                        CommandParameter="CompareOnly"
+                        IsEnabled="{Binding IsReadyToCompare}"
+                        IsVisible="{Binding !IsScanning}"
+                        ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Tooltip.Rescan]}">
+                        <MenuItem.Header>
+                            <StackPanel Orientation="Horizontal">
+                                <Viewbox Width="20" Height="20">
+                                    <Canvas Width="24" Height="24">
+                                        <Path Data="m19.3809,4.64738l-1.69658,1.69658c-3.12529,-3.12529 -8.21505,-3.12529 -11.34034,0c-3.12529,3.12529 -3.12529,8.21505 0,11.34034c1.518,1.60729 3.57176,2.41094 5.62553,2.41094s4.10753,-0.80365 5.71483,-2.32165c0.71435,-0.71435 0.71435,-1.78588 0,-2.50024s-1.78588,-0.71435 -2.50024,0c-1.69658,1.78588 -4.554,1.69658 -6.33988,0c-0.89294,-0.89294 -1.33941,-2.05376 -1.33941,-3.21459s0.44647,-2.32165 1.33941,-3.12529c1.69658,-1.78588 4.554,-1.78588 6.33988,0l-1.60729,1.60729c-0.53577,0.53577 -0.17859,1.518 0.62505,1.518l5.80411,0c0.53577,0 0.89294,-0.35717 0.89294,-0.89294l0,-5.89341c0,-0.80365 -0.98224,-1.16083 -1.518,-0.62505l-0.00001,0.00001l0.00001,-0.00001z" Fill="Orange" />
+                                    </Canvas>
+                                </Viewbox>
+                                <TextBlock
+                                    Margin="5,0,0,0"
+                                    VerticalAlignment="Center"
+                                    Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Command.Rescan]}" />
+                            </StackPanel>
+                        </MenuItem.Header>
+                    </MenuItem>
+                    <MenuItem IsVisible="{Binding !IsScanning}">
+                        <MenuItem.Header>
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock
+                                    Margin="5,0,0,0"
+                                    VerticalAlignment="Center"
+                                    Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Menu.Database]}" />
+                                <Path
+                                    Margin="4,2,0,0"
+                                    VerticalAlignment="Center"
+                                    Data="M 0 0 L 6 6 L 12 0 Z"
+                                    Fill="{actipro:ThemeResource ButtonForegroundBrush}" />
+                            </StackPanel>
+                        </MenuItem.Header>
+                        <!-- Hidden by the tombstone policy: removing missing-file entries would destroy
+                             the deleted-content fingerprints we deliberately keep. See TOMBSTONE-DESIGN.md. -->
+                        <MenuItem IsVisible="False" Command="{Binding CleanDatabaseCommand}" ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Tooltip.CleanDatabase]}">
+                            <MenuItem.Header>
+                                <StackPanel Orientation="Horizontal">
+                                    <Viewbox Width="16" Height="16">
+                                        <Canvas Width="24" Height="24">
+                                            <Path Data="M19.36,2.72L20.78,4.14L15.06,9.85C16.13,11.39 16.28,13.24 15.38,14.44L9.06,8.12C10.26,7.22 12.11,7.37 13.65,8.44L19.36,2.72M5.93,17.57C3.92,15.56 2.69,13.16 2.35,10.92L7.23,8.83L14.67,16.27L12.58,21.15C10.34,20.81 7.94,19.58 5.93,17.57Z" Fill="{actipro:ThemeResource ButtonForegroundBrush}" />
+                                        </Canvas>
+                                    </Viewbox>
+                                    <TextBlock
+                                        Margin="5,0,0,0"
+                                        VerticalAlignment="Center"
+                                        Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Database.Cleanup]}" />
+                                </StackPanel>
+                            </MenuItem.Header>
+                        </MenuItem>
+                        <!-- Tombstone-safe replacement for the cleanup above: only removes entries that are
+                             BOTH missing from a mounted drive AND carry no comparable fingerprint data. -->
+                        <MenuItem Command="{Binding PruneGhostEntriesCommand}" ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Tooltip.PruneGhostEntries]}">
+                            <MenuItem.Header>
+                                <StackPanel Orientation="Horizontal">
+                                    <Viewbox Width="16" Height="16">
+                                        <Canvas Width="24" Height="24">
+                                            <Path Data="M19.36,2.72L20.78,4.14L15.06,9.85C16.13,11.39 16.28,13.24 15.38,14.44L9.06,8.12C10.26,7.22 12.11,7.37 13.65,8.44L19.36,2.72M5.93,17.57C3.92,15.56 2.69,13.16 2.35,10.92L7.23,8.83L14.67,16.27L12.58,21.15C10.34,20.81 7.94,19.58 5.93,17.57Z" Fill="{actipro:ThemeResource ButtonForegroundBrush}" />
+                                        </Canvas>
+                                    </Viewbox>
+                                    <TextBlock
+                                        Margin="5,0,0,0"
+                                        VerticalAlignment="Center"
+                                        Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Database.PruneGhostEntries]}" />
+                                </StackPanel>
+                            </MenuItem.Header>
+                        </MenuItem>
+                        <MenuItem Command="{Binding EditDataBaseCommand}">
+                            <MenuItem.Header>
+                                <TextBlock
+                                    Margin="5,0,0,0"
+                                    VerticalAlignment="Center"
+                                    Text="{Binding Source={x:Static local:App.Lang}, Path=[Dialog.EditEllipsis]}" />
+                            </MenuItem.Header>
+                        </MenuItem>
+                        <MenuItem Command="{Binding RelocateDatabaseFilesCommand}">
+                            <MenuItem.Header>
+                                <TextBlock
+                                    Margin="5,0,0,0"
+                                    VerticalAlignment="Center"
+                                    Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Database.RelocateFiles]}" />
+                            </MenuItem.Header>
+                        </MenuItem>
+                        <Separator />
+                        <MenuItem Command="{Binding ExportDataBaseToJsonCommand}">
+                            <MenuItem.Header>
+                                <TextBlock
+                                    Margin="5,0,0,0"
+                                    VerticalAlignment="Center"
+                                    Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Database.ExportJson]}" />
+                            </MenuItem.Header>
+                        </MenuItem>
+                        <MenuItem Command="{Binding ExportDataBaseToJsonPrettyCommand}">
+                            <MenuItem.Header>
+                                <TextBlock
+                                    Margin="5,0,0,0"
+                                    VerticalAlignment="Center"
+                                    Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Database.ExportJsonPretty]}" />
+                            </MenuItem.Header>
+                        </MenuItem>
+                        <Separator />
+                        <MenuItem Command="{Binding ImportDataBaseFromJsonCommand}">
+                            <MenuItem.Header>
+                                <TextBlock
+                                    Margin="5,0,0,0"
+                                    VerticalAlignment="Center"
+                                    Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Database.ImportJson]}" />
+                            </MenuItem.Header>
+                        </MenuItem>
+                        <Separator />
+                        <MenuItem Command="{Binding ClearDatabaseCommand}">
+                            <MenuItem.Header>
+                                <StackPanel Orientation="Horizontal">
+                                    <Viewbox Width="16" Height="16">
+                                        <Canvas Width="24" Height="24">
+                                            <Path Data="M20 6.91L17.09 4L12 9.09L6.91 4L4 6.91L9.09 12L4 17.09L6.91 20L12 14.91L17.09 20L20 17.09L14.91 12L20 6.91Z" Fill="Red" />
+                                        </Canvas>
+                                    </Viewbox>
+                                        <TextBlock
+                                            Margin="5,0,0,0"
+                                            VerticalAlignment="Center"
+                                            Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Database.Clear]}" />
+                                </StackPanel>
+                            </MenuItem.Header>
+                        </MenuItem>
+                    </MenuItem>
                     <MenuItem>
                         <MenuItem.Header>
                             <StackPanel Orientation="Horizontal">
