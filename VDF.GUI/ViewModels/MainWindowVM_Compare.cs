@@ -163,27 +163,11 @@ namespace VDF.GUI.ViewModels {
 			if (File.Exists(path))
 				return;
 
-			// Which duplicate group does this deleted file belong to? Capture it before its row goes.
-			var row = Duplicates.FirstOrDefault(d =>
-				string.Equals(d.ItemInfo.Path, path, StringComparison.OrdinalIgnoreCase));
-
-			// A duplicate deletion -- a live copy still survives in the group -- drops this entry: the
-			// survivor already carries the content's fingerprint, so no tombstone is needed. But deleting
-			// the WHOLE group with no copy left (GridPlayer Ctrl+DEL) is a content rejection: keep exactly
-			// ONE fingerprint as a tombstone so a future re-download is still caught. Keep it on the LAST
-			// group member processed -- by then the earlier ones are already dropped. See TOMBSTONE-DESIGN.md.
-			bool keepAsTombstone = false;
-			if (row is not null) {
-				var others = Duplicates.Where(d =>
-					d.ItemInfo.GroupId == row.ItemInfo.GroupId &&
-					!string.Equals(d.ItemInfo.Path, path, StringComparison.OrdinalIgnoreCase)).ToList();
-				bool aliveSurvivor = others.Any(d => File.Exists(d.ItemInfo.Path));
-				keepAsTombstone = !aliveSurvivor && others.Count == 0;
-			}
-
-			bool dbRemoved = false;
-			if (!keepAsTombstone)
-				dbRemoved = ScanEngine.RemoveFromDatabase(new FileEntry { Path = path });
+			// Deletions inside a compare session are duplicate judgments made through VDF: purge the
+			// DB entry (visual + audio fingerprints) unconditionally — whole-group Ctrl+DEL included —
+			// so they can never resurface in a later compare pass. Tombstones are reserved for files
+			// the user deletes OUTSIDE VDF during normal viewing. TOMBSTONE-DESIGN.md.
+			bool dbRemoved = ScanEngine.RemoveFromDatabase(new FileEntry { Path = path });
 
 			bool rowRemoved = false;
 			for (int i = Duplicates.Count - 1; i >= 0; i--)
@@ -191,7 +175,7 @@ namespace VDF.GUI.ViewModels {
 					Duplicates.RemoveAt(i);
 					rowRemoved = true;
 				}
-			if (!dbRemoved && !rowRemoved && !keepAsTombstone)
+			if (!dbRemoved && !rowRemoved)
 				return;
 			if (rowRemoved) {
 				DropSingletonGroups();
@@ -200,7 +184,7 @@ namespace VDF.GUI.ViewModels {
 			}
 			// ponytail: full serialize per external delete. GridPlayer deletes arrive
 			// interactively (seconds apart) so this is fine; debounce if a bulk purge janks.
-			if (dbRemoved || keepAsTombstone)
+			if (dbRemoved)
 				ScanEngine.SaveDatabase();
 		}
 

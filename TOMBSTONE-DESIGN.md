@@ -11,27 +11,30 @@ The DB accumulates **one fingerprint per unique content**. Two distinct deletion
 
 | Case | What is deleted | DB fingerprint | Action |
 |------|-----------------|----------------|--------|
-| **Redundant duplicate** (a surviving copy remains) | the video file | survivor keeps it | **remove** the deleted copy's entry (already done: commit `f8e3541`, GridPlayer; and `#2` checked-delete) |
-| **Unique / last copy** | the video file | **must be kept** as a *tombstone* | keep fingerprint, only the file goes |
+| **Any delete through VDF** (checked-delete, compare-session delete — survivor or not) | the video file | judged inside VDF | **purge** the deleted copy's entry (visual + audio fingerprints) |
+| **Delete outside VDF** (player/Explorer during normal viewing) | the video file | **must be kept** as a *tombstone* | keep fingerprints, only the file goes |
 
-Deleting a duplicate is fine because the unique fingerprint survives via the kept copy.
-Deleting the last copy keeps the fingerprint so a future re-download still matches.
+A VDF delete is a duplicate judgment the user already made — it must never come back in a later
+compare pass. An outside delete rejects the content itself; keeping the fingerprint catches a
+future re-download.
 
 ### Two deletion intents (must be handled differently)
 
-- **(A) Duplicate deletion — happens ONLY inside VDF.** You delete redundant copies of a
-  comparison group while keeping at least one (the survivor). The deleted copies' entries are
-  **removed**; the survivor already carries the content's fingerprint, so no tombstone is made.
-- **(B) Content rejection — everything else.** You reject the content itself: an external
-  delete (Explorer/Opus), or a VDF delete that removes the WHOLE group (GridPlayer `Ctrl+DEL`,
-  or checking every item in a group). Here **exactly one fingerprint is kept as a tombstone**,
-  even though every video file is gone, so a re-download of that rejected content is caught.
+**The split is WHERE the delete happened, not whether a survivor remains** (user decision,
+2026-07-09 — supersedes the earlier whole-group-rejection rule):
 
-Because duplicate-judgment only ever happens in VDF, any deletion that leaves no surviving copy
-is treated as rejection. Whole-group VDF deletes keep the **last** member as the tombstone
-(GridPlayer: `ApplyExternalRemoval`; checked-delete: `DeleteInternal` via `keepByGroup==null`);
-partial deletes (a live survivor remains) drop every deleted entry. An unmounted drive is never
-a deletion — it is offline (fingerprint kept, never auto-targeted).
+- **(A) Deletion through VDF — always a duplicate judgment.** Checked-delete in the list and
+  GridPlayer compare-session deletes (`ApplyExternalRemoval`), including whole-group
+  `Ctrl+DEL`: the user already looked at the content and ruled on it inside VDF. Every deleted
+  entry is **purged from the DB** (visual AND audio fingerprints) so it can never resurface in
+  a later visual/audio compare pass. No tombstone is ever created by a VDF delete.
+- **(B) Deletion outside VDF — content rejection.** Files deleted during normal viewing
+  (mpv/player, Explorer/Opus): VDF never sees the delete, the entry simply outlives its file
+  and becomes a **tombstone** at the next scan — fingerprints (visual + audio) are kept intact
+  and the row only gets the "이미 삭제함 / already deleted" badge, so a re-download of rejected
+  content is caught.
+
+An unmounted drive is never a deletion — it is offline (fingerprint kept, never auto-targeted).
 
 ## Tombstone detection — drive-presence heuristic (agreed)
 

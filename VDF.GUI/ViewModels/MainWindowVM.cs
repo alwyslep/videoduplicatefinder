@@ -2146,9 +2146,6 @@ Non-Windows setup:
 			// gate the survivor archive below. actuallyDeleted itself also includes items whose file was
 			// already gone before this operation ("removing entry only"), which must not trigger archiving.
 			var diskContentChanged = new HashSet<DuplicateItemVM>(toDelete.Count, ReferenceEqualityComparer<DuplicateItemVM>.Instance);
-			// Whole-group checked-delete (no unchecked survivor) is a content rejection: keep exactly
-			// one fingerprint as a tombstone. This set records the groups that already kept theirs.
-			var tombstonedGroups = new HashSet<Guid>();
 			long freedBytes = 0;
 			int total = toDelete.Count;
 			IsBusy = true;
@@ -2255,14 +2252,13 @@ Non-Windows setup:
 
 							if (blackList)
 								ScanEngine.BlackListFileEntry(dub.ItemInfo.Path);
-							else {
-								// A checked-delete that removes an ENTIRE group (no unchecked survivor) is a content
-								// rejection: keep exactly one fingerprint as a tombstone so a re-download is caught. A
-								// partial delete leaves a live survivor, so every deleted entry is dropped. TOMBSTONE-DESIGN.md.
-								bool wholeGroupDeleted = !keepByGroup.TryGetValue(dub.ItemInfo.GroupId, out var survivor) || survivor == null;
-								if (!(wholeGroupDeleted && tombstonedGroups.Add(dub.ItemInfo.GroupId)))
-									ScanEngine.RemoveFromDatabase(fe);
-							}
+							else
+								// Every VDF-initiated duplicate deletion purges the DB entry (both visual and
+								// audio fingerprints) — even when the whole group goes. Tombstones ("already
+								// deleted" fingerprints) are reserved for files the user deletes OUTSIDE VDF
+								// during normal viewing; deletions judged inside VDF must never resurface in a
+								// later visual/audio compare pass. TOMBSTONE-DESIGN.md.
+								ScanEngine.RemoveFromDatabase(fe);
 
 							actuallyDeleted.Add(dub);
 						}
