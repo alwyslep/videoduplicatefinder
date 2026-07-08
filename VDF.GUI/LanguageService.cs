@@ -43,11 +43,7 @@ namespace VDF.GUI {
 
 		public void LoadLanguage(string langCode) {
 			try {
-				var uri = new Uri($"avares://VDF.GUI/Assets/Locales/{langCode}.json");
-				using var stream = AssetLoader.Open(uri);
-				using var reader = new StreamReader(stream);
-				var json = reader.ReadToEnd();
-				_translations = JsonSerializer.Deserialize(json, Data.GuiJsonContext.Default.DictionaryStringString) ?? new();
+				_translations = ReadLocale(langCode);
 				this.RaisePropertyChanged("Item[]");
 			}
 			catch (Exception) {
@@ -55,6 +51,26 @@ namespace VDF.GUI {
 					LoadLanguage("en");
 				else
 					_translations = new();
+			}
+		}
+
+		static Dictionary<string, string> ReadLocale(string langCode) {
+			var uri = new Uri($"avares://VDF.GUI/Assets/Locales/{langCode}.json");
+			using var stream = AssetLoader.Open(uri);
+			using var reader = new StreamReader(stream);
+			return JsonSerializer.Deserialize(reader.ReadToEnd(), Data.GuiJsonContext.Default.DictionaryStringString) ?? new();
+		}
+
+		// Per-key fallback: locales other than en lag behind; a missing key should show the
+		// English text, not the raw key string.
+		static Dictionary<string, string>? _enFallback;
+		static Dictionary<string, string> EnFallback {
+			get {
+				if (_enFallback == null) {
+					try { _enFallback = ReadLocale("en"); }
+					catch (Exception) { _enFallback = new(); }
+				}
+				return _enFallback;
 			}
 		}
 
@@ -74,6 +90,9 @@ namespace VDF.GUI {
 				return new List<string> { "en" };
 			}
 		}
-		public string this[string key] => _translations.TryGetValue(key, out var val) ? val : key;
+		public string this[string key] =>
+			_translations.TryGetValue(key, out var val) ? val
+			: EnFallback.TryGetValue(key, out var en) ? en
+			: key;
 	}
 }

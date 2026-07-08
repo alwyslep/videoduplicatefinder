@@ -455,6 +455,37 @@ namespace VDF.GUI.ViewModels {
 				checkedCountByGroup.Remove(groupId);
 			else
 				checkedCountByGroup[groupId] = count;
+			NotifyCheckedByGroupChanged();
+		}
+
+		// Header "check all" box: one bulk toggle for every row of a group, one undo step.
+		// Visible rows only — the header tri-state is computed from the visible subset, and
+		// silently checking filtered-out rows would let Move/Copy touch files the user never saw.
+		public void SetGroupChecked(Guid groupId, bool value) {
+			if (groupId == Guid.Empty) return;
+			using var _ = BeginSelectionUndoBatch();
+			foreach (var d in Duplicates)
+				if (d.ItemInfo.GroupId == groupId && d.IsVisibleInFilter)
+					d.Checked = value;
+		}
+
+		// Group-header "tour" checkboxes: whitelist of groups for compare-in-player.
+		// Empty = all visible groups (the pre-feature behavior). Cleared on view rebuild
+		// because GroupIds are regenerated per scan.
+		internal readonly HashSet<Guid> CompareIncludedGroups = new();
+
+		// Header checkboxes need a live signal when Checked changes anywhere (menus,
+		// presets, undo). Coalesced on the UI thread so a bulk selection costs one
+		// refresh instead of one per item.
+		internal event Action? CheckedByGroupChanged;
+		bool checkedByGroupNotifyQueued;
+		void NotifyCheckedByGroupChanged() {
+			if (checkedByGroupNotifyQueued) return;
+			checkedByGroupNotifyQueued = true;
+			Avalonia.Threading.Dispatcher.UIThread.Post(() => {
+				checkedByGroupNotifyQueued = false;
+				CheckedByGroupChanged?.Invoke();
+			}, Avalonia.Threading.DispatcherPriority.Background);
 		}
 		public bool IsMultiOpenSupported => !string.IsNullOrEmpty(SettingsFile.Instance.CustomCommands.OpenMultiple);
 		public bool IsMultiOpenInFolderSupported => !string.IsNullOrEmpty(SettingsFile.Instance.CustomCommands.OpenMultipleInFolder);
@@ -597,6 +628,7 @@ namespace VDF.GUI.ViewModels {
 				DuplicatesCheckedSizeInternal = 0;
 				checkedCountByGroup.Clear();
 				selectionUndoStack.Clear();
+				NotifyCheckedByGroupChanged();
 			}
 		}
 
@@ -959,6 +991,7 @@ namespace VDF.GUI.ViewModels {
 		}
 
 		void BuildDuplicatesView() {
+			CompareIncludedGroups.Clear();
 			view = new DataGridCollectionView(Duplicates);
 			view.GroupDescriptions.Add(new DataGridPathGroupDescription($"{nameof(DuplicateItemVM.ItemInfo)}.{nameof(DuplicateItem.GroupId)}"));
 			// Rebuilding the view (rescan, import) previously dropped the active sort
@@ -1833,6 +1866,7 @@ Non-Windows setup:
 			Scanner.Settings.ExcludeHardLinks = SettingsFile.Instance.ExcludeHardLinks;
 			Scanner.Settings.HardwareAccelerationMode = SettingsFile.Instance.HardwareAccelerationMode;
 			Scanner.Settings.Percent = SettingsFile.Instance.Percent;
+			Scanner.Settings.PHashGrayVerifyPercent = SettingsFile.Instance.PHashGrayVerifyPercent;
 			Scanner.Settings.PercentDurationDifference = SettingsFile.Instance.PercentDurationDifference;
 			Scanner.Settings.DurationDifferenceMinSeconds = SettingsFile.Instance.DurationDifferenceMinSeconds;
 			Scanner.Settings.DurationDifferenceMaxSeconds = SettingsFile.Instance.DurationDifferenceMaxSeconds;

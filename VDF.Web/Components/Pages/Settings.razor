@@ -30,6 +30,12 @@
                @onchange="e => Scan.Settings.Percent = ParseFloat(e.Value)" />
     </label>
     <label>
+        pHash gray-verify % (second gate, 0 = off)
+        <input type="number" min="0" max="100" step="0.5"
+               value="@Scan.Settings.PHashGrayVerifyPercent.ToString(CultureInfo.InvariantCulture)"
+               @onchange="e => Scan.Settings.PHashGrayVerifyPercent = ParseFloat(e.Value)" />
+    </label>
+    <label>
         Duration difference tolerance %
         <input type="number" min="0" max="100" step="1"
                value="@Scan.Settings.PercentDurationDifference.ToString(CultureInfo.InvariantCulture)"

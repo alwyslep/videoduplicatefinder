@@ -2024,23 +2024,52 @@ namespace VDF.Core {
 				}
 				bool isDup = pHash.PHashCompare.IsDuplicateByPercent(phash.Value, phash_comp.Value, out float similarity, differenceLimitpHash, strict: true);
 				difference = 1f - similarity;
+				// Second gate: pHash judges ONE frame, so unrelated videos with one similar
+				// frame collide. Confirm hits against all sampled gray frames — the data is
+				// already cached (snapshot requires every position), compare-time only.
+				if (isDup && Settings.PHashGrayVerifyPercent > 0 &&
+					!GrayFramesMatch(grayBytes, compItem.compareGray!, Settings.PHashGrayVerifyPercent, ignoreBlackPixels, ignoreWhitePixels, matchWhenNoEvidence: true, out _)) {
+					difference = 1f; // rejected: don't report the near-match pHash value (diagnostic reads it)
+					return false;
+				}
 				return isDup;
 
 			}
 
-			byte[]?[] compGray = compItem.compareGray!;
-			differenceLimit *= grayBytes.Length;
+			return GrayFramesMatch(grayBytes, compItem.compareGray!, Settings.Percent, ignoreBlackPixels, ignoreWhitePixels, matchWhenNoEvidence: false, out difference);
+		}
+
+		/// <summary>Aggregate grayscale compare over all sampled frames: average per-frame
+		/// difference must stay within (100 - percent)%. Early-exits on the running sum.
+		/// Frame pairs where Ignore*Pixels filters out every pixel yield NaN — no evidence,
+		/// skipped rather than poisoning the aggregate. When NO frame is measurable the
+		/// result is <paramref name="matchWhenNoEvidence"/>: the pHash second gate abstains
+		/// (pHash already matched), the primary gray compare keeps rejecting.</summary>
+		static bool GrayFramesMatch(byte[]?[] grayBytes, byte[]?[] compGray, float percent, bool ignoreBlackPixels, bool ignoreWhitePixels, bool matchWhenNoEvidence, out float difference) {
+			float perFrameLimit = 1.0f - percent / 100f;
+			float maxTotalDiff = perFrameLimit * grayBytes.Length; // counted <= Length, so exceeding this can never pass
 			float diffSum = 0;
+			int counted = 0;
 			for (int j = 0; j < grayBytes.Length; j++) {
-				diffSum += ignoreBlackPixels || ignoreWhitePixels ?
+				float frameDiff = ignoreBlackPixels || ignoreWhitePixels ?
 							GrayBytesUtils.PercentageDifferenceWithoutSpecificPixels(
 								grayBytes[j]!, compGray[j]!, ignoreBlackPixels, ignoreWhitePixels) :
 							GrayBytesUtils.PercentageDifference(grayBytes[j]!, compGray[j]!);
-				if (diffSum > differenceLimit) // already exceeding maximum tolerated diff -> exit early
+				if (float.IsNaN(frameDiff))
+					continue; // fully filtered frame pair: nothing to measure
+				diffSum += frameDiff;
+				counted++;
+				if (diffSum > maxTotalDiff) { // already exceeding maximum tolerated diff -> exit early
+					difference = 1f;
 					return false;
+				}
 			}
-			difference = diffSum / grayBytes.Length;
-			return !float.IsNaN(difference);
+			if (counted == 0) {
+				difference = 1f;
+				return matchWhenNoEvidence;
+			}
+			difference = diffSum / counted;
+			return difference <= perFrameLimit;
 		}
 
 		internal void ScanForDuplicates() {

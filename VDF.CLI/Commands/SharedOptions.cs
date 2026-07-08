@@ -43,6 +43,11 @@ namespace VDF.CLI.Commands {
 			DefaultValueFactory = _ => 96f
 		};
 
+		internal static readonly Option<float> PHashGrayVerify = new("--phash-gray-verify") {
+			Description = "pHash mode second gate: multi-frame grayscale verify percent (0 = off). Default: 90.",
+			DefaultValueFactory = _ => 90f
+		};
+
 		internal static readonly Option<int> Parallelism = new("--parallelism") {
 			Description = "Maximum degree of parallelism for hashing. Default: 1.",
 			DefaultValueFactory = _ => 1
@@ -134,6 +139,7 @@ namespace VDF.CLI.Commands {
 
 			s.Threshhold = r.GetValue(Threshold);
 			s.Percent = r.GetValue(Percent);
+			s.PHashGrayVerifyPercent = r.GetValue(PHashGrayVerify);
 			// Commands that don't register --parallelism (e.g. 'compare') get default(int) == 0
 			// back from GetValue, and 0 is the one value ParallelOptions rejects (#804). Remap
 			// only that sentinel to the documented default of 1; -1 (unbounded) and any positive
@@ -166,6 +172,7 @@ namespace VDF.CLI.Commands {
 			cmd.Options.Add(Exclude);
 			cmd.Options.Add(Threshold);
 			cmd.Options.Add(Percent);
+			cmd.Options.Add(PHashGrayVerify);
 			cmd.Options.Add(Parallelism);
 			cmd.Options.Add(Database);
 			cmd.Options.Add(NoSubdirs);

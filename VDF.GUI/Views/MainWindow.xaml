@@ -1761,6 +1761,11 @@
                                                                        Increment="0.1" Maximum="100" Minimum="1"
                                                                        ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.PercentTooltip]}"
                                                                        Value="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=Percent}" />
+                                                        <TextBlock Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.PHashGrayVerify]}" />
+                                                        <NumericUpDown Width="200" HorizontalAlignment="Left" FormatString="\{0\}%"
+                                                                       Increment="0.5" Maximum="100" Minimum="0"
+                                                                       ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.PHashGrayVerifyTooltip]}"
+                                                                       Value="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=PHashGrayVerifyPercent}" />
                                                         <TextBlock Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.DurationDifference]}" />
                                                         <NumericUpDown Width="200" HorizontalAlignment="Left" FormatString="\{0\}%"
                                                                        Increment="0.1" Maximum="100" Minimum="0"

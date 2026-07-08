@@ -377,6 +377,12 @@ namespace VDF.GUI.Data {
 			get => _Percent;
 			set => this.RaiseAndSetIfChanged(ref _Percent, value);
 		}
+		float _PHashGrayVerifyPercent = 90f;
+		[JsonPropertyName("PHashGrayVerifyPercent")]
+		public float PHashGrayVerifyPercent {
+			get => _PHashGrayVerifyPercent;
+			set => this.RaiseAndSetIfChanged(ref _PHashGrayVerifyPercent, value);
+		}
 		double _PercentDurationDifference = 20d;
 		[JsonPropertyName("PercentDurationDifference")]
 		public double PercentDurationDifference {

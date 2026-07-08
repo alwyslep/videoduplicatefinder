@@ -48,6 +48,14 @@ namespace VDF.GUI.ViewModels {
 				? view.OfType<DuplicateItemVM>()
 				: Duplicates.Where(d => d.IsVisibleInFilter);
 
+			// 삭제·블랙리스트·GridPlayer 정리로 사라진 그룹의 Guid 는 셋에서 걷어낸다 — 안 걷으면
+			// "체크한 그룹 전부 해결 → 다시 순회" 시 죽은 화이트리스트가 전체를 걸러 '비교할 것 없음'이 된다.
+			CompareIncludedGroups.IntersectWith(Duplicates.Select(d => d.ItemInfo.GroupId));
+
+			// 헤더 "순회" 체크가 하나라도 있으면 그 그룹만 순회(빈 선택 = 전체, 기존 동작 유지).
+			if (CompareIncludedGroups.Count > 0)
+				visible = visible.Where(d => CompareIncludedGroups.Contains(d.ItemInfo.GroupId));
+
 			List<List<string>> groups = visible
 				.Where(d => !d.ItemInfo.IsImage)                       // 영상만(GridPlayer 재생 대상)
 				.GroupBy(d => d.ItemInfo.GroupId)                      // VDF 중복 그룹 = 한 비교 세트

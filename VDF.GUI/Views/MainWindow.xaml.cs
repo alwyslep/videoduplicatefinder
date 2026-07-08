@@ -366,12 +366,61 @@ namespace VDF.GUI.Views {
 				if (id != Guid.Empty) vm.KeepBestInGroup(id);
 			};
 
+			// Two per-group checkboxes: "check all rows" (composes with every checked-items
+			// menu) and "include in compare-in-player" (vm.CompareIncludedGroups whitelist).
+			var checkAllBox = new CheckBox { Content = App.Lang["GroupHeader.CheckAll"], VerticalAlignment = VerticalAlignment.Center, MinWidth = 0 };
+			ToolTip.SetTip(checkAllBox, App.Lang["GroupHeader.CheckAllTooltip"]);
+			var tourBox = new CheckBox { Content = App.Lang["GroupHeader.TourSelect"], VerticalAlignment = VerticalAlignment.Center, MinWidth = 0 };
+			ToolTip.SetTip(tourBox, App.Lang["GroupHeader.TourSelectTooltip"]);
+
+			// Recycled headers get a new group: box state must always be derived from the
+			// live DataContext, and programmatic syncs must not write back into the data.
+			bool syncingBoxes = false;
+			bool? lastCheckAllState = false; // last rendered state; a click leaving indeterminate means "check all"
+			void SyncGroupBoxes() {
+				syncingBoxes = true;
+				try {
+					if (header.DataContext is Avalonia.Collections.DataGridCollectionViewGroup g) {
+						int total = 0, done = 0;
+						foreach (var item in g.Items.OfType<DuplicateItemVM>()) {
+							total++;
+							if (item.Checked) done++;
+						}
+						checkAllBox.IsChecked = total == 0 || done == 0 ? false : done == total ? true : (bool?)null;
+						lastCheckAllState = checkAllBox.IsChecked;
+					}
+					tourBox.IsChecked = vm.CompareIncludedGroups.Contains(GetGroupId());
+				}
+				finally { syncingBoxes = false; }
+			}
+			checkAllBox.IsCheckedChanged += (_, _) => {
+				if (syncingBoxes) return;
+				var id = GetGroupId();
+				if (id == Guid.Empty) return;
+				// Avalonia toggles indeterminate -> unchecked, but on a master checkbox a
+				// click on a partially-checked group must mean "check all", not "wipe".
+				bool check = lastCheckAllState == null || checkAllBox.IsChecked == true;
+				if (checkAllBox.IsChecked != check) {
+					syncingBoxes = true;
+					try { checkAllBox.IsChecked = check; } finally { syncingBoxes = false; }
+				}
+				lastCheckAllState = check;
+				vm.SetGroupChecked(id, check);
+			};
+			tourBox.IsCheckedChanged += (_, _) => {
+				if (syncingBoxes) return;
+				var id = GetGroupId();
+				if (id == Guid.Empty) return;
+				if (tourBox.IsChecked == true) vm.CompareIncludedGroups.Add(id);
+				else vm.CompareIncludedGroups.Remove(id);
+			};
+
 			var panel = new StackPanel {
 				Orientation = Orientation.Horizontal,
 				Spacing = 4,
 				Margin = new Thickness(8, 0, 4, 0),
 				VerticalAlignment = VerticalAlignment.Center,
-				Children = { compareBtn, keepBestBtn }
+				Children = { checkAllBox, tourBox, compareBtn, keepBestBtn }
 			};
 
 			// Shown in place of the raw GroupId GUID ("4 files · 3.2 GB").
@@ -388,7 +437,10 @@ namespace VDF.GUI.Views {
 				summaryText.Text = string.Format(App.Lang["GroupHeader.Summary"], count, totalSize.BytesToString());
 			}
 			// Recycled headers keep our injected controls but get a new group.
-			header.DataContextChanged += (_, _) => UpdateHeaderSummary();
+			header.DataContextChanged += (_, _) => { UpdateHeaderSummary(); SyncGroupBoxes(); };
+			// Live re-sync when Checked changes anywhere (menus, presets, undo). Subscribe
+			// per attached header, drop on detach so discarded headers don't leak handlers.
+			header.Unloaded += (_, _) => vm.CheckedByGroupChanged -= SyncGroupBoxes;
 
 			// Inject buttons into the header's visual tree once it's loaded
 			header.Loaded += (_, _) => {
@@ -412,6 +464,9 @@ namespace VDF.GUI.Views {
 					}
 				}
 				UpdateHeaderSummary();
+				vm.CheckedByGroupChanged -= SyncGroupBoxes; // Loaded can refire on re-attach
+				vm.CheckedByGroupChanged += SyncGroupBoxes;
+				SyncGroupBoxes();
 			};
 		}
 

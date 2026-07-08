@@ -72,6 +72,12 @@ namespace VDF.Core {
 
 		public byte Threshhold = 5;
 		public float Percent = 96f;
+		// pHash-mode second gate: a pair that passes the single-frame pHash check must ALSO pass
+		// the multi-frame grayscale aggregate compare at this percent (uses the already-cached gray
+		// frames, so it is compare-time only — no rescan). 0 = off (pure 1-frame pHash verdict).
+		// Deliberately looser than Percent: kills unrelated-video one-frame collisions (intros,
+		// dark scenes) while keeping pHash's brightness tolerance for true duplicates.
+		public float PHashGrayVerifyPercent = 90f;
 		public double PercentDurationDifference = 20d;
 		public double DurationDifferenceMinSeconds;
 		public double DurationDifferenceMaxSeconds;

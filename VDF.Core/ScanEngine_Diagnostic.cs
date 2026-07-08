@@ -341,6 +341,16 @@ namespace VDF.Core {
 			if (isDuplicate) {
 				sb.AppendLine($"PASS — the files are considered visually similar{(flipped ? " (as a horizontally flipped match)" : "")}.");
 			}
+			else if (usePHash && Settings.PHashGrayVerifyPercent > 0 &&
+					 a.comparePHash != null && b.comparePHash != null &&
+					 pHash.PHashCompare.IsDuplicateByPercent(a.comparePHash.Value, b.comparePHash.Value, out _, Settings.Percent / 100f, strict: true)) {
+				// The pHash itself matched, so the miss came from the gray second gate —
+				// the generic "below minimum" text would contradict the printed similarity.
+				GrayFramesMatch(a.compareGray!, b.compareGray!, Settings.PHashGrayVerifyPercent, Settings.IgnoreBlackPixels, Settings.IgnoreWhitePixels, matchWhenNoEvidence: true, out float gateDiff);
+				sb.AppendLine($"FAIL — pHash matched, but the multi-frame grayscale verification is {FormatSimilarity(1f - gateDiff)}, below the gray-verify minimum of {Settings.PHashGrayVerifyPercent.ToString("0.#", inv)}%.");
+				failures.Add($"pHash matched, but the multi-frame grayscale verification is {FormatSimilarity(1f - gateDiff)} while at least {Settings.PHashGrayVerifyPercent.ToString("0.#", inv)}% is required.");
+				hints.Add($"Lower the pHash gray-verify percent below {FormatSimilarity(1f - gateDiff)} (or set it to 0 to disable the second gate) to catch this pair.");
+			}
 			else {
 				sb.AppendLine("FAIL — the similarity is below the configured minimum.");
 				failures.Add($"Visual similarity is {FormatSimilarity(similarity)} but at least {Settings.Percent.ToString("0.#", inv)}% is required.");

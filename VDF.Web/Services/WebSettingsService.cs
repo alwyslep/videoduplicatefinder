@@ -27,6 +27,7 @@ namespace VDF.Web.Services {
 			public List<string> BlackList { get; set; } = new();
 			public byte Threshhold { get; set; } = 5;
 			public float Percent { get; set; } = 96f;
+			public float PHashGrayVerifyPercent { get; set; } = 90f;
 			public double PercentDurationDifference { get; set; } = 20d;
 			public int MaxDegreeOfParallelism { get; set; } = 1;
 			public int ThumbnailCount { get; set; } = 1;
@@ -107,6 +108,7 @@ namespace VDF.Web.Services {
 				foreach (var p in dto.BlackList) s.BlackList.Add(p);
 				s.Threshhold = dto.Threshhold;
 				s.Percent = dto.Percent;
+				s.PHashGrayVerifyPercent = dto.PHashGrayVerifyPercent;
 				s.PercentDurationDifference = dto.PercentDurationDifference;
 				s.MaxDegreeOfParallelism = dto.MaxDegreeOfParallelism;
 				s.ThumbnailCount = dto.ThumbnailCount;
@@ -164,6 +166,7 @@ namespace VDF.Web.Services {
 					BlackList = s.BlackList.ToList(),
 					Threshhold = s.Threshhold,
 					Percent = s.Percent,
+					PHashGrayVerifyPercent = s.PHashGrayVerifyPercent,
 					PercentDurationDifference = s.PercentDurationDifference,
 					MaxDegreeOfParallelism = s.MaxDegreeOfParallelism,
 					ThumbnailCount = s.ThumbnailCount,
