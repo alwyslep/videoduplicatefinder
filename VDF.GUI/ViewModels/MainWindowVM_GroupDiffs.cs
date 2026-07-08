@@ -25,6 +25,23 @@ namespace VDF.GUI.ViewModels {
 		// folded/diffed cell is available via its tooltip. Runs from RefreshGroupStats(), which
 		// every group-membership change already routes through (scan done, import, deletions,
 		// row removals, tombstone collapse).
+		// FormatPercentDiff's "=" threshold — anchor picking below must use the same fold.
+		const double PercentFold = 0.5;
+
+		// A near-tie (inside the "=" fold) makes Core's best-flag choice arbitrary and can land
+		// the green anchor on a LOWER row (e.g. 1518 vs 1521 kbps: the max is row 2, row 1 folds
+		// to "=" and the "=" sits ABOVE its own reference). Promote the anchor to the FIRST row
+		// inside the fold so "=" always reads downward toward nothing — the real value is always
+		// the topmost of the (near-)tied winners.
+		static DuplicateItemVM PromoteToFirstTied(List<DuplicateItemVM> items, DuplicateItemVM flagged, Func<DuplicateItemVM, double> val) {
+			double best = val(flagged);
+			if (best <= 0) return flagged;
+			foreach (var it in items)
+				if (Math.Abs((val(it) - best) / best * 100) < PercentFold)
+					return it;
+			return flagged;
+		}
+
 		internal static void ComputeGroupDiffs(List<DuplicateItemVM> items) {
 			if (items.Count == 0) return;
 
@@ -37,6 +54,7 @@ namespace VDF.GUI.ViewModels {
 			// diffs. They show their raw value and stay out of the comparison.
 			var sized = items.Where(i => i.ItemInfo.SizeLong > 0).ToList();
 			var refSize = sized.FirstOrDefault(i => i.ItemInfo.IsBestSize) ?? sized.MinBy(i => i.ItemInfo.SizeLong);
+			if (refSize != null) refSize = PromoteToFirstTied(sized, refSize, i => i.ItemInfo.SizeLong);
 			if (refSize != null) refSize.ItemInfo.IsBestSize = true;
 			foreach (var it in items)
 				it.SizeDiff = refSize == null || ReferenceEquals(it, refSize) || it.ItemInfo.SizeLong <= 0 ? null
@@ -72,13 +90,17 @@ namespace VDF.GUI.ViewModels {
 			}
 
 			var refDur = items.FirstOrDefault(i => i.ItemInfo.IsBestDuration) ?? items.MaxBy(i => i.ItemInfo.Duration)!;
+			// duration fold is 1s (FormatDurationDiff), not a percentage
+			refDur = items.FirstOrDefault(i => Math.Abs((i.ItemInfo.Duration - refDur.ItemInfo.Duration).TotalSeconds) < 1) ?? refDur;
 			refDur.ItemInfo.IsBestDuration = true;
 			foreach (var it in items)
 				it.DurationDiff = ReferenceEquals(it, refDur) ? null
 					: it.ItemInfo.Duration == refDur.ItemInfo.Duration ? "="
 					: FormatDurationDiff(it.ItemInfo.Duration - refDur.ItemInfo.Duration);
 
-			var refFps = items.FirstOrDefault(i => i.ItemInfo.IsBestFps) ?? items.MaxBy(i => i.ItemInfo.Fps)!;
+			var refFps = PromoteToFirstTied(items,
+				items.FirstOrDefault(i => i.ItemInfo.IsBestFps) ?? items.MaxBy(i => i.ItemInfo.Fps)!,
+				i => i.ItemInfo.Fps);
 			refFps.ItemInfo.IsBestFps = true;
 			foreach (var it in items)
 				it.FpsDiff = ReferenceEquals(it, refFps) ? null
@@ -87,7 +109,9 @@ namespace VDF.GUI.ViewModels {
 						? FormatPercentDiff((it.ItemInfo.Fps - refFps.ItemInfo.Fps) / refFps.ItemInfo.Fps * 100)
 						: null;
 
-			var refBr = items.FirstOrDefault(i => i.ItemInfo.IsBestBitRateKbs) ?? items.MaxBy(i => i.ItemInfo.BitRateKbs)!;
+			var refBr = PromoteToFirstTied(items,
+				items.FirstOrDefault(i => i.ItemInfo.IsBestBitRateKbs) ?? items.MaxBy(i => i.ItemInfo.BitRateKbs)!,
+				i => (double)i.ItemInfo.BitRateKbs);
 			refBr.ItemInfo.IsBestBitRateKbs = true;
 			foreach (var it in items)
 				it.BitRateDiff = ReferenceEquals(it, refBr) ? null
@@ -96,7 +120,9 @@ namespace VDF.GUI.ViewModels {
 						? FormatPercentDiff((double)(it.ItemInfo.BitRateKbs - refBr.ItemInfo.BitRateKbs) / (double)refBr.ItemInfo.BitRateKbs * 100)
 						: null;
 
-			var refAbr = items.FirstOrDefault(i => i.ItemInfo.IsBestAudioBitRateKbs) ?? items.MaxBy(i => i.ItemInfo.AudioBitRateKbs)!;
+			var refAbr = PromoteToFirstTied(items,
+				items.FirstOrDefault(i => i.ItemInfo.IsBestAudioBitRateKbs) ?? items.MaxBy(i => i.ItemInfo.AudioBitRateKbs)!,
+				i => (double)i.ItemInfo.AudioBitRateKbs);
 			refAbr.ItemInfo.IsBestAudioBitRateKbs = true;
 			foreach (var it in items)
 				it.AudioBitRateDiff = ReferenceEquals(it, refAbr) ? null
@@ -107,7 +133,7 @@ namespace VDF.GUI.ViewModels {
 		}
 
 		static string FormatPercentDiff(double pct) {
-			if (Math.Abs(pct) < 0.5)
+			if (Math.Abs(pct) < PercentFold)
 				return "=";
 			return $"{pct:+0;-0}%";
 		}
