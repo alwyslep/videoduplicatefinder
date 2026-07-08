@@ -123,7 +123,9 @@ namespace VDF.GUI.ViewModels {
 			set => this.RaiseAndSetIfChanged(ref _Checked, value);
 		}
 
-		// Hover-diff display: when non-null, shown instead of the normal value
+		// Group-diff display: when non-null, shown instead of the normal value ("=" for same as
+		// the group's best, "±…" for the difference). Recomputed by MainWindowVM.ComputeGroupDiffs
+		// whenever group membership changes.
 		string? _DurationDiff;
 		[JsonIgnore]
 		public string? DurationDiff {
@@ -159,18 +161,60 @@ namespace VDF.GUI.ViewModels {
 			set => this.RaiseAndSetIfChanged(ref _BitRateDiff, value);
 		}
 
-		string? _AudioSampleRateDiff;
-		[JsonIgnore]
-		public string? AudioSampleRateDiff {
-			get => _AudioSampleRateDiff;
-			set => this.RaiseAndSetIfChanged(ref _AudioSampleRateDiff, value);
-		}
-
 		string? _AudioBitRateDiff;
 		[JsonIgnore]
 		public string? AudioBitRateDiff {
 			get => _AudioBitRateDiff;
 			set => this.RaiseAndSetIfChanged(ref _AudioBitRateDiff, value);
+		}
+
+		string? _FormatInfoDiff;
+		[JsonIgnore]
+		public string? FormatInfoDiff {
+			get => _FormatInfoDiff;
+			set => this.RaiseAndSetIfChanged(ref _FormatInfoDiff, value);
+		}
+
+		// p-class shorthand: standard ladder heights collapse to "1080p"/"4K"; anything else
+		// (cinemascope 1920x800, portrait, photos) keeps the raw WxH so odd sizes stay distinguishable.
+		internal static string FrameSizeToDisplay(string? frameSize) {
+			if (string.IsNullOrEmpty(frameSize)) return string.Empty;
+			int x = frameSize.IndexOf('x');
+			if (x <= 0 || !int.TryParse(frameSize.AsSpan(x + 1), out int h))
+				return frameSize;
+			return h switch {
+				4320 => "8K",
+				2160 => "4K",
+				1440 => "1440p",
+				1080 => "1080p",
+				720 => "720p",
+				576 => "576p",
+				480 => "480p",
+				360 => "360p",
+				240 => "240p",
+				_ => frameSize
+			};
+		}
+
+		[JsonIgnore]
+		public string FrameSizeDisplay => FrameSizeToDisplay(ItemInfo?.FrameSize);
+
+		// Merged spec column: video codec · audio codec · channels · sample rate · HDR.
+		// These rarely differ within a group, so they fold into a single "=" most of the time.
+		[JsonIgnore]
+		public string FormatInfo {
+			get {
+				var i = ItemInfo;
+				if (i == null) return string.Empty;
+				var parts = new List<string>(5);
+				if (!string.IsNullOrEmpty(i.Format)) parts.Add(i.Format);
+				if (!string.IsNullOrEmpty(i.AudioFormat)) parts.Add(i.AudioFormat);
+				if (!string.IsNullOrEmpty(i.AudioChannel)) parts.Add(i.AudioChannel == "stereo" ? "st" : i.AudioChannel);
+				if (i.AudioSampleRate > 0)
+					parts.Add(i.AudioSampleRate % 1000 == 0 ? $"{i.AudioSampleRate / 1000}k" : $"{i.AudioSampleRate / 1000.0:0.#}k");
+				if (!string.IsNullOrEmpty(i.HdrFormat)) parts.Add(i.HdrFormat);
+				return string.Join("·", parts);
+			}
 		}
 
 		/// <summary>

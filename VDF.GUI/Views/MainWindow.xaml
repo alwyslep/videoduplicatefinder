@@ -818,212 +818,189 @@
                                                     </DataTemplate>
                                                 </DataGridTemplateColumn.CellTemplate>
                                             </DataGridTemplateColumn>
-                                            <DataGridTemplateColumn Width="1*" IsVisible="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=ShowDurationColumn}">
+                                            <!-- One metric per column, one line per file: matching metrics share a
+                                                 vertical lane, so comparing group members is a straight down-scan.
+                                                 Per metric only the group's best keeps its real value; ties show "="
+                                                 and worse items show just the difference. Tooltip = exact value. -->
+                                            <DataGridTemplateColumn Width="Auto" IsVisible="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=ShowDurationColumn}">
                                                 <DataGridTemplateColumn.Header>
                                                     <TextBlock
-                                                        Text="{Binding Source={x:Static local:App.Lang}, Path=[DuplicateList.Header.DurationCompact]}"
-                                                        ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[DuplicateList.Header.DurationCompactTip]}" />
+                                                        Text="{Binding Source={x:Static local:App.Lang}, Path=[DuplicateList.Header.Duration]}"
+                                                        ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[DuplicateList.Header.DiffTip]}" />
                                                 </DataGridTemplateColumn.Header>
                                                 <DataGridTemplateColumn.CellTemplate>
                                                     <DataTemplate x:DataType="vm:DuplicateItemVM">
-                                                        <Grid Margin="10,0,0,0">
-                                                            <Grid.RowDefinitions>
-                                                                <RowDefinition />
-                                                                <RowDefinition />
-                                                                <RowDefinition />
-                                                                <RowDefinition />
-                                                            </Grid.RowDefinitions>
-                                                            <TextBlock
-                                                                Grid.Row="0"
-                                                                Margin="2"
-                                                                IsVisible="{Binding ItemInfo.IsImage}"
-                                                                Text="{Binding ItemInfo.Format, TargetNullValue='', Mode=OneWay}"
-                                                                TextWrapping="Wrap" />
-                                                            <Border Grid.Row="0" Tag="duration" Background="Transparent"
-                                                                    PointerEntered="OnMetricPointerEntered" PointerExited="OnMetricPointerExited"
-                                                                    IsVisible="{Binding !ItemInfo.IsImage}">
-                                                                <TextBlock Margin="2" Classes="metric-diff" TextWrapping="Wrap">
-                                                                    <TextBlock.Text>
-                                                                        <MultiBinding Converter="{StaticResource MetricDisplayConverter}" ConverterParameter="{}{0:hh\:mm\:ss}">
-                                                                            <Binding Path="ItemInfo.Duration" />
-                                                                            <Binding Path="DurationDiff" />
-                                                                        </MultiBinding>
-                                                                    </TextBlock.Text>
-                                                                    <TextBlock.Foreground>
-                                                                        <MultiBinding Converter="{StaticResource MetricDiffForegroundConverter}">
-                                                                            <Binding Path="ItemInfo.IsBestDuration" />
-                                                                            <Binding Path="DurationDiff" />
-                                                                        </MultiBinding>
-                                                                    </TextBlock.Foreground>
-                                                                </TextBlock>
-                                                            </Border>
-                                                            <Border Grid.Row="1" Tag="framesize" Background="Transparent"
-                                                                    PointerEntered="OnMetricPointerEntered" PointerExited="OnMetricPointerExited">
-                                                                <TextBlock Margin="2" Classes="metric-diff" TextWrapping="Wrap">
-                                                                    <TextBlock.Text>
-                                                                        <MultiBinding Converter="{StaticResource MetricDisplayConverter}">
-                                                                            <Binding Path="ItemInfo.FrameSize" />
-                                                                            <Binding Path="FrameSizeDiff" />
-                                                                        </MultiBinding>
-                                                                    </TextBlock.Text>
-                                                                    <TextBlock.Foreground>
-                                                                        <MultiBinding Converter="{StaticResource MetricDiffForegroundConverter}">
-                                                                            <Binding Path="ItemInfo.IsBestFrameSize" />
-                                                                            <Binding Path="FrameSizeDiff" />
-                                                                        </MultiBinding>
-                                                                    </TextBlock.Foreground>
-                                                                </TextBlock>
-                                                            </Border>
-                                                            <Border Grid.Row="2" Tag="size" Background="Transparent"
-                                                                    PointerEntered="OnMetricPointerEntered" PointerExited="OnMetricPointerExited">
-                                                                <TextBlock Margin="2" Classes="metric-diff" TextWrapping="Wrap">
-                                                                    <TextBlock.Text>
-                                                                        <MultiBinding Converter="{StaticResource MetricDisplayConverter}">
-                                                                            <Binding Path="ItemInfo.Size" />
-                                                                            <Binding Path="SizeDiff" />
-                                                                        </MultiBinding>
-                                                                    </TextBlock.Text>
-                                                                    <TextBlock.Foreground>
-                                                                        <MultiBinding Converter="{StaticResource MetricDiffForegroundConverter}">
-                                                                            <Binding Path="ItemInfo.IsBestSize" />
-                                                                            <Binding Path="SizeDiff" />
-                                                                        </MultiBinding>
-                                                                    </TextBlock.Foreground>
-                                                                </TextBlock>
-                                                            </Border>
-                                                            <TextBlock
-                                                                Grid.Row="3"
-                                                                Margin="2"
-                                                                Text="{Binding ItemInfo.DateCreated, TargetNullValue='', Converter={StaticResource ExtraShortDateTimeConverter}}"
-                                                                TextWrapping="Wrap" />
-                                                        </Grid>
+                                                        <TextBlock Margin="10,0,2,0" VerticalAlignment="Center" Classes="metric-diff"
+                                                                   IsVisible="{Binding !ItemInfo.IsImage}"
+                                                                   ToolTip.Tip="{Binding ItemInfo.Duration}">
+                                                            <TextBlock.Text>
+                                                                <MultiBinding Converter="{StaticResource MetricDisplayConverter}" ConverterParameter="{}{0:hh\:mm\:ss}">
+                                                                    <Binding Path="ItemInfo.Duration" />
+                                                                    <Binding Path="DurationDiff" />
+                                                                </MultiBinding>
+                                                            </TextBlock.Text>
+                                                            <TextBlock.Foreground>
+                                                                <MultiBinding Converter="{StaticResource MetricDiffForegroundConverter}">
+                                                                    <Binding Path="ItemInfo.IsBestDuration" />
+                                                                    <Binding Path="DurationDiff" />
+                                                                </MultiBinding>
+                                                            </TextBlock.Foreground>
+                                                        </TextBlock>
                                                     </DataTemplate>
                                                 </DataGridTemplateColumn.CellTemplate>
                                             </DataGridTemplateColumn>
-                                            <DataGridTemplateColumn Width="1*" IsVisible="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=ShowFormatColumn}">
+                                            <DataGridTemplateColumn Width="Auto" IsVisible="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=ShowDurationColumn}">
                                                 <DataGridTemplateColumn.Header>
                                                     <TextBlock
-                                                        Text="{Binding Source={x:Static local:App.Lang}, Path=[DuplicateList.Header.VideoCompact]}"
-                                                        ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[DuplicateList.Header.VideoCompactTip]}" />
+                                                        Text="{Binding Source={x:Static local:App.Lang}, Path=[DuplicateList.Header.Resolution]}"
+                                                        ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[DuplicateList.Header.DiffTip]}" />
                                                 </DataGridTemplateColumn.Header>
                                                 <DataGridTemplateColumn.CellTemplate>
                                                     <DataTemplate x:DataType="vm:DuplicateItemVM">
-                                                        <Grid Margin="10,0,0,0" IsVisible="{Binding !ItemInfo.IsImage}">
-                                                            <Grid.RowDefinitions>
-                                                                <RowDefinition />
-                                                                <RowDefinition />
-                                                                <RowDefinition />
-                                                                <RowDefinition />
-                                                            </Grid.RowDefinitions>
-                                                            <TextBlock
-                                                                Grid.Row="0"
-                                                                Margin="2"
-                                                                Text="{Binding ItemInfo.Format, TargetNullValue='', Mode=OneWay}"
-                                                                TextWrapping="Wrap" />
-                                                            <Border Grid.Row="1" Tag="fps" Background="Transparent"
-                                                                    PointerEntered="OnMetricPointerEntered" PointerExited="OnMetricPointerExited">
-                                                                <TextBlock Margin="2" Classes="metric-diff" TextWrapping="Wrap">
-                                                                    <TextBlock.Text>
-                                                                        <MultiBinding Converter="{StaticResource MetricDisplayConverter}" ConverterParameter="{}{0} fps">
-                                                                            <Binding Path="ItemInfo.Fps" />
-                                                                            <Binding Path="FpsDiff" />
-                                                                        </MultiBinding>
-                                                                    </TextBlock.Text>
-                                                                    <TextBlock.Foreground>
-                                                                        <MultiBinding Converter="{StaticResource MetricDiffForegroundConverter}">
-                                                                            <Binding Path="ItemInfo.IsBestFps" />
-                                                                            <Binding Path="FpsDiff" />
-                                                                        </MultiBinding>
-                                                                    </TextBlock.Foreground>
-                                                                </TextBlock>
-                                                            </Border>
-                                                            <Border Grid.Row="2" Tag="bitrate" Background="Transparent"
-                                                                    PointerEntered="OnMetricPointerEntered" PointerExited="OnMetricPointerExited">
-                                                                <TextBlock Margin="2" Classes="metric-diff" TextWrapping="Wrap">
-                                                                    <TextBlock.Text>
-                                                                        <MultiBinding Converter="{StaticResource MetricDisplayConverter}" ConverterParameter="{}{0} kbps">
-                                                                            <Binding Path="ItemInfo.BitRateKbs" />
-                                                                            <Binding Path="BitRateDiff" />
-                                                                        </MultiBinding>
-                                                                    </TextBlock.Text>
-                                                                    <TextBlock.Foreground>
-                                                                        <MultiBinding Converter="{StaticResource MetricDiffForegroundConverter}">
-                                                                            <Binding Path="ItemInfo.IsBestBitRateKbs" />
-                                                                            <Binding Path="BitRateDiff" />
-                                                                        </MultiBinding>
-                                                                    </TextBlock.Foreground>
-                                                                </TextBlock>
-                                                            </Border>
-                                                            <TextBlock
-                                                                Grid.Row="3"
-                                                                Margin="2"
-                                                                Foreground="{Binding ItemInfo.IsBestHdrFormat, Converter={StaticResource IsBestConverter}}"
-                                                                Text="{Binding ItemInfo.HdrFormat, TargetNullValue=''}"
-                                                                TextWrapping="Wrap" />
-                                                        </Grid>
+                                                        <TextBlock Margin="10,0,2,0" VerticalAlignment="Center" Classes="metric-diff"
+                                                                   ToolTip.Tip="{Binding ItemInfo.FrameSize}">
+                                                            <TextBlock.Text>
+                                                                <MultiBinding Converter="{StaticResource MetricDisplayConverter}">
+                                                                    <Binding Path="FrameSizeDisplay" />
+                                                                    <Binding Path="FrameSizeDiff" />
+                                                                </MultiBinding>
+                                                            </TextBlock.Text>
+                                                            <TextBlock.Foreground>
+                                                                <MultiBinding Converter="{StaticResource MetricDiffForegroundConverter}">
+                                                                    <Binding Path="ItemInfo.IsBestFrameSize" />
+                                                                    <Binding Path="FrameSizeDiff" />
+                                                                </MultiBinding>
+                                                            </TextBlock.Foreground>
+                                                        </TextBlock>
                                                     </DataTemplate>
                                                 </DataGridTemplateColumn.CellTemplate>
                                             </DataGridTemplateColumn>
-                                            <DataGridTemplateColumn Width="1*" IsVisible="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=ShowAudioColumn}">
+                                            <DataGridTemplateColumn Width="Auto" IsVisible="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=ShowDurationColumn}">
                                                 <DataGridTemplateColumn.Header>
                                                     <TextBlock
-                                                        Text="{Binding Source={x:Static local:App.Lang}, Path=[DuplicateList.Header.AudioCompact]}"
-                                                        ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[DuplicateList.Header.AudioCompactTip]}" />
+                                                        Text="{Binding Source={x:Static local:App.Lang}, Path=[DuplicateList.Header.Size]}"
+                                                        ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[DuplicateList.Header.DiffTip]}" />
                                                 </DataGridTemplateColumn.Header>
                                                 <DataGridTemplateColumn.CellTemplate>
                                                     <DataTemplate x:DataType="vm:DuplicateItemVM">
-                                                        <Grid Margin="10,0,0,0" IsVisible="{Binding !ItemInfo.IsImage}">
-                                                            <Grid.RowDefinitions>
-                                                                <RowDefinition />
-                                                                <RowDefinition />
-                                                                <RowDefinition />
-                                                                <RowDefinition />
-                                                            </Grid.RowDefinitions>
-                                                            <TextBlock
-                                                                Grid.Row="0"
-                                                                Margin="2"
-                                                                Text="{Binding ItemInfo.AudioFormat, TargetNullValue=''}"
-                                                                TextWrapping="Wrap" />
-                                                            <TextBlock
-                                                                Grid.Row="1"
-                                                                Margin="2"
-                                                                Text="{Binding ItemInfo.AudioChannel, TargetNullValue=''}"
-                                                                TextWrapping="Wrap" />
-                                                            <Border Grid.Row="2" Tag="audiosamplerate" Background="Transparent"
-                                                                    PointerEntered="OnMetricPointerEntered" PointerExited="OnMetricPointerExited">
-                                                                <TextBlock Margin="2" Classes="metric-diff" TextWrapping="Wrap">
-                                                                    <TextBlock.Text>
-                                                                        <MultiBinding Converter="{StaticResource MetricDisplayConverter}">
-                                                                            <Binding Path="ItemInfo.AudioSampleRate" />
-                                                                            <Binding Path="AudioSampleRateDiff" />
-                                                                        </MultiBinding>
-                                                                    </TextBlock.Text>
-                                                                    <TextBlock.Foreground>
-                                                                        <MultiBinding Converter="{StaticResource MetricDiffForegroundConverter}">
-                                                                            <Binding Path="ItemInfo.IsBestAudioSampleRate" />
-                                                                            <Binding Path="AudioSampleRateDiff" />
-                                                                        </MultiBinding>
-                                                                    </TextBlock.Foreground>
-                                                                </TextBlock>
-                                                            </Border>
-                                                            <Border Grid.Row="3" Tag="audiobitrate" Background="Transparent"
-                                                                    PointerEntered="OnMetricPointerEntered" PointerExited="OnMetricPointerExited">
-                                                                <TextBlock Margin="2" Classes="metric-diff" TextWrapping="Wrap">
-                                                                    <TextBlock.Text>
-                                                                        <MultiBinding Converter="{StaticResource MetricDisplayConverter}" ConverterParameter="{}{0} kbps">
-                                                                            <Binding Path="ItemInfo.AudioBitRateKbs" />
-                                                                            <Binding Path="AudioBitRateDiff" />
-                                                                        </MultiBinding>
-                                                                    </TextBlock.Text>
-                                                                    <TextBlock.Foreground>
-                                                                        <MultiBinding Converter="{StaticResource MetricDiffForegroundConverter}">
-                                                                            <Binding Path="ItemInfo.IsBestAudioBitRateKbs" />
-                                                                            <Binding Path="AudioBitRateDiff" />
-                                                                        </MultiBinding>
-                                                                    </TextBlock.Foreground>
-                                                                </TextBlock>
-                                                            </Border>
-                                                        </Grid>
+                                                        <TextBlock Margin="10,0,2,0" VerticalAlignment="Center" Classes="metric-diff"
+                                                                   ToolTip.Tip="{Binding ItemInfo.Size}">
+                                                            <TextBlock.Text>
+                                                                <MultiBinding Converter="{StaticResource MetricDisplayConverter}">
+                                                                    <Binding Path="ItemInfo.Size" />
+                                                                    <Binding Path="SizeDiff" />
+                                                                </MultiBinding>
+                                                            </TextBlock.Text>
+                                                            <TextBlock.Foreground>
+                                                                <MultiBinding Converter="{StaticResource MetricDiffForegroundConverter}">
+                                                                    <Binding Path="ItemInfo.IsBestSize" />
+                                                                    <Binding Path="SizeDiff" />
+                                                                </MultiBinding>
+                                                            </TextBlock.Foreground>
+                                                        </TextBlock>
+                                                    </DataTemplate>
+                                                </DataGridTemplateColumn.CellTemplate>
+                                            </DataGridTemplateColumn>
+                                            <DataGridTemplateColumn Width="Auto" IsVisible="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=ShowFormatColumn}">
+                                                <DataGridTemplateColumn.Header>
+                                                    <TextBlock
+                                                        Text="{Binding Source={x:Static local:App.Lang}, Path=[DuplicateList.Header.VideoFps]}"
+                                                        ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[DuplicateList.Header.DiffTip]}" />
+                                                </DataGridTemplateColumn.Header>
+                                                <DataGridTemplateColumn.CellTemplate>
+                                                    <DataTemplate x:DataType="vm:DuplicateItemVM">
+                                                        <TextBlock Margin="10,0,2,0" VerticalAlignment="Center" Classes="metric-diff"
+                                                                   IsVisible="{Binding !ItemInfo.IsImage}"
+                                                                   ToolTip.Tip="{Binding ItemInfo.Fps}">
+                                                            <TextBlock.Text>
+                                                                <MultiBinding Converter="{StaticResource MetricDisplayConverter}" ConverterParameter="{}{0} fps">
+                                                                    <Binding Path="ItemInfo.Fps" />
+                                                                    <Binding Path="FpsDiff" />
+                                                                </MultiBinding>
+                                                            </TextBlock.Text>
+                                                            <TextBlock.Foreground>
+                                                                <MultiBinding Converter="{StaticResource MetricDiffForegroundConverter}">
+                                                                    <Binding Path="ItemInfo.IsBestFps" />
+                                                                    <Binding Path="FpsDiff" />
+                                                                </MultiBinding>
+                                                            </TextBlock.Foreground>
+                                                        </TextBlock>
+                                                    </DataTemplate>
+                                                </DataGridTemplateColumn.CellTemplate>
+                                            </DataGridTemplateColumn>
+                                            <DataGridTemplateColumn Width="Auto" IsVisible="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=ShowFormatColumn}">
+                                                <DataGridTemplateColumn.Header>
+                                                    <TextBlock
+                                                        Text="{Binding Source={x:Static local:App.Lang}, Path=[DuplicateList.Header.VideoKbps]}"
+                                                        ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[DuplicateList.Header.DiffTip]}" />
+                                                </DataGridTemplateColumn.Header>
+                                                <DataGridTemplateColumn.CellTemplate>
+                                                    <DataTemplate x:DataType="vm:DuplicateItemVM">
+                                                        <TextBlock Margin="10,0,2,0" VerticalAlignment="Center" Classes="metric-diff"
+                                                                   IsVisible="{Binding !ItemInfo.IsImage}"
+                                                                   ToolTip.Tip="{Binding ItemInfo.BitRateKbs, StringFormat='{}{0} kbps'}">
+                                                            <TextBlock.Text>
+                                                                <MultiBinding Converter="{StaticResource MetricDisplayConverter}" ConverterParameter="{}{0} kbps">
+                                                                    <Binding Path="ItemInfo.BitRateKbs" />
+                                                                    <Binding Path="BitRateDiff" />
+                                                                </MultiBinding>
+                                                            </TextBlock.Text>
+                                                            <TextBlock.Foreground>
+                                                                <MultiBinding Converter="{StaticResource MetricDiffForegroundConverter}">
+                                                                    <Binding Path="ItemInfo.IsBestBitRateKbs" />
+                                                                    <Binding Path="BitRateDiff" />
+                                                                </MultiBinding>
+                                                            </TextBlock.Foreground>
+                                                        </TextBlock>
+                                                    </DataTemplate>
+                                                </DataGridTemplateColumn.CellTemplate>
+                                            </DataGridTemplateColumn>
+                                            <DataGridTemplateColumn Width="Auto" IsVisible="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=ShowAudioColumn}">
+                                                <DataGridTemplateColumn.Header>
+                                                    <TextBlock
+                                                        Text="{Binding Source={x:Static local:App.Lang}, Path=[DuplicateList.Header.AudioKbps]}"
+                                                        ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[DuplicateList.Header.DiffTip]}" />
+                                                </DataGridTemplateColumn.Header>
+                                                <DataGridTemplateColumn.CellTemplate>
+                                                    <DataTemplate x:DataType="vm:DuplicateItemVM">
+                                                        <TextBlock Margin="10,0,2,0" VerticalAlignment="Center" Classes="metric-diff"
+                                                                   IsVisible="{Binding !ItemInfo.IsImage}"
+                                                                   ToolTip.Tip="{Binding ItemInfo.AudioBitRateKbs, StringFormat='{}{0} kbps'}">
+                                                            <TextBlock.Text>
+                                                                <MultiBinding Converter="{StaticResource MetricDisplayConverter}" ConverterParameter="{}{0} kbps">
+                                                                    <Binding Path="ItemInfo.AudioBitRateKbs" />
+                                                                    <Binding Path="AudioBitRateDiff" />
+                                                                </MultiBinding>
+                                                            </TextBlock.Text>
+                                                            <TextBlock.Foreground>
+                                                                <MultiBinding Converter="{StaticResource MetricDiffForegroundConverter}">
+                                                                    <Binding Path="ItemInfo.IsBestAudioBitRateKbs" />
+                                                                    <Binding Path="AudioBitRateDiff" />
+                                                                </MultiBinding>
+                                                            </TextBlock.Foreground>
+                                                        </TextBlock>
+                                                    </DataTemplate>
+                                                </DataGridTemplateColumn.CellTemplate>
+                                            </DataGridTemplateColumn>
+                                            <DataGridTemplateColumn Width="Auto" IsVisible="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=ShowFormatColumn}">
+                                                <DataGridTemplateColumn.Header>
+                                                    <TextBlock
+                                                        Text="{Binding Source={x:Static local:App.Lang}, Path=[DuplicateList.Header.FormatInfo]}"
+                                                        ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[DuplicateList.Header.FormatInfoTip]}" />
+                                                </DataGridTemplateColumn.Header>
+                                                <DataGridTemplateColumn.CellTemplate>
+                                                    <DataTemplate x:DataType="vm:DuplicateItemVM">
+                                                        <!-- codec/channel/sample-rate have no better/worse ranking: neutral color,
+                                                             identical specs fold to "=", a different spec shows in full -->
+                                                        <TextBlock Margin="10,0,2,0" VerticalAlignment="Center" Classes="metric-diff"
+                                                                   ToolTip.Tip="{Binding FormatInfo}">
+                                                            <TextBlock.Text>
+                                                                <MultiBinding Converter="{StaticResource MetricDisplayConverter}">
+                                                                    <Binding Path="FormatInfo" />
+                                                                    <Binding Path="FormatInfoDiff" />
+                                                                </MultiBinding>
+                                                            </TextBlock.Text>
+                                                        </TextBlock>
                                                     </DataTemplate>
                                                 </DataGridTemplateColumn.CellTemplate>
                                             </DataGridTemplateColumn>

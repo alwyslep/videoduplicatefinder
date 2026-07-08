@@ -1012,9 +1012,11 @@ namespace VDF.GUI.ViewModels {
 			long savings = 0;
 			foreach (var group in Duplicates.GroupBy(x => x.ItemInfo.GroupId)) {
 				groupCount++;
+				var members = group.ToList();
+				ComputeGroupDiffs(members);   // "=" / "±" cells follow every membership change
 				long groupTotal = 0;
 				long largest = 0;
-				foreach (var item in group) {
+				foreach (var item in members) {
 					long size = Math.Max(0, item.ItemInfo.SizeLong);
 					groupTotal += size;
 					if (size > largest) largest = size;

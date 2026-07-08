@@ -470,16 +470,6 @@ namespace VDF.GUI.Views {
 			};
 		}
 
-		void OnMetricPointerEntered(object? sender, PointerEventArgs e) {
-			if (sender is Control ctrl && ctrl.Tag is string metric && ctrl.DataContext is DuplicateItemVM item)
-				ApplicationHelpers.MainWindowDataContext.SetHoveredMetric(item, metric);
-		}
-
-		void OnMetricPointerExited(object? sender, PointerEventArgs e) {
-			if (sender is Control ctrl && ctrl.DataContext is DuplicateItemVM item)
-				ApplicationHelpers.MainWindowDataContext.ClearHoveredMetric(item);
-		}
-
 		void InitializeComponent() => AvaloniaXamlLoader.Load(this);
 	}
 }
