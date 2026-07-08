@@ -2108,8 +2108,7 @@ Non-Windows setup:
 									bool blackList = false,
 									bool createSymbolLinksInstead = false,
 									bool permanently = false,
-									bool createHardLinksInstead = false,
-									bool fromDb = false) {
+									bool createHardLinksInstead = false) {
 			if (Duplicates.Count == 0) return;
 			toDelete ??= CheckedItemsToDelete;
 			if (toDelete.Count == 0) return;
@@ -2123,8 +2122,6 @@ Non-Windows setup:
 					? App.Lang["Message.ReplaceWithLinksConfirm"]
 					: fromDisk
 					? (!permanently ? App.Lang["Message.DeleteToTrashConfirm"] : App.Lang["Message.DeletePermanentlyConfirm"])
-					: fromDb
-					? App.Lang["Message.DeleteFromDbConfirm"]
 					: (blackList ? App.Lang["Message.DeleteFromListBlacklistConfirm"] : App.Lang["Message.DeleteFromListConfirm"]);
 			confirmMessage += Environment.NewLine + Environment.NewLine +
 				string.Format(App.Lang["Message.DeleteConfirmStats"], toDelete.Count, totalSizeToDelete.BytesToString());
@@ -2255,14 +2252,14 @@ Non-Windows setup:
 
 							if (blackList)
 								ScanEngine.BlackListFileEntry(dub.ItemInfo.Path);
-							else if (fromDisk || createLinks || fromDb)
+							else if (fromDisk || createLinks)
 								// Every VDF-initiated duplicate deletion purges the DB entry (both visual and
 								// audio fingerprints) — even when the whole group goes. Tombstones ("already
 								// deleted" fingerprints) are reserved for files the user deletes OUTSIDE VDF
 								// during normal viewing; deletions judged inside VDF must never resurface in a
-								// later visual/audio compare pass. fromDb is the explicit "delete from DB"
-								// menu action (files untouched) — the resolution path for stale tombstones.
-								// TOMBSTONE-DESIGN.md.
+								// later visual/audio compare pass. A row whose file is ALREADY gone (stale
+								// tombstone) takes this same path with no disk action: delete = fingerprint
+								// purge only. TOMBSTONE-DESIGN.md.
 								ScanEngine.RemoveFromDatabase(fe);
 							// Plain list-removal ("keep files") is NOT a deletion: the file stays and so does
 							// its DB entry — purging it only forced a pointless re-analysis on the next scan.

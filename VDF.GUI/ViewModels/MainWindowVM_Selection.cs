@@ -312,14 +312,6 @@ namespace VDF.GUI.ViewModels {
 			});
 		});
 
-		// Explicit DB purge (files untouched): drops the checked items' visual+audio fingerprints.
-		// Main use: clearing a stale tombstone ("already deleted" row) that keeps matching live files.
-		public ReactiveCommand<Unit, Unit> DeleteCheckedItemsFromDbCommand => ReactiveCommand.Create(() => {
-			Dispatcher.UIThread.InvokeAsync(() => {
-				DeleteInternal(fromDisk: false, fromDb: true);
-			});
-		});
-
 		public ReactiveCommand<Unit, Unit> RemoveCheckedItemsFromListAndBlacklistCommand => ReactiveCommand.Create(() => {
 			Dispatcher.UIThread.InvokeAsync(() => {
 				DeleteInternal(fromDisk: false, blackList: true);

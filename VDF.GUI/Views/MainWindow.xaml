@@ -573,13 +573,9 @@
                                         </MenuItem>
                                         <MenuItem Header="-" />
 
-                                        <!-- No "remove from list" here: it decides nothing (rows return on the next
-                                             compare) — deferral is what the per-row ✕ and the row context menu are for. -->
-                                        <MenuItem Command="{Binding DeleteCheckedItemsFromDbCommand}">
-                                            <MenuItem.Header>
-                                                <TextBlock VerticalAlignment="Center" Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Selection.DeleteCheckedItemsFromDb]}" />
-                                            </MenuItem.Header>
-                                        </MenuItem>
+                                        <!-- No "remove from list" (decides nothing — rows return on the next compare;
+                                             deferral = per-row ✕ / row context menu) and no "DB only delete" (a checked
+                                             row whose file is already gone gets exactly that from the normal delete). -->
                                         <MenuItem Command="{Binding CopyCheckedItemsCommand}">
                                             <MenuItem.Header>
                                                 <TextBlock VerticalAlignment="Center" Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Selection.CopyCheckedItemsToFolder]}" />
