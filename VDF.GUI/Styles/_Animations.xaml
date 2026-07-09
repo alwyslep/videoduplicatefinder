@@ -14,6 +14,12 @@
         <Setter Property="Fill" Value="{DynamicResource RowHoverBackground}" />
     </Style>
 
+    <!-- Must follow :pointerover — last matching setter wins, and a selected row that is also
+         hovered should keep reading as selected. -->
+    <Style Selector="DataGridRow:selected /template/ Rectangle#BackgroundRectangle">
+        <Setter Property="Fill" Value="{DynamicResource RowSelectedBackground}" />
+    </Style>
+
 
     <!-- Metric hover diff: smooth color transition (matches web's transition: color 0.15s) -->
     <Style Selector="TextBlock.metric-diff">
