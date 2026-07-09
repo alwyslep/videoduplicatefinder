@@ -896,8 +896,12 @@ namespace VDF.GUI.ViewModels {
 
 				var blacklistedGids = ComputeBlacklistedGroupIds(
 					Scanner.Duplicates.Select(d => (d.GroupId, d.Path, ScanEngine.GetOsHash(d.Path))));
-				if (blacklistedGids.Count > 0)
+				if (blacklistedGids.Count > 0) {
 					Scanner.Duplicates.RemoveWhere(d => blacklistedGids.Contains(d.GroupId));
+					// Observed 2026-07-09: an audio compare formed 5 groups, ALL matched the
+					// blacklist, and the list stayed empty with no trace anywhere of why.
+					Logger.Instance.Info($"Blacklist: suppressed {blacklistedGids.Count} group(s) previously marked 'not a duplicate'.");
+				}
 
 				foreach (var item in Scanner.Duplicates)
 					Duplicates.Add(new DuplicateItemVM(item));
@@ -929,9 +933,12 @@ namespace VDF.GUI.ViewModels {
 				CollapseAllTombstoneGroups();
 
 				// An empty result list is indistinguishable from "scan never ran" (the watermark
-				// still says "start your first scan") — say explicitly that 0 groups were found.
+				// still says "start your first scan") — say explicitly that 0 groups were found,
+				// and when everything found was blacklist-suppressed, say THAT instead.
 				if (Duplicates.Count == 0)
-					_ = MessageBoxService.Show(App.Lang["Message.NoDuplicatesFound"]);
+					_ = MessageBoxService.Show(blacklistedGids.Count > 0
+						? string.Format(App.Lang["Message.NoDuplicatesFoundBlacklisted"], blacklistedGids.Count)
+						: App.Lang["Message.NoDuplicatesFound"]);
 
 				if (completedScheduledScan && SettingsFile.Instance.NotifyOnScheduledScanComplete) {
 					_ = MessageBoxService.Show(App.Lang["Message.ScheduledScanCompleted"]);
