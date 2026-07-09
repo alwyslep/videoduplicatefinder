@@ -813,11 +813,27 @@ namespace VDF.Core {
 
 			if (clearDuplicates)
 				Duplicates.Clear();
+			else
+				PruneStaleDuplicates();
 			SearchTimer.Reset();
 			if (!ElapsedTimer.IsRunning)
 				ElapsedTimer.Reset();
 
 			isScanning = true;
+		}
+
+		/// <summary>
+		/// PartialCompare appends to the previous run's groups instead of rebuilding them, so it is the one
+		/// path where a result row can outlive the DB entry it came from. Drop rows whose entry was purged
+		/// (a VDF-judged deletion) and then any group left with a single member — a group of one is not a
+		/// duplicate. Rows whose entry is still in the DB stay, tombstones included: those are the
+		/// "already deleted" fingerprints that catch a re-download. TOMBSTONE-DESIGN.md.
+		/// </summary>
+		internal void PruneStaleDuplicates() {
+			Duplicates.RemoveWhere(d => !DatabaseUtils.Database.Contains(new FileEntry { Path = d.Path }));
+			var singletonGroups = Duplicates.GroupBy(d => d.GroupId).Where(g => g.Count() < 2).Select(g => g.Key).ToHashSet();
+			if (singletonGroups.Count > 0)
+				Duplicates.RemoveWhere(d => singletonGroups.Contains(d.GroupId));
 		}
 
 		void CancelAllTasks() {
@@ -1112,7 +1128,15 @@ namespace VDF.Core {
 
 		public static Task<bool> LoadDatabase() => Task.Run(DatabaseUtils.LoadDatabase);
 		public static void SaveDatabase() => DatabaseUtils.SaveDatabase();
-		public static bool RemoveFromDatabase(FileEntry dbEntry) => DatabaseUtils.Database.Remove(dbEntry);
+		// Purging a DB entry must also retire it from the live result set, or the deletion only *looks*
+		// done: PartialCompare reuses Duplicates (RunCompare clearDuplicates:false) and ScanDone
+		// re-projects it wholesale, so the row returns as a ghost once its file is gone. Instance method
+		// on purpose — a static one is exactly how the two collections drifted apart. PruneStaleDuplicates
+		// is the backstop for entries purged some other way. TOMBSTONE-DESIGN.md.
+		public bool RemoveFromDatabase(FileEntry dbEntry) {
+			Duplicates.RemoveWhere(d => new FileEntry { Path = d.Path }.Equals(dbEntry));
+			return DatabaseUtils.Database.Remove(dbEntry);
+		}
 		// OsHash of a DB entry by path (null if absent or not yet hashed). Path-only probe so it never
 		// stats/throws on a tombstone. Used to key the "not a match" blacklist on content, so a mark
 		// survives a move/rename. See GroupBlacklistFilter.

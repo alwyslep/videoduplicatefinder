@@ -974,7 +974,7 @@ namespace VDF.GUI.ViewModels {
 				if (members.Count < 2 || !members.All(d => d.IsTombstone))
 					continue;   // any live/offline member -> keep the group as-is
 				foreach (var d in members.Skip(1))   // keep the first fingerprint, drop the rest
-					if (ScanEngine.RemoveFromDatabase(new FileEntry { Path = d.ItemInfo.Path }))
+					if (Scanner.RemoveFromDatabase(new FileEntry { Path = d.ItemInfo.Path }))
 						dbRemoved++;
 				rowsToDrop.AddRange(members);   // whole group leaves the list (nothing actionable left)
 			}
@@ -2260,7 +2260,7 @@ Non-Windows setup:
 								// later visual/audio compare pass. A row whose file is ALREADY gone (stale
 								// tombstone) takes this same path with no disk action: delete = fingerprint
 								// purge only. TOMBSTONE-DESIGN.md.
-								ScanEngine.RemoveFromDatabase(fe);
+								Scanner.RemoveFromDatabase(fe);
 							// Plain list-removal ("keep files") is NOT a deletion: the file stays and so does
 							// its DB entry — purging it only forced a pointless re-analysis on the next scan.
 

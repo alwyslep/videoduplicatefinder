@@ -26,6 +26,7 @@ namespace VDF.Core.Tests.Utils;
 /// itself before the dependency was removed), and the MemoryPack format must
 /// round-trip losslessly.
 /// </summary>
+[Collection("Database")]   // DatabaseUtils.Database is global state; don't race the other DB tests
 public class DatabaseFormatTests {
 	static string Asset(string name) =>
 		Path.Combine(AppContext.BaseDirectory, "TestAssets", name);

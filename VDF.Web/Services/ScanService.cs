@@ -254,9 +254,9 @@ namespace VDF.Web.Services {
 									File.Delete(item.Path);
 								result.FreedBytes += Math.Max(0, item.SizeLong);
 							}
-							_engine.Duplicates.Remove(item);
 							// Path-only entry — FileEntry(string) stats the file and throws once it's gone.
-							ScanEngine.RemoveFromDatabase(new FileEntry { Path = item.Path });
+							// Also retires the row from _engine.Duplicates.
+							_engine.RemoveFromDatabase(new FileEntry { Path = item.Path });
 							result.Done++;
 						}
 						catch (Exception ex) {
@@ -360,8 +360,7 @@ namespace VDF.Web.Services {
 									File.CreateSymbolicLink(item.Path, keeper.Path);
 								result.FreedBytes += size;
 							}
-							_engine.Duplicates.Remove(item);
-							ScanEngine.RemoveFromDatabase(new FileEntry { Path = item.Path });
+							_engine.RemoveFromDatabase(new FileEntry { Path = item.Path });
 							result.Done++;
 						}
 						catch (Exception ex) {

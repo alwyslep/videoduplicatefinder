@@ -22,6 +22,7 @@ namespace VDF.Core.Tests.Utils;
 // new DB and demotes the previous one to <db>.bak (a rename, not a copy). Guards against regressing to
 // a plain File.Move (which deletes the old DB and leaves .bak stale/orphaned) and against the .bak
 // silently going missing.
+[Collection("Database")]   // DatabaseUtils.Database is global state; don't race the other DB tests
 public class DatabaseBackupTests {
 	static string Asset(string name) =>
 		Path.Combine(AppContext.BaseDirectory, "TestAssets", name);

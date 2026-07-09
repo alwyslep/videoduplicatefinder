@@ -167,7 +167,7 @@ namespace VDF.GUI.ViewModels {
 			// DB entry (visual + audio fingerprints) unconditionally — whole-group Ctrl+DEL included —
 			// so they can never resurface in a later compare pass. Tombstones are reserved for files
 			// the user deletes OUTSIDE VDF during normal viewing. TOMBSTONE-DESIGN.md.
-			bool dbRemoved = ScanEngine.RemoveFromDatabase(new FileEntry { Path = path });
+			bool dbRemoved = Scanner.RemoveFromDatabase(new FileEntry { Path = path });
 
 			bool rowRemoved = false;
 			for (int i = Duplicates.Count - 1; i >= 0; i--)
