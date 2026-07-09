@@ -928,6 +928,11 @@ namespace VDF.GUI.ViewModels {
 				AutoCheckTombstoneMatches();
 				CollapseAllTombstoneGroups();
 
+				// An empty result list is indistinguishable from "scan never ran" (the watermark
+				// still says "start your first scan") — say explicitly that 0 groups were found.
+				if (Duplicates.Count == 0)
+					_ = MessageBoxService.Show(App.Lang["Message.NoDuplicatesFound"]);
+
 				if (completedScheduledScan && SettingsFile.Instance.NotifyOnScheduledScanComplete) {
 					_ = MessageBoxService.Show(App.Lang["Message.ScheduledScanCompleted"]);
 				}

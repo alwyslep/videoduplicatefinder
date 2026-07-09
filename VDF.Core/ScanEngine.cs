@@ -668,7 +668,18 @@ namespace VDF.Core {
 			else
 				BuildingHashesDone?.Invoke(this, new EventArgs());
 			isScanning = false;
+			ReleaseMemoryToOS();
 		}
+
+		/// <summary>
+		/// A run builds large transient structures (inverted audio index, vote tables, match bags,
+		/// database serialization buffers) that a normal GC frees but keeps COMMITTED, so the process
+		/// still shows multi-GB in Task Manager after the work is done. An aggressive collect hands
+		/// those pages back to the OS. The fingerprint database itself intentionally stays loaded —
+		/// it is the cache that makes rescans free.
+		/// </summary>
+		static void ReleaseMemoryToOS() =>
+			GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
 
 		async Task RunCompare(bool runPHashCompare, bool runPartialCompare, bool clearDuplicates) {
 			try {
@@ -700,6 +711,9 @@ namespace VDF.Core {
 				Logger.Instance.Info($"Comparison aborted: {e.Message}");
 				isScanning = false;
 				ScanAborted?.Invoke(this, new EventArgs());
+			}
+			finally {
+				ReleaseMemoryToOS();
 			}
 		}
 
