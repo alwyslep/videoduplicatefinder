@@ -3326,7 +3326,19 @@ namespace VDF.Core {
 					int maxDim = Settings.ThumbnailMaxWidth > 0 ? Settings.ThumbnailMaxWidth : 100;
 
 					if (!needsThumbnails) {
-						Interlocked.Increment(ref skippedMissing);
+						// Deleted-outside-VDF file: fall back to the frames captured at delete time
+						// (DeletedThumbs store) so the tombstone row still shows what was thrown away.
+						var captured = TombstoneCapture.MissingFileThumbnailProvider?.Invoke(entry.Path, GetOsHash(entry.Path));
+						if (captured is { Count: > 0 }) {
+							list = captured;
+							timeStamps = new List<TimeSpan>(captured.Count);
+							for (int j = 0; j < captured.Count; j++)
+								timeStamps.Add(TimeSpan.FromSeconds(entry.Duration.TotalSeconds * (j + 1) / (captured.Count + 1)));
+							entry.ThumbnailWidth = maxDim;
+							Interlocked.Increment(ref loaded);
+						}
+						else
+							Interlocked.Increment(ref skippedMissing);
 					}
 					else if (entry.IsImage) {
 						timeStamps = new(0);
@@ -3407,7 +3419,19 @@ namespace VDF.Core {
 					int maxDim = Settings.ThumbnailMaxWidth > 0 ? Settings.ThumbnailMaxWidth : 100;
 
 					if (!needsThumbnails) {
-						Interlocked.Increment(ref skippedMissing);
+						// Deleted-outside-VDF file: fall back to the frames captured at delete time
+						// (DeletedThumbs store) so the tombstone row still shows what was thrown away.
+						var captured = TombstoneCapture.MissingFileThumbnailProvider?.Invoke(entry.Path, GetOsHash(entry.Path));
+						if (captured is { Count: > 0 }) {
+							list = captured;
+							timeStamps = new List<TimeSpan>(captured.Count);
+							for (int j = 0; j < captured.Count; j++)
+								timeStamps.Add(TimeSpan.FromSeconds(entry.Duration.TotalSeconds * (j + 1) / (captured.Count + 1)));
+							entry.ThumbnailWidth = maxDim;
+							Interlocked.Increment(ref loaded);
+						}
+						else
+							Interlocked.Increment(ref skippedMissing);
 					}
 					else if (entry.IsImage) {
 						//For images it doesn't make sense to load the actual image more than once

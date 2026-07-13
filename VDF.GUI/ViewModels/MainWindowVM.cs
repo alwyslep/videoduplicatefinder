@@ -536,6 +536,9 @@ namespace VDF.GUI.ViewModels {
 			}
 			catch { Utils.ThumbCacheHelpers.Provider = null; }
 
+			// Tombstone rows (file gone) fall back to the frames captured at delete time.
+			TombstoneCapture.MissingFileThumbnailProvider = Utils.DeletedThumbsStore.LoadThumbs;
+
 			try {
 				File.Delete(Path.Combine(CoreUtils.CurrentFolder, "log.txt"));
 			}
@@ -1846,6 +1849,10 @@ Non-Windows setup:
 			IsPauseDraining = false;
 			ChangeIsBusyMessage();
 			IsBusy = true;
+
+			// Fingerprints captured at delete time outside VDF (mpv → DbProbe "capture") become
+			// tombstones before the scan, so a re-download of never-scanned content is caught too.
+			await Task.Run(Utils.DeletedThumbsStore.IngestPendingCaptures);
 
 			if (stageOnly is Core.ScanStage stage) {
 				stageOnlyRunInProgress = stage is Core.ScanStage.BuildFileList or Core.ScanStage.GatherInfos;
