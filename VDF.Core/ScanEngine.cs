@@ -2634,90 +2634,141 @@ namespace VDF.Core {
 		/// (it does not emit the pure-silence "matches" brute generates — the visual gate drops those).
 		/// Returns the number of candidate offsets verified (for the "checked N pairs" log).
 		/// </summary>
-		long BuildPartialClipMatchesIndexed(List<FileEntry> videos, float simThreshold,
+		internal long BuildPartialClipMatchesIndexed(List<FileEntry> videos, float simThreshold,
 			ConcurrentBag<(int sourceIdx, int clipIdx, float sim, int offsetSec)> matches) {
 			const int voteThreshold = 3;                       // ≥3 shared blocks at one offset = candidate
 			int nv = videos.Count;
 			int dfThreshold = Math.Max(50, nv / 50);           // stopword when a block appears in >2% of videos
 
 			// Document frequency (distinct videos per non-zero block), for the stopword filter.
-			var df = new Dictionary<uint, int>();
+			// The same dictionary is then reused as the block value -> dense id map, so only one
+			// 14M-entry hash table ever exists.
+			var blockId = new Dictionary<uint, int>();
 			for (int v = 0; v < nv; v++) {
 				var fp = videos[v].AudioFingerprint!;
 				var seen = new HashSet<uint>();
 				foreach (uint b in fp)
-					if (b != 0 && seen.Add(b)) { df.TryGetValue(b, out int d); df[b] = d + 1; }
+					if (b != 0 && seen.Add(b)) { blockId.TryGetValue(b, out int d); blockId[b] = d + 1; }
 			}
-			// Inverted index: block value -> (videoIdx, position). Skip silence and common blocks.
-			var index = new Dictionary<uint, List<(int v, int p)>>();
+
+			// Inverted index in CSR form: blockId maps a surviving block value to a dense id (-1 =
+			// stopword), and postings[starts[id] .. starts[id+1]) are its (video, position) pairs packed
+			// into one long. The old shape — Dictionary<uint, List<(int,int)>> — allocated a List *and* a
+			// backing array per distinct block value: 14.1M live objects on this library (~2.4 GB, most of
+			// it LOH), which is what kept the process committed at tens of GB. Three flat arrays hold the
+			// same postings in ~1 GB with no per-key objects.
+			uint[] values = new uint[blockId.Count];
+			blockId.Keys.CopyTo(values, 0);
+			int nb = 0;
+			foreach (uint b in values)
+				blockId[b] = blockId[b] <= dfThreshold ? nb++ : -1;
+
+			int[] starts = new int[nb + 1];
+			for (int v = 0; v < nv; v++)
+				foreach (uint b in videos[v].AudioFingerprint!)
+					if (b != 0 && blockId.TryGetValue(b, out int id) && id >= 0) starts[id + 1]++;
+			for (int i = 0; i < nb; i++) starts[i + 1] += starts[i];
+
+			long[] postings = new long[starts[nb]];
+			int[] cursor = new int[nb];
+			Array.Copy(starts, cursor, nb);
 			for (int v = 0; v < nv; v++) {
 				var fp = videos[v].AudioFingerprint!;
 				for (int p = 0; p < fp.Length; p++) {
 					uint b = fp[p];
 					if (b == 0) continue;
-					if (df.TryGetValue(b, out int d) && d > dfThreshold) continue;
-					if (!index.TryGetValue(b, out var lst)) index[b] = lst = new List<(int, int)>();
-					lst.Add((v, p));
+					if (!blockId.TryGetValue(b, out int id) || id < 0) continue;
+					postings[cursor[id]++] = ((long)v << 32) | (uint)p;
 				}
 			}
 
 			long verified = 0;
+			// Audio compare is memory-bound, not CPU-bound: every worker holds its own vote buffer on top
+			// of the shared index. MaxDegreeOfParallelism = -1 (all 24 cores here) multiplied that by 24
+			// and, stacked with the HLS proxy's RAM cache and JD2's JVM, exhausted the system commit
+			// charge on 2026-07-14 (JD2 died with a JVM OOM). ponytail: fixed ceiling of 8 workers — the
+			// index is still ~30x faster than brute, so the lost cores cost nothing worth measuring.
+			int degree = Math.Max(1, Math.Min(8, ParallelDegree < 0 ? Environment.ProcessorCount : ParallelDegree));
 			Parallel.For(0, nv, new ParallelOptions {
 				CancellationToken = cancelationTokenSource.Token,
-				MaxDegreeOfParallelism = ParallelDegree
-			}, j => {
+				MaxDegreeOfParallelism = degree
+			},
+			() => new List<long>(),                       // one vote buffer per worker, reused for every clip
+			(j, _, buf) => {
 				IncrementProgress(Path.GetFileName(videos[j].Path));
 				if (cancelationTokenSource.IsCancellationRequested)
-					return;
+					return buf;
 				FileEntry clip = videos[j];
 				double clipSec = (clip.mediaInfo?.Duration ?? TimeSpan.Zero).TotalSeconds;
 				if (clipSec < 1.0)
-					return;
+					return buf;
 				uint[] fpClip = clip.AudioFingerprint!;
 
 				// Vote: a shared block at clip pos p and source pos sp implies alignment offset sp-p.
-				var votes = new Dictionary<long, int>();
+				// Keys go into a plain long buffer (8 bytes each) that is sorted afterwards, instead of a
+				// Dictionary<long,int> (~30 bytes/entry, up to 13.4M entries on the longest clip here,
+				// freshly allocated 23k times). The buffer is reused across the worker's clips, so the
+				// stage allocates nothing per clip.
+				buf.Clear();
 				for (int p = 0; p < fpClip.Length; p++) {
 					uint b = fpClip[p];
 					if (b == 0) continue;
-					if (!index.TryGetValue(b, out var postings)) continue;
-					foreach (var (v, sp) in postings) {
+					if (!blockId.TryGetValue(b, out int id) || id < 0) continue;
+					for (int k = starts[id]; k < starts[id + 1]; k++) {
+						long post = postings[k];
+						int v = (int)(post >> 32);
 						if (v == j) continue;
 						FileEntry src = videos[v];
 						double sourceSec = (src.mediaInfo?.Duration ?? TimeSpan.Zero).TotalSeconds;
 						if (sourceSec <= clipSec) continue;                          // source must be longer
 						double r = clipSec / sourceSec;
 						if (r < Settings.PartialClipMinRatio || r >= 0.95) continue; // same gates as brute
-						if (fpClip.Length >= src.AudioFingerprint!.Length) continue;
-						int off = sp - p;
-						if (off < 0 || off > src.AudioFingerprint!.Length - fpClip.Length) continue;
-						long key = ((long)v << 24) | (uint)off;
-						votes.TryGetValue(key, out int c); votes[key] = c + 1;
+						uint[] fpSource = src.AudioFingerprint!;
+						if (fpClip.Length >= fpSource.Length) continue;
+						int off = (int)post - p;                                     // sp - p
+						if (off < 0 || off > fpSource.Length - fpClip.Length) continue;
+						buf.Add(((long)v << 24) | (uint)off);
 					}
 				}
+				if (buf.Count == 0)
+					return buf;
 
-				// Verify strong peaks with the exact Hamming compare (± a couple blocks for jitter).
-				var matchedSources = new HashSet<int>();
+				// Sorted keys group by source (high bits) then offset, so a run of identical keys *is*
+				// that (source, offset)'s vote count — the same candidate set the vote dictionary held.
+				Span<long> span = CollectionsMarshal.AsSpan(buf);
+				span.Sort();
+
 				long localVerified = 0;
-				foreach (var kv in votes) {
-					if (kv.Value < voteThreshold) continue;
-					int v = (int)(kv.Key >> 24);
-					if (matchedSources.Contains(v)) continue;
+				int i = 0;
+				while (i < span.Length) {
+					int v = (int)(span[i] >> 24);
 					uint[] fpSource = videos[v].AudioFingerprint!;
-					int off0 = (int)(kv.Key & 0xFFFFFF);
-					int lo = Math.Max(0, off0 - 2), hi = Math.Min(fpSource.Length - fpClip.Length, off0 + 2);
-					float best = 0f; int bestOff = off0;
-					for (int o = lo; o <= hi; o++) {
-						localVerified++;
-						int bits = HammingDistance(fpClip, fpSource, o, fpClip.Length, int.MaxValue);
-						float s = 1f - (float)bits / (fpClip.Length * 32);
-						if (s > best) { best = s; bestOff = o; }
+					float best = 0f; int bestOff = -1;
+					// Verify every strong peak of this source and keep the best. (The dictionary version
+					// took whichever peak it happened to enumerate first, so a false peak could win over
+					// the true alignment and then get dropped by the visual gate.)
+					while (i < span.Length && (int)(span[i] >> 24) == v) {
+						long key = span[i];
+						int c = 1;
+						while (i + c < span.Length && span[i + c] == key) c++;
+						i += c;
+						if (c < voteThreshold) continue;
+						int off0 = (int)(key & 0xFFFFFF);
+						int lo = Math.Max(0, off0 - 2), hi = Math.Min(fpSource.Length - fpClip.Length, off0 + 2);
+						for (int o = lo; o <= hi; o++) {                              // ± a couple blocks for jitter
+							localVerified++;
+							int bits = HammingDistance(fpClip, fpSource, o, fpClip.Length, int.MaxValue);
+							float s = 1f - (float)bits / (fpClip.Length * 32);
+							if (s > best) { best = s; bestOff = o; }
+						}
 					}
-					if (best >= simThreshold && matchedSources.Add(v))
+					if (bestOff >= 0 && best >= simThreshold)
 						matches.Add((v, j, best, bestOff));       // source=v (longer), clip=j
 				}
 				Interlocked.Add(ref verified, localVerified);
-			});
+				return buf;
+			},
+			_ => { });
 			return verified;
 		}
 
