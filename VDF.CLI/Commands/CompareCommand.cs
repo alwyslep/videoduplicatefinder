@@ -29,12 +29,21 @@ namespace VDF.CLI.Commands {
 			cmd.Options.Add(SharedOptions.IncludeImages);
 			cmd.Options.Add(SharedOptions.Database);
 			cmd.Options.Add(SharedOptions.IncludeNonExistingFiles);
+			// Partial-clip detection is a compare-phase stage, so its knobs belong on 'compare' too —
+			// they were only reachable from 'scan-and-compare' before.
+			cmd.Options.Add(SharedOptions.EnablePartialClipDetection);
+			cmd.Options.Add(SharedOptions.PartialClipMinRatio);
+			cmd.Options.Add(SharedOptions.PartialClipSimilarityThreshold);
+			cmd.Options.Add(SharedOptions.PartialClipRequireVisualMatch);
+			cmd.Options.Add(SharedOptions.PartialClipVisualThreshold);
 			cmd.Options.Add(SharedOptions.SettingsFile);
 			cmd.Options.Add(SharedOptions.Format);
 			cmd.Options.Add(SharedOptions.Output);
 
 			cmd.SetAction(async (parseResult, ct) => {
 				var engine = new ScanEngine();
+				// --settings was registered but never read here, so the file was silently ignored.
+				engine.Settings = ScanRunner.LoadOrCreateSettings(parseResult.GetValue(SharedOptions.SettingsFile));
 				SharedOptions.ApplyToSettings(engine.Settings, parseResult);
 				// 'compare' has no --include option; without this, the empty include list
 				// would make the inclusion filter skip every database entry (0 results, #790).

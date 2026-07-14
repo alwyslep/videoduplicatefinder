@@ -128,43 +128,41 @@ namespace VDF.CLI.Commands {
 			Description = "Write results to a file instead of stdout."
 		};
 
+		/// <summary>
+		/// Applies one option — but only if the invoked command actually registered it. GetValue on an
+		/// option a command never added returns default(T), which silently clobbered the settings the
+		/// caller loaded from --settings: 'compare' forced EnablePartialClipDetection to false, so its
+		/// audio partial-clip stage could never run at all. #804 patched the same trap for --parallelism
+		/// with a sentinel remap; this guards every option instead of one at a time.
+		/// </summary>
+		static void Apply<T>(ParseResult r, Option<T> opt, Action<T> set) {
+			if (r.GetResult(opt) is not null)
+				set(r.GetValue(opt)!);
+		}
+
 		internal static void ApplyToSettings(Settings s, ParseResult r) {
-			var includes = r.GetValue(Include);
-			if (includes != null)
-				foreach (var p in includes) s.IncludeList.Add(p);
+			Apply(r, Include, v => { foreach (var p in v) s.IncludeList.Add(p); });
+			Apply(r, Exclude, v => { foreach (var p in v) s.BlackList.Add(p); });
 
-			var excludes = r.GetValue(Exclude);
-			if (excludes != null)
-				foreach (var p in excludes) s.BlackList.Add(p);
-
-			s.Threshhold = r.GetValue(Threshold);
-			s.Percent = r.GetValue(Percent);
-			s.PHashGrayVerifyPercent = r.GetValue(PHashGrayVerify);
-			// Commands that don't register --parallelism (e.g. 'compare') get default(int) == 0
-			// back from GetValue, and 0 is the one value ParallelOptions rejects (#804). Remap
-			// only that sentinel to the documented default of 1; -1 (unbounded) and any positive
-			// value the user actually passed are left untouched.
-			int parallelism = r.GetValue(Parallelism);
-			s.MaxDegreeOfParallelism = parallelism == 0 ? 1 : parallelism;
-			s.IncludeSubDirectories = !r.GetValue(NoSubdirs);
-			s.IncludeImages = r.GetValue(IncludeImages);
-			s.UsePHashing = r.GetValue(UsePhash);
-			s.UseNativeFfmpegBinding = r.GetValue(NativeFfmpeg);
-			s.HardwareAccelerationMode = r.GetValue(HardwareAccel);
-
-			var db = r.GetValue(Database);
-			if (db != null) s.CustomDatabaseFolder = db;
-
-			var ffArgs = r.GetValue(CustomFfArgs);
-			if (ffArgs != null) s.CustomFFArguments = ffArgs;
-
-			s.DatabaseCheckpointIntervalMinutes = r.GetValue(CheckpointInterval);
-			s.IncludeNonExistingFiles = r.GetValue(IncludeNonExistingFiles);
-			s.EnablePartialClipDetection = r.GetValue(EnablePartialClipDetection);
-			s.PartialClipMinRatio = r.GetValue(PartialClipMinRatio);
-			s.PartialClipSimilarityThreshold = r.GetValue(PartialClipSimilarityThreshold);
-			s.PartialClipRequireVisualMatch = r.GetValue(PartialClipRequireVisualMatch);
-			s.PartialClipVisualThreshold = r.GetValue(PartialClipVisualThreshold);
+			Apply(r, Threshold, v => s.Threshhold = v);
+			Apply(r, Percent, v => s.Percent = v);
+			Apply(r, PHashGrayVerify, v => s.PHashGrayVerifyPercent = v);
+			// 0 is the one value ParallelOptions rejects; keep the documented default of 1 (#804).
+			Apply(r, Parallelism, v => s.MaxDegreeOfParallelism = v == 0 ? 1 : v);
+			Apply(r, NoSubdirs, v => s.IncludeSubDirectories = !v);
+			Apply(r, IncludeImages, v => s.IncludeImages = v);
+			Apply(r, UsePhash, v => s.UsePHashing = v);
+			Apply(r, NativeFfmpeg, v => s.UseNativeFfmpegBinding = v);
+			Apply(r, HardwareAccel, v => s.HardwareAccelerationMode = v);
+			Apply(r, Database, v => { if (v != null) s.CustomDatabaseFolder = v; });
+			Apply(r, CustomFfArgs, v => { if (v != null) s.CustomFFArguments = v; });
+			Apply(r, CheckpointInterval, v => s.DatabaseCheckpointIntervalMinutes = v);
+			Apply(r, IncludeNonExistingFiles, v => s.IncludeNonExistingFiles = v);
+			Apply(r, EnablePartialClipDetection, v => s.EnablePartialClipDetection = v);
+			Apply(r, PartialClipMinRatio, v => s.PartialClipMinRatio = v);
+			Apply(r, PartialClipSimilarityThreshold, v => s.PartialClipSimilarityThreshold = v);
+			Apply(r, PartialClipRequireVisualMatch, v => s.PartialClipRequireVisualMatch = v);
+			Apply(r, PartialClipVisualThreshold, v => s.PartialClipVisualThreshold = v);
 		}
 
 		internal static void AddScanOptions(Command cmd) {

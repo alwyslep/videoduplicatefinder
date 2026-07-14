@@ -25,6 +25,8 @@ namespace VDF.CLI.Commands {
 
 			cmd.SetAction(async (parseResult, ct) => {
 				var engine = new ScanEngine();
+				// --settings was registered but never read here, so the file was silently ignored.
+				engine.Settings = ScanRunner.LoadOrCreateSettings(parseResult.GetValue(SharedOptions.SettingsFile));
 				SharedOptions.ApplyToSettings(engine.Settings, parseResult);
 
 				if (engine.Settings.IncludeList.Count == 0) {
