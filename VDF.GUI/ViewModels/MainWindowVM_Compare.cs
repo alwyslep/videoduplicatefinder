@@ -35,7 +35,7 @@ namespace VDF.GUI.ViewModels {
 	// 삭제 동기화: GridPlayer 가 삭제/병합 경로를 <manifest>.deleted 사이드카에 append → 아래 감시기가 행 즉시 제거.
 	public partial class MainWindowVM {
 		// ponytail: 이 머신 전용 통합이라 GridPlayer venv 경로 하드코딩. 옮기면 이 한 줄만 수정.
-		const string GridPlayerPythonW = @"C:\Users\geech\dev\gridplayer\.venv\Scripts\pythonw.exe";
+		const string GridPlayerPythonW = @"C:\Users\geech\dev2\jav\mpv\mpv-GridPlayer\.venv\Scripts\pythonw.exe";
 
 		// 외부(GridPlayer) 삭제 → 목록 실시간 반영용 사이드카 감시 상태. 앱 1개 감시기 재사용.
 		FileSystemWatcher? _compareWatcher;
