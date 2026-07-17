@@ -383,7 +383,7 @@
 	"MainWindow.Tab.Settings": "설정",
 	"MainWindow.Tooltip.CleanDatabase": "파일이 더 이상 존재하지 않거나 ffmpeg/ffprobe에서 실패한 항목을 제거합니다",
 	"MainWindow.Tooltip.CompareInPlayer": "보이는 중복 그룹을 GridPlayer로 나란히 재생하며 순회 비교 (PgUp/PgDn 이동, Del 휴지통).",
-	"MainWindow.Tooltip.CompareInMpvGrid": "보이는 중복 그룹을 mpvGrid(네이티브)로 나란히 재생하며 순회 비교 (PgDn 다음 그룹 / PgUp 이전 그룹, Del 휴지통).\nGridPlayer 판과 병행 운영 중 — 검증되면 이쪽으로 일원화됩니다.",
+	"MainWindow.Tooltip.CompareInMpvGrid": "보이는 중복 그룹을 mpvGrid(네이티브)로 나란히 재생하며 순회 비교 (PgDn 다음 그룹 / PgUp 이전 그룹, Del 휴지통).\n기본 순회비교(네이티브). GridPlayer 판은 아래에 보조로 유지.",
 	"MainWindow.Tooltip.Rescan": "파일 열거와 정보 수집 없이 스캔을 다시 실행합니다.\n일부 설정 변경은 전체 스캔 때만 적용됩니다.",
 	"MainWindow.Tooltip.StageCompare": "3/4단계: 캐시된 시각 지문끼리 비교해 중복 그룹을 만듭니다.\n오디오 지문 비교는 건너뜁니다.",
 	"MainWindow.Tooltip.StageFileList": "1/4단계: 검색 폴더의 파일을 나열해 데이터베이스에 반영합니다.\n해싱·비교는 하지 않습니다.",
