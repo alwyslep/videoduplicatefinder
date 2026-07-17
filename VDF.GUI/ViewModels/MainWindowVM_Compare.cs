@@ -21,7 +21,6 @@ using System.IO;
 using System.Linq;
 using System.Reactive;
 using System.Text;
-using System.Text.Json.Nodes;
 using Avalonia.Threading;
 using ReactiveUI;
 using VDF.Core;
@@ -29,15 +28,12 @@ using VDF.Core.Utils;
 using VDF.GUI.Views;
 
 namespace VDF.GUI.ViewModels {
-	// "순회 비교": 현재 보이는(필터/정렬 적용) 중복 그룹을 매니페스트로 써서 GridPlayer(mpv 포크)에 넘긴다.
-	// 실시간 나란한 재생·PgUp/PgDn 순회·DEL 삭제는 GridPlayer ComparisonManager 가 처리 → VDF 쪽엔 런처만.
-	// 계약: pythonw -m gridplayer --new-window <파일>.gpcompare.json  /  매니페스트 {"groups":[[path,...],...]}
-	// 삭제 동기화: GridPlayer 가 삭제/병합 경로를 <manifest>.deleted 사이드카에 append → 아래 감시기가 행 즉시 제거.
+	// "순회 비교": 현재 보이는(필터/정렬 적용) 중복 그룹을 매니페스트로 써서 mpvGrid(네이티브 C 멀티셀 플레이어)에 넘긴다.
+	// 실시간 나란한 재생·PgUp/PgDn 순회·DEL 삭제는 mpvGrid 가 처리 → VDF 쪽엔 런처만.
+	// 계약: mpvgrid.exe <파일>.groups  /  매니페스트 = 줄단위 그룹(그룹 사이 빈 줄).
+	// 삭제 동기화: mpvGrid 의 file_delete.lua 가 삭제/병합 경로를 <manifest>.deleted 사이드카에 append → 아래 감시기가 행 즉시 제거.
+	// ★GridPlayer(파이썬) 순회비교는 mpvGrid 검증 완료 후 제거(2026-07-18) — VDF 순회비교는 mpvGrid 단일.
 	public partial class MainWindowVM {
-		// ponytail: 이 머신 전용 통합이라 GridPlayer venv 경로 하드코딩. 옮기면 이 한 줄만 수정.
-		const string GridPlayerPythonW = @"C:\Users\geech\dev2\jav\mpv\mpv-GridPlayer\.venv\Scripts\pythonw.exe";
-		// mpvGrid(네이티브 C 판) — GridPlayer 를 대체할 후보. 검증 기간 동안 둘 다 유지(하이브리드)하고
-		// 사용자가 메뉴에서 골라 쓴다. 충분히 검증되면 GridPlayer 순회비교를 걷어낸다.
 		const string MpvGridExe = @"C:\Users\geech\dev2\jav\mpv\mpvGrid\mpvgrid.exe";
 
 		// 외부(GridPlayer) 삭제 → 목록 실시간 반영용 사이드카 감시 상태. 앱 1개 감시기 재사용.
@@ -45,7 +41,7 @@ namespace VDF.GUI.ViewModels {
 		long _compareSidecarOffset;
 		readonly object _compareSidecarLock = new();
 
-		// 보이는(필터/정렬 반영) 중복 그룹을 비교 후보로 수집. GridPlayer/mpvGrid 두 런처 공용.
+		// 보이는(필터/정렬 반영) 중복 그룹을 비교 후보로 수집(mpvGrid 런처용).
 		List<List<string>> CollectCompareGroups() {
 			// 보이는 목록(필터/정렬 반영) = DataGridCollectionView 열거; 미초기화면 IsVisibleInFilter 폴백.
 			IEnumerable<DuplicateItemVM> visible = view is not null
@@ -71,9 +67,7 @@ namespace VDF.GUI.ViewModels {
 				.ToList();
 		}
 
-		// mpvGrid(네이티브 C) 판 순회 비교. GridPlayer 판과 **사이드카 계약이 동일**해
-		// 삭제 동기화(감시기·드레인·ApplyExternalRemoval)는 한 줄도 안 바뀐다.
-		// 다른 건 매니페스트뿐: JSON 대신 줄단위 .groups(그룹 사이 빈 줄).
+		// mpvGrid(네이티브 C) 순회 비교. 매니페스트 = 줄단위 .groups(그룹 사이 빈 줄):
 		//   ① C 에 JSON 파서를 넣으면 Windows 경로의 \\ 언이스케이프가 필수라 테스트가 필요한 로직이 된다.
 		//   ② 경로를 argv 가 아니라 "파일"로 넘겨야 일본어 경로가 산다(mpvGrid argv=ANSI 코드페이지).
 		//   ③ 확장자가 .txt 로 끝나면 안 됨 — mpvGrid 가 평면 목록으로 먼저 잡는다.
@@ -101,44 +95,6 @@ namespace VDF.GUI.ViewModels {
 			}
 			catch (Exception ex) {
 				Logger.Instance.Info($"Compare-in-mpvGrid launch failed: {ex.Message}");
-			}
-		});
-
-		public ReactiveCommand<Unit, Unit> CompareInPlayerCommand => ReactiveCommand.CreateFromTask(async () => {
-			List<List<string>> groups = CollectCompareGroups();
-			// 그룹을 통째로 보낸다(청킹 안 함). 큰 그룹의 동시 mpv 폭주는 GridPlayer 가 슬라이딩
-			// 윈도우(WINDOW_CAP=12, compare_window.py)로 막고, 삭제 시 생존자를 유지한 채 다음 항목을
-			// 채워 한 세션에서 수렴시킨다. VDF 는 후보만 넘기면 됨.
-
-			if (groups.Count == 0) {
-				await MessageBoxService.Show(App.Lang["Message.CompareNothingToCompare"]);
-				return;
-			}
-			if (!File.Exists(GridPlayerPythonW)) {
-				await MessageBoxService.Show(string.Format(App.Lang["Message.CompareGridPlayerMissing"], GridPlayerPythonW));
-				return;
-			}
-
-			JsonArray groupsArr = new();
-			foreach (List<string> g in groups) {
-				JsonArray inner = new();
-				foreach (string p in g)
-					inner.Add(p);
-				groupsArr.Add(inner);
-			}
-			string manifest = Path.Combine(Path.GetTempPath(), "vdf_compare.gpcompare.json");
-			try {
-				// utf-8(BOM 무); GridPlayer 는 utf-8-sig 로 읽어 BOM 유무 모두 허용.
-				File.WriteAllText(manifest, new JsonObject { ["groups"] = groupsArr }.ToJsonString(), new UTF8Encoding(false));
-				StartCompareSync(manifest + ".deleted");   // GridPlayer 삭제 → 목록 실시간 반영
-				Process.Start(new ProcessStartInfo {
-					FileName = GridPlayerPythonW,
-					UseShellExecute = false,
-					ArgumentList = { "-m", "gridplayer", "--new-window", manifest },
-				});
-			}
-			catch (Exception ex) {
-				Logger.Instance.Info($"Compare-in-player launch failed: {ex.Message}");
 			}
 		});
 
