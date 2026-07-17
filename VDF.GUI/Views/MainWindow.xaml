@@ -525,6 +525,26 @@
                                                     <TextBlock VerticalAlignment="Center" Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Selection.CustomSelection]}" />
                                                 </MenuItem.Header>
                                             </MenuItem>
+                                            <Separator />
+                                            <!--  Saved Expression Builder presets, applied directly without opening the builder.
+                                                  ItemsSource replaces static children, so presets need their own submenu.
+                                                  Inside ItemContainerTheme the DataContext is an ExpressionPreset, hence the
+                                                  explicit x:DataType (compiled bindings) and the $parent cast for the VM command.  -->
+                                            <MenuItem ItemsSource="{Binding ExpressionPresets}">
+                                                <MenuItem.Header>
+                                                    <TextBlock VerticalAlignment="Center" Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Selection.ExpressionPresets]}" />
+                                                </MenuItem.Header>
+                                                <MenuItem.ItemContainerTheme>
+                                                    <ControlTheme
+                                                        x:DataType="Settings:ExpressionPreset"
+                                                        BasedOn="{StaticResource {x:Type MenuItem}}"
+                                                        TargetType="MenuItem">
+                                                        <Setter Property="Header" Value="{Binding Name}" />
+                                                        <Setter Property="Command" Value="{Binding $parent[Menu].((vm:MainWindowVM)DataContext).ApplyExpressionPresetCommand}" />
+                                                        <Setter Property="CommandParameter" Value="{Binding}" />
+                                                    </ControlTheme>
+                                                </MenuItem.ItemContainerTheme>
+                                            </MenuItem>
                                         </MenuItem>
                                         <MenuItem Command="{Binding ClearCheckedItemsCommand}">
                                             <MenuItem.Header>

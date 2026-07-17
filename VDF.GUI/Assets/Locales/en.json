@@ -233,6 +233,7 @@
 	"MainWindow.Selection.DeleteCheckedItemsPermanently": "Delete Permanently (incl. DB)",
 	"MainWindow.Selection.DeleteCheckedItems": "Delete Checked Items",
 	"MainWindow.Selection.ExpressionBuilder": "Expression Builder",
+	"MainWindow.Selection.ExpressionPresets": "Expression Presets",
 	"MainWindow.Selection.MoveCheckedItemsToFolder": "Move to Folder (DB Path Auto-Updated)",
 	"MainWindow.Selection.RemoveCheckedItemsFromList": "Remove from List (Keep Files and DB)",
 	"MainWindow.Selection.CheckCustom": "Check Custom",

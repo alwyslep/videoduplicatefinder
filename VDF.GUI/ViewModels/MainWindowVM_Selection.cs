@@ -14,6 +14,7 @@
 // */
 //
 
+using System.Collections.ObjectModel;
 using System.Linq;
 using System.Reactive;
 using System.Text.Json;
@@ -57,8 +58,23 @@ namespace VDF.GUI.ViewModels {
 			if (!res) return;
 
 			var expression = ((ExpressionBuilderVM)dlg.DataContext).ExpressionText;
+			// LastCustomSelectExpression / history are dialog-only: they remember what the user
+			// last *typed*. Running a saved preset from the menu must not touch either, or the
+			// history fills up with preset re-runs.
 			SettingsFile.Instance.LastCustomSelectExpression = expression;
 			UpdateExpressionHistory(expression);
+
+			await RunExpressionSelection(expression);
+		});
+
+		// Apply a DynamicExpresso expression as a check-selection. Shared by the Expression Builder
+		// dialog and by the saved-preset menu items, so both behave identically.
+		// The expression arrives as a parameter — it must NOT be read from
+		// SettingsFile.LastCustomSelectExpression, or running preset A would evaluate whatever
+		// expression was last typed into the dialog instead.
+		internal async Task RunExpressionSelection(string expression) {
+			if (string.IsNullOrWhiteSpace(expression))
+				return;
 
 			HashSet<Guid> blackListGroupID = new();
 			bool skipIfAllMatches = false;
@@ -77,7 +93,7 @@ namespace VDF.GUI.ViewModels {
 					.Reference(typeof(TimeSpan))
 					.Reference(typeof(Math))
 					.Reference(typeof(Regex))
-					.ParseAsDelegate<Func<DuplicateItem, bool>>(SettingsFile.Instance.LastCustomSelectExpression, shortIdentifier);
+					.ParseAsDelegate<Func<DuplicateItem, bool>>(expression, shortIdentifier);
 			}
 			catch (Exception ex) {
 				await MessageBoxService.Show($"Expression error: {ex.Message}");
@@ -120,7 +136,20 @@ namespace VDF.GUI.ViewModels {
 				foreach (var dup in result.Matches)
 					dup.Checked = true;
 			}
-		});
+		}
+
+		// Saved expression presets, surfaced directly in the Selection menu so a preset can be
+		// applied without opening the Expression Builder. Same collection the builder edits.
+		public ObservableCollection<ExpressionPreset> ExpressionPresets => SettingsFile.Instance.ExpressionPresets;
+
+		// Menu binds this with the preset as CommandParameter. Takes the preset (not just its name)
+		// because names are not unique-enforced anywhere.
+		public ReactiveCommand<ExpressionPreset, Unit> ApplyExpressionPresetCommand =>
+			ReactiveCommand.CreateFromTask<ExpressionPreset>(async preset => {
+				if (preset is null)
+					return;
+				await RunExpressionSelection(preset.Expression);
+			});
 
 		public ReactiveCommand<Unit, Unit> CheckWhenIdenticalCommand => ReactiveCommand.Create(() => {
 			using var undoBatch = BeginSelectionUndoBatch();
