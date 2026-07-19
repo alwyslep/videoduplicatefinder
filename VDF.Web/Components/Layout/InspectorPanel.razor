@@ -1,0 +1,115 @@
+@* 우측 인스펙터 — 우선순위: 스캔 중=진행 / 선택 항목 있음=상세 / 그 외=요약. *@
+@inject ScanService Scan
+@inject InspectorState Inspector
+@implements IDisposable
+
+<div class="rail-scroll">
+    @if (Scan.State == ScanState.Error) {
+        <div class="error-box">
+            <strong>오류</strong>
+            <p>@Scan.ErrorMessage</p>
+            <button @onclick="Scan.Reset">닫기</button>
+        </div>
+    }
+    else if (Scan.State == ScanState.Scanning || Scan.State == ScanState.Comparing) {
+        <div class="insp-group">
+            <h2>진행</h2>
+            @if (Scan.State == ScanState.Scanning) {
+                <p class="state-label">지문 수집 중...</p>
+                @if (Scan.LastProgress is { } p && p.Max > 0) {
+                    int pct = (int)(100L * p.Current / p.Max);
+                    <div class="progress-bar-track"><div class="progress-bar-fill" style="width:@pct%"></div></div>
+                    <p class="mono-dim">@p.Current / @p.Max &nbsp;|&nbsp; ETA @FormatEta(p.Remaining)</p>
+                    <p class="file-path">@TruncatePath(p.CurrentFile, 46)</p>
+                    @if (!string.IsNullOrEmpty(p.CurrentStage)) {
+                        <p class="stage-label">@p.CurrentStage@(p.StageMax > 0 ? $" ({p.StageCurrent}/{p.StageMax})" : "")</p>
+                    }
+                }
+            }
+            else {
+                <p class="state-label"><span class="spinner"></span> 비교 중...</p>
+                <p class="comparing-note">@(Scan.FilesHashed > 0 ? $"{Scan.FilesHashed:N0} 지문 대조" : "라이브러리 크기에 따라 시간이 걸립니다.")</p>
+            }
+        </div>
+    }
+    else if (Inspector.Focused is { } item) {
+        <div class="insp-head">
+            <h2>선택 항목</h2>
+            <button class="insp-clear" @onclick="Inspector.Clear" title="선택 해제">&#x2715;</button>
+        </div>
+        <div class="insp-thumb">
+            <img src="/thumbnail/hq?path=@Uri.EscapeDataString(item.Path)&amp;w=360&amp;q=80" alt="thumbnail"
+                 onerror="this.style.display='none'" />
+        </div>
+        <div class="insp-fn" title="@item.Path">@System.IO.Path.GetFileName(item.Path)</div>
+        <div class="insp-dir" title="@item.Path">@System.IO.Path.GetDirectoryName(item.Path)</div>
+
+        <div class="insp-kv"><span class="k">유사도</span><span class="v">@item.Similarity.ToString("F1")%</span></div>
+        <div class="insp-kv"><span class="k">해상도</span><span class="v @(item.IsBestFrameSize ? "keep" : "")">@(item.FrameSize ?? "?")</span></div>
+        @if (!item.IsImage) {
+            <div class="insp-kv"><span class="k">길이</span><span class="v @(item.IsBestDuration ? "keep" : "")">@item.Duration.ToString(@"hh\:mm\:ss")</span></div>
+            <div class="insp-kv"><span class="k">비트레이트</span><span class="v @(item.IsBestBitRateKbs ? "keep" : "")">@item.BitRateKbs kbps</span></div>
+            <div class="insp-kv"><span class="k">fps</span><span class="v @(item.IsBestFps ? "keep" : "")">@item.Fps.ToString("F2")</span></div>
+        }
+        <div class="insp-kv"><span class="k">크기</span><span class="v @(item.IsBestSize ? "keep" : "")">@FormatSize(item.SizeLong)</span></div>
+        <div class="insp-kv"><span class="k">포맷</span><span class="v">@(item.Format ?? "?")</span></div>
+
+        @if (item.Flags.HasFlag(VDF.Core.DuplicateFlags.PartialClip)) {
+            <div class="insp-flag partial">부분 클립 @item.PartialClipOffsetDisplay</div>
+        }
+        <p class="dim-note" style="margin-top:0.75rem">그룹 비교(A/B 풀사이즈)는 중앙 그룹 헤더의 <b>Compare</b>. 순회비교(mpvGrid)는 데스크탑 전용.</p>
+    }
+    else {
+        <div class="insp-group">
+            <h2>요약</h2>
+            @if (Scan.Duplicates.Any()) {
+                var groups = Scan.Duplicates.GroupBy(d => d.GroupId).ToList();
+                long total = 0, savings = 0;
+                foreach (var g in groups) {
+                    long gt = 0, largest = 0;
+                    foreach (var i in g) { long s = Math.Max(0, i.SizeLong); gt += s; if (s > largest) largest = s; }
+                    total += gt; savings += gt - largest;
+                }
+                <div class="insp-stat"><span class="n mono">@groups.Count</span><span class="l">중복 그룹</span></div>
+                <div class="insp-stat"><span class="n mono">@Scan.Duplicates.Count</span><span class="l">중복 파일</span></div>
+                <div class="insp-stat"><span class="n mono keep">@FormatSize(savings)</span><span class="l">회수 가능</span></div>
+                <div class="insp-stat"><span class="n mono dim">@FormatSize(total)</span><span class="l">중복 총량</span></div>
+                <p class="dim-note" style="margin-top:1rem">카드의 <b>썸네일을 클릭</b>하면 여기에 상세가 뜹니다.</p>
+            }
+            else {
+                <p class="dim-note">스캔 결과 없음. 좌측에서 폴더를 고르고 <b>스캔 시작</b>.</p>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    protected override void OnInitialized() {
+        Scan.StateChanged += OnChanged;
+        Inspector.Changed += OnChanged;
+    }
+
+    void OnChanged() {
+        try { _ = InvokeAsync(StateHasChanged); }
+        catch { }
+    }
+
+    static string FormatEta(TimeSpan eta) =>
+        eta == TimeSpan.Zero ? "..." : eta.ToString(@"m\mss\s");
+
+    static string TruncatePath(string path, int max) =>
+        string.IsNullOrEmpty(path) ? "" : (path.Length <= max ? path : "..." + path[^(max - 3)..]);
+
+    static string FormatSize(long bytes) {
+        if (bytes <= 0) return "0 B";
+        string[] u = { "B", "KB", "MB", "GB", "TB" };
+        double s = bytes; int i = 0;
+        while (s >= 1024 && i < u.Length - 1) { s /= 1024; i++; }
+        return $"{s:0.##} {u[i]}";
+    }
+
+    public void Dispose() {
+        Scan.StateChanged -= OnChanged;
+        Inspector.Changed -= OnChanged;
+    }
+}

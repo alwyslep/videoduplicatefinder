@@ -27,6 +27,7 @@ builder.Services.AddSingleton<AuthService>();
 builder.Services.AddSingleton<WebSettingsService>();
 // ScanService is a singleton — one scan at a time, shared across all connections.
 builder.Services.AddSingleton<ScanService>();
+builder.Services.AddSingleton<InspectorState>();
 builder.Services.AddSingleton<FFmpegSetupService>();
 
 var app = builder.Build();

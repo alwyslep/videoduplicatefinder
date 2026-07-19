@@ -3,6 +3,7 @@
 @inject ScanService Scan
 @inject WebSettingsService WebSettings
 @inject IJSRuntime JS
+@inject VDF.Web.Services.InspectorState Inspector
 @implements IDisposable
 
 <PageTitle>Results — Video Duplicate Finder</PageTitle>
@@ -193,7 +194,7 @@ else {
                                 </div>
                             </div>
 
-                            <div class="card-thumb" @onclick:stopPropagation>
+                            <div class="card-thumb" @onclick="() => Inspect(item, sortedItems)" @onclick:stopPropagation title="클릭 = 우측 인스펙터에 상세">
                                 @if (WebSettings.AutoLoadThumbnails) {
                                     <div class="thumb-skeleton"></div>
                                     <img data-src="/thumbnail/hq?path=@Uri.EscapeDataString(item.Path)&amp;w=@WebSettings.ThumbnailWidth&amp;q=@WebSettings.ThumbnailJpegQuality"
@@ -736,6 +737,8 @@ else {
     static string SimilarityClass(float sim) => sim >= 99f ? "high" : sim >= 90f ? "medium" : "low";
 
     // === Filtering ===
+    void Inspect(DuplicateItem item, IEnumerable<DuplicateItem> group) => Inspector.Focus(item, group.ToList());
+
     List<IGrouping<Guid, DuplicateItem>> GetFilteredGroups() =>
         Scan.Duplicates
             .GroupBy(d => d.GroupId)

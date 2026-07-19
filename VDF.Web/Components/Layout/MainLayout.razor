@@ -1,18 +1,49 @@
+@* 워크벤치 셸 (Stage 2) — 상단바 + 3열(좌 소스 레일 · 중앙 결과 · 우 인스펙터).
+   구 top-nav 3페이지(Scan/Results/Settings) → 단일 표면. 스캔설정=레일 상시, Scan 페이지는 결과로 리다이렉트. *@
 @inherits LayoutComponentBase
+@inject ScanService Scan
+@implements IDisposable
 
-<div class="layout">
-    <header class="top-bar">
-        <div class="brand">VDF</div>
+<div class="wb-shell">
+    <header class="wb-topbar">
+        <div class="brand">◫ VDF</div>
+        <span class="scan-pill @PillClass">@PillText</span>
         <nav class="nav-links">
-            <NavLink href="/" Match="NavLinkMatch.All">Scan</NavLink>
-            <NavLink href="/results">Results</NavLink>
-            <NavLink href="/settings">Settings</NavLink>
+            <NavLink href="/results">결과</NavLink>
+            <NavLink href="/settings">설정</NavLink>
         </nav>
-        <div class="header-actions">
-            <ThemeToggle />
-        </div>
+        <div class="header-actions"><ThemeToggle /></div>
     </header>
-    <main class="content">
-        @Body
-    </main>
+    <div class="wb-body">
+        <aside class="wb-rail"><SourcesRail /></aside>
+        <main class="wb-main">@Body</main>
+        <aside class="wb-inspector"><InspectorPanel /></aside>
+    </div>
 </div>
+
+@code {
+    protected override void OnInitialized() => Scan.StateChanged += OnStateChanged;
+
+    void OnStateChanged() {
+        try { _ = InvokeAsync(StateHasChanged); }
+        catch { }
+    }
+
+    string PillText => Scan.State switch {
+        ScanState.Scanning  => "● 지문 수집 중",
+        ScanState.Comparing => "● 비교 중",
+        ScanState.Done      => "✓ 스캔 완료",
+        ScanState.Aborted   => "중지됨",
+        ScanState.Error     => "오류",
+        _                   => "대기"
+    };
+
+    string PillClass => Scan.State switch {
+        ScanState.Scanning or ScanState.Comparing => "active",
+        ScanState.Done  => "done",
+        ScanState.Error => "err",
+        _               => ""
+    };
+
+    public void Dispose() => Scan.StateChanged -= OnStateChanged;
+}
