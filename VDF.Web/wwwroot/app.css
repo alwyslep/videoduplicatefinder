@@ -284,7 +284,7 @@ input[type=text], input[type=number], input[type=password], select {
 input[type=text]:focus, input[type=number]:focus, select:focus {
 	outline: none;
 	border-color: var(--accent-primary);
-	box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+	box-shadow: 0 0 0 2px rgba(232, 172, 78, 0.22);
 }
 input.input-valid { border-color: var(--input-valid); }
 input.input-valid:focus { box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.2); }
@@ -458,7 +458,7 @@ input.input-invalid:focus { box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.2); }
 	font-weight: 600;
 }
 .similarity-badge.high { background: #16a34a30; color: var(--meta-best); }
-.similarity-badge.medium { background: #3b82f630; color: var(--accent-primary); }
+.similarity-badge.medium { background: #E8AC4E22; color: var(--accent-primary); }
 .similarity-badge.low { background: #eab30830; color: var(--accent-warning); }
 .group-actions { margin-left: auto; display: flex; gap: 0.35rem; align-items: center; }
 .group-actions button { padding: 0.2rem 0.55rem; font-size: 11px; }
@@ -1005,8 +1005,8 @@ input.input-invalid:focus { box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.2); }
 	transition: border-color 0.15s;
 }
 .compare-selector-item:hover { border-color: var(--text-dim); }
-.compare-selector-item.active-a { border-color: #3b82f6; }
-.compare-selector-item.active-b { border-color: #f59e0b; }
+.compare-selector-item.active-a { border-color: var(--accent-primary); }
+.compare-selector-item.active-b { border-color: #9E7BD6; }
 .compare-selector-item img {
 	width: 100%;
 	aspect-ratio: 16 / 9;
@@ -1203,3 +1203,157 @@ input.input-invalid:focus { box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.2); }
 	padding: 0.65rem;
 	font-size: 1rem;
 }
+
+/* ============================================================
+   Warm Forensic Console — 색/토큰 재설계 (Stage 1, 2026-07-19)
+   위쪽 원본(쿨 그레이+파랑) 토큰을 그대로 두고 여기서 값만 덮어씀.
+   ★되돌리려면 이 블록(여기부터 파일 끝까지) 통째로 지우면 원복.
+   인터페이스 액센트=앰버골드 / 의미색=keep-green·cull-red(분리 유지) / 데이터=모노.
+   ============================================================ */
+:root {
+	/* Surfaces — 웜 브라운차콜 */
+	--bg-body: #0D0B08;
+	--bg-header: #0A0806;
+	--bg-surface: #191410;
+	--bg-surface-raised: #221A13;
+	--bg-input: #120D08;
+	--bg-hover: #241C14;
+	--bg-button: #17110B;
+
+	/* Borders */
+	--border-default: #3A3024;
+	--border-subtle: #2B241B;
+	--border-input: #3A3024;
+	--border-divider: #2B241B;
+
+	/* Text — 웜 중립 */
+	--text-primary: #E9E0D2;
+	--text-secondary: #D5CAB8;
+	--text-muted: #A99C89;
+	--text-dim: #8A7D69;
+	--text-dimmer: #6E6250;
+	--text-brand: #F3ECDF;
+	--text-link: #EAB868;
+
+	/* Accents — 인터페이스=앰버골드, 의미=keep/cull(분리) */
+	--accent-primary: #E8AC4E;
+	--accent-primary-hover: #F2BC63;
+	--accent-danger: #B5402F;
+	--accent-danger-hover: #C6483B;
+	--accent-danger-text: #F0917E;
+	--accent-success: #7BC96F;
+	--accent-success-bg: #7BC96F1A;
+	--accent-success-border: #3D8A4A;
+	--accent-success-text: #A6E0A0;
+	--accent-warning: #E0812F;
+	--accent-error-bg: #40120A40;
+	--accent-error-border: #B5402F;
+
+	/* Selection — 앰버 틴트 */
+	--bg-selected: #2E2411;
+	--bg-selected-hover: #3D3016;
+
+	/* Spinner / Progress */
+	--spinner-track: #3A3024;
+	--spinner-accent: #E8AC4E;
+	--progress-track: #241C14;
+	--progress-fill: #E8AC4E;
+
+	/* Shadows — 딥 */
+	--shadow-sm: 0 1px 2px rgba(0,0,0,0.40);
+	--shadow-md: 0 4px 12px rgba(0,0,0,0.50);
+	--shadow-lg: 0 8px 24px rgba(0,0,0,0.60);
+
+	/* Input validation */
+	--input-valid: #3D8A4A;
+	--input-invalid: #C6483B;
+
+	/* Badges */
+	--badge-best-bg: #3D8A4A;
+	--badge-clip-bg: #9E7BD6;
+
+	/* Card */
+	--card-border: #2B241B;
+	--card-hover-border: #E8AC4E;
+
+	/* Metadata 비교색 */
+	--meta-best: #7BC96F;
+	--meta-worst: #F0917E;
+	--meta-equal: #6E6250;
+
+	/* ★데이터=모노(계기 판독). VDF 실제 폰트(Source Code Pro) 포함, 임베드 없이 시스템 스택 */
+	--font-mono: 'Cascadia Code','Cascadia Mono','Source Code Pro',ui-monospace,'SF Mono','Consolas',monospace;
+}
+
+/* Warm Light — 웜 크림 바탕 */
+[data-theme="light"] {
+	--bg-body: #F6F1E7;
+	--bg-header: #FFFDF8;
+	--bg-surface: #FFFFFF;
+	--bg-surface-raised: #F1EADB;
+	--bg-input: #FFFFFF;
+	--bg-hover: #EBE3D2;
+	--bg-button: #EBE3D2;
+
+	--border-default: #D2C6AF;
+	--border-subtle: #E6DDC9;
+	--border-input: #B8A987;
+	--border-divider: #E6DDC9;
+
+	--text-primary: #2A2114;
+	--text-secondary: #3D3324;
+	--text-muted: #7A6E58;
+	--text-dim: #9A8E76;
+	--text-dimmer: #9A8E76;
+	--text-brand: #2A2114;
+	--text-link: #A06F22;
+
+	--accent-primary: #B9822E;
+	--accent-primary-hover: #9C6C1E;
+	--accent-danger: #C6483B;
+	--accent-danger-hover: #A83A2E;
+	--accent-danger-text: #B5402F;
+	--accent-success: #3D8A4A;
+	--accent-success-bg: #EEF6EA;
+	--accent-success-border: #A6D0A0;
+	--accent-success-text: #2F6E38;
+	--accent-warning: #C77F2A;
+	--accent-error-bg: #FBF0EC;
+	--accent-error-border: #E0B8AE;
+
+	--bg-selected: #F5E7C8;
+	--bg-selected-hover: #EEDBB0;
+
+	--spinner-track: #D2C6AF;
+	--spinner-accent: #B9822E;
+	--progress-track: #E6DDC9;
+	--progress-fill: #B9822E;
+
+	--shadow-sm: 0 1px 2px rgba(60,40,10,0.06);
+	--shadow-md: 0 4px 12px rgba(60,40,10,0.10);
+	--shadow-lg: 0 8px 24px rgba(60,40,10,0.14);
+
+	--input-valid: #3D8A4A;
+	--input-invalid: #C6483B;
+
+	--badge-best-bg: #3D8A4A;
+	--badge-clip-bg: #7C5BC0;
+
+	--card-border: #E6DDC9;
+	--card-hover-border: #B9822E;
+
+	--meta-best: #2F8A3E;
+	--meta-worst: #C6483B;
+	--meta-equal: #9A8E76;
+}
+
+/* 데이터·라벨·배지 = 모노 (숫자 정렬 tabular-nums) */
+.brand,
+.result-count,
+.similarity-badge,
+.meta-value,
+.card-path,
+.badge-best,
+.badge-partial-clip { font-family: var(--font-mono); }
+.meta-value { font-variant-numeric: tabular-nums; }
+.brand { letter-spacing: 0.12em; }
