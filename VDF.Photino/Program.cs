@@ -128,6 +128,8 @@ static class Program {
 				case "browseRealDb": BrowseRealDb(win); break;
 				case "saveSetting": SaveSetting(win, doc.RootElement); break;
 				case "compareInMpv": HandleMpvCompare(win, doc.RootElement); break;
+				case "openFile": OpenPath(win, doc.RootElement, reveal: false); break;    // 기본 플레이어로 재생
+				case "revealFile": OpenPath(win, doc.RootElement, reveal: true); break;   // 탐색기에서 표시
 				default: Reply(win, "error", new { message = $"unknown cmd '{cmd}'" }); break;
 			}
 		}
@@ -902,6 +904,17 @@ static class Program {
 			StartSidecarWatch(win, manifest + ".deleted");
 			Process.Start(new ProcessStartInfo { FileName = _cfg.mpvGridPath, UseShellExecute = false, ArgumentList = { manifest } });
 			Reply(win, "compareStarted", new { groups = groups.Count, files = groups.Sum(g => g.Count) });
+		}
+		catch (Exception ex) { Reply(win, "error", new { message = ex.Message }); }
+	}
+
+	// 검토 카드의 ▶/📂 — the user's own click on their own file; paths never leave the machine.
+	static void OpenPath(PhotinoWindow win, JsonElement root, bool reveal) {
+		try {
+			string? p = root.TryGetProperty("payload", out var pl) && pl.TryGetProperty("path", out var pe) ? pe.GetString() : null;
+			if (string.IsNullOrEmpty(p) || !File.Exists(p)) { Reply(win, "error", new { message = "파일이 없다 — 이동/삭제된 듯. ‘비교만 다시’로 갱신해줘." }); return; }
+			if (reveal) Process.Start("explorer.exe", $"/select,\"{p}\"");
+			else Process.Start(new ProcessStartInfo(p) { UseShellExecute = true });
 		}
 		catch (Exception ex) { Reply(win, "error", new { message = ex.Message }); }
 	}
