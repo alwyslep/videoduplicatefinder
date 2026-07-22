@@ -1,0 +1,1198 @@
+<!doctype html><html lang=ko><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>VDF — Deep Space</title></head><body>
+<style>
+  :root{
+    --bg:#0f0f11; --bg2:#131314; --surface:#1a1b1f; --card:#202128; --raised:#282a31;
+    --line:rgba(255,255,255,.07); --line2:rgba(255,255,255,.11);
+    --ink:#f4f5f7; --muted:rgba(255,255,255,.60); --dim:rgba(255,255,255,.38);
+    --indigo:#8b9bff; --amber:#e6ab5a; --green:#5fd39a; --red:#ff6b6b; --data:#c9cdd6;
+    --g1:#4a77ff; --g2:#a374ff; --g3:#ff8a75;
+    --sans:-apple-system,"Segoe UI Variable Display","Segoe UI",system-ui,"Malgun Gothic",sans-serif;
+    --mono:ui-monospace,"Cascadia Mono","SF Mono",Consolas,monospace;
+    --glow:linear-gradient(100deg,var(--g1),var(--g2) 55%,var(--g3));
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:
+    radial-gradient(1100px 520px at 78% -12%, rgba(120,90,255,.10), transparent 60%),
+    radial-gradient(900px 480px at 8% 8%, rgba(74,119,255,.06), transparent 55%),
+    var(--bg2);
+    color:var(--ink);font-family:var(--sans);letter-spacing:-.01em;line-height:1.5;
+    -webkit-font-smoothing:antialiased;min-height:100vh}
+  .mono{font-family:var(--mono);letter-spacing:0;font-variant-numeric:tabular-nums}
+  .muted{color:var(--muted)} .dim{color:var(--dim)}
+
+  /* ---- top app bar (translucent + blur) ---- */
+  .appbar{position:sticky;top:0;z-index:30;display:flex;align-items:center;gap:13px;flex-wrap:nowrap;
+    padding:11px 20px;background:rgba(15,15,17,.68);backdrop-filter:blur(18px) saturate(1.3);
+    -webkit-backdrop-filter:blur(18px) saturate(1.3);border-bottom:1px solid var(--line)}
+  .appbar>*{flex-shrink:0;white-space:nowrap}
+  .brand{font-weight:700;letter-spacing:.02em;font-size:15px;
+    background:var(--glow);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .dbstat{font-size:12px;color:var(--muted);flex-shrink:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+  .dbstat b{color:var(--data);font-weight:600}
+  .spacer{flex:1}
+  .pill{font-size:12.5px;color:var(--muted);padding:6px 13px;border-radius:999px;border:1px solid transparent;cursor:pointer;transition:.15s}
+  .pill:hover{color:var(--ink);background:rgba(255,255,255,.05)}
+  .kbd{font-family:var(--mono);font-size:11px;color:var(--dim);border:1px solid var(--line);border-radius:7px;padding:3px 7px}
+  .cta{font-size:13px;font-weight:600;color:#fff;padding:8px 16px;border-radius:11px;border:0;cursor:pointer;
+    background:var(--glow);box-shadow:0 6px 22px -6px rgba(120,100,255,.55);transition:.15s}
+  .cta:hover{filter:brightness(1.07);box-shadow:0 8px 28px -6px rgba(120,100,255,.7)}
+  .cta.ghost{background:transparent;color:var(--muted);box-shadow:none;border:1px solid var(--line)}
+  .cta.ghost:hover{color:var(--ink);border-color:var(--line2)}
+
+  /* ---- stage rail (capsule chips, glow on active) ---- */
+  .rail{display:flex;align-items:center;gap:6px;padding:12px 20px 4px}
+  .chip{display:flex;align-items:center;gap:9px;font-size:14px;color:var(--muted);
+    padding:8px 16px;border-radius:999px;border:1px solid transparent;cursor:pointer;position:relative;transition:.15s}
+  .chip .n{font-family:var(--mono);font-size:12px;opacity:.7}
+  .chip:hover{color:var(--ink);background:rgba(255,255,255,.04)}
+  .chip.on{color:var(--ink);font-weight:600;
+    background:linear-gradient(var(--surface),var(--surface)) padding-box,var(--glow) border-box;
+    border:1px solid transparent;box-shadow:0 0 0 1px rgba(120,100,255,.08),0 8px 26px -12px rgba(120,100,255,.6)}
+  .chip.on .n{background:var(--glow);-webkit-background-clip:text;background-clip:text;color:transparent;opacity:1}
+  .rail .sep{width:1px;height:18px;background:var(--line);margin:0 6px}
+
+  .wrap{max-width:1440px;margin:0 auto;padding:10px 20px 60px}
+  .screen{display:none} .screen.on{display:block;animation:fade .28s ease}
+  @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+
+  .h1{font-size:20px;font-weight:650;letter-spacing:-.02em;margin:14px 0 2px}
+  .sub{color:var(--muted);font-size:13.5px;margin:0 0 16px}
+
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px}
+  .pad{padding:16px}
+  .row{display:flex;gap:16px}
+
+  /* query bar */
+  .query{display:flex;align-items:center;gap:11px;background:var(--surface);border:1px solid var(--line);
+    border-radius:14px;padding:5px 6px 5px 15px;margin-bottom:14px}
+  .query .gt{color:var(--indigo);font-family:var(--mono);font-size:15px}
+  .query input{flex:1;background:transparent;border:0;outline:0;color:var(--ink);font-family:var(--mono);font-size:13px;padding:9px 0}
+  .query input::placeholder{color:var(--dim)}
+  .qhint{color:var(--dim);font-size:12.5px;margin-right:8px}
+  .toggle{display:flex;background:rgba(255,255,255,.04);border-radius:9px;padding:3px}
+  .toggle button{border:0;background:transparent;color:var(--muted);font-size:12.5px;padding:6px 12px;border-radius:7px;cursor:pointer;font-family:var(--sans)}
+  .toggle button.on{background:var(--raised);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.3)}
+
+  .facets{display:flex;flex-wrap:wrap;gap:7px;align-items:center;margin-bottom:16px}
+  .facet{font-size:12px;color:var(--muted);background:rgba(255,255,255,.035);border:1px solid var(--line);
+    border-radius:999px;padding:5px 11px;cursor:pointer;transition:.12s}
+  .facet:hover{border-color:var(--line2);color:var(--ink)}
+  .facet .mono{color:var(--data);margin-left:5px}
+  .facet.g{color:var(--dim);border:0;background:none;cursor:default}
+
+  /* review layout */
+  .review{display:grid;grid-template-columns:1fr 300px;gap:16px;align-items:start}
+  .ghead{display:flex;align-items:center;gap:10px;font-size:13px;font-weight:600;
+    padding:9px 14px;border-radius:12px;margin:14px 0 8px;color:var(--indigo);
+    background:linear-gradient(90deg,rgba(120,100,255,.12),rgba(120,100,255,.02))}
+  .ghead .mono{color:var(--ink)} .ghead .why{margin-left:auto;color:var(--muted);font-weight:400}
+  .why b{color:var(--indigo)}
+
+  .fcard{display:grid;grid-template-columns:auto 148px 1fr auto;gap:14px;align-items:center;
+    background:var(--card);border:1px solid var(--line);border-radius:14px;padding:11px;margin-bottom:9px;transition:.15s;cursor:default}
+  .fcard:hover{border-color:var(--line2);background:#23242b}
+  .cb{width:19px;height:19px;border-radius:6px;border:1.5px solid rgba(255,255,255,.28);cursor:pointer;flex:none;position:relative}
+  .cb.cut{background:var(--red);border-color:var(--red)}
+  .cb.cut::after{content:"✕";position:absolute;inset:0;display:grid;place-items:center;color:#fff;font-size:11px}
+  .thumb{height:56px;border-radius:9px;position:relative;overflow:hidden;
+    background:linear-gradient(135deg,#2b2d36,#3a2f44 60%,#4a3540)}
+  .thumb::after{content:attr(data-t);position:absolute;left:6px;bottom:4px;font-family:var(--mono);font-size:9.5px;color:rgba(255,255,255,.65);
+    background:rgba(0,0,0,.45);padding:1px 5px;border-radius:5px}
+  .thumb .res{position:absolute;left:6px;top:4px;font-family:var(--mono);font-size:9px;color:rgba(255,255,255,.75);background:rgba(0,0,0,.4);padding:1px 5px;border-radius:5px}
+  .fmeta{min-width:0}
+  .fpath{font-size:13.5px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .fmetrics{display:flex;gap:16px;margin-top:5px;font-family:var(--mono);font-size:11.5px}
+  .m-best{color:var(--green)} .m-eq{color:var(--dim)} .m-bad{color:var(--red)}
+  .keep-tag{font-size:10px;font-weight:700;letter-spacing:.05em;color:var(--green);border:1px solid rgba(95,211,154,.4);border-radius:6px;padding:2px 6px}
+  .sim{font-family:var(--mono);font-size:12px;font-weight:600;color:#0d2018;background:var(--green);border-radius:7px;padding:3px 9px}
+
+  /* reclaim panel */
+  .tray{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px;position:sticky;top:78px}
+  .tray .lab{font-size:12px;color:var(--muted)}
+  .big{font-family:var(--mono);font-size:34px;font-weight:700;line-height:1.05;margin:6px 0 2px;
+    background:var(--glow);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .tray hr{border:0;border-top:1px solid var(--line);margin:14px 0}
+  .brk{display:flex;justify-content:space-between;font-size:12.5px;margin:7px 0;color:var(--muted)}
+  .brk .mono{color:var(--data)}
+  .safe{font-size:11.5px;color:var(--green);margin-top:10px}
+  .reclaim-cta{width:100%;margin-top:16px;font-size:14px;font-weight:600;color:#fff;border:0;border-radius:12px;padding:12px;cursor:pointer;
+    background:var(--glow);box-shadow:0 8px 26px -8px rgba(120,100,255,.6)}
+
+  /* generic panels for other screens */
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px}
+  .lbl{font-size:12px;color:var(--indigo);font-weight:600;margin-bottom:12px;letter-spacing:.02em}
+  .field{margin-bottom:13px}
+  .field .k{font-size:12.5px;color:var(--muted);margin-bottom:5px}
+  .inp{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:9px 12px;font-family:var(--mono);font-size:13px;color:var(--ink);display:inline-block;min-width:120px}
+  .chkrow{display:flex;align-items:center;gap:10px;font-size:13px;margin:9px 0;color:var(--ink);cursor:pointer}
+  .sw{width:34px;height:20px;border-radius:999px;background:rgba(255,255,255,.12);position:relative;transition:.15s;flex:none}
+  .sw::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;transition:.15s}
+  .sw.on{background:var(--glow)} .sw.on::after{left:16px}
+  .tree{font-size:13.5px}
+  .trow{display:flex;align-items:center;gap:10px;padding:7px 8px;border-radius:9px}
+  .trow:hover{background:rgba(255,255,255,.03)}
+  .tcap{margin-left:auto;font-family:var(--mono);font-size:11.5px;color:var(--data)}
+  .drivedot{width:8px;height:8px;border-radius:50%;background:var(--green)}
+  .exrow{font-family:var(--mono);font-size:12.5px;color:var(--muted);padding:8px 12px;border-bottom:1px solid var(--line)}
+
+  /* scan */
+  .drive{margin:12px 0}
+  .dbar{height:8px;border-radius:999px;background:rgba(255,255,255,.06);overflow:hidden}
+  .dbar i{display:block;height:100%;border-radius:999px;background:var(--glow)}
+  .dinfo{display:flex;justify-content:space-between;font-family:var(--mono);font-size:11.5px;color:var(--muted);margin-bottom:5px}
+  .tally{display:flex;justify-content:space-between;font-size:13px;padding:9px 0;border-bottom:1px solid var(--line)}
+  .tally .mono{color:var(--data);font-weight:600}
+
+  .proto-tag{position:fixed;right:14px;bottom:12px;z-index:40;font-size:11px;color:var(--muted);
+    background:rgba(20,20,24,.8);backdrop-filter:blur(10px);border:1px solid var(--line);border-radius:999px;padding:6px 13px}
+  /* settings screen (in-page, left section tabs) */
+  .setwrap{display:flex;gap:16px;align-items:flex-start}
+  .stabs{width:200px;flex:none;display:flex;flex-direction:column;gap:4px;position:sticky;top:78px}
+  .stab{padding:10px 15px;border-radius:11px;font-size:13.5px;color:var(--muted);cursor:pointer;border:1px solid transparent;transition:.12s}
+  .stab:hover{background:rgba(255,255,255,.04);color:var(--ink)}
+  .stab.on{color:var(--ink);font-weight:600;
+    background:linear-gradient(var(--surface),var(--surface)) padding-box,var(--glow) border-box;border:1px solid transparent;
+    box-shadow:0 6px 20px -10px rgba(120,100,255,.5)}
+  .spanel{flex:1;min-width:0}
+  /* engine options list */
+  .orow{display:flex;align-items:center;gap:14px;padding:7px 2px;border-radius:8px}
+  .orow:hover{background:rgba(255,255,255,.025)}
+  .olab{flex:1;min-width:0;font-size:13px;color:var(--ink)}
+  .ohint{font-size:11px;color:var(--dim);margin-top:2px;line-height:1.45}
+  .ohint.warn{color:var(--amber)}
+  .warnrow .olab{color:var(--amber)}
+  .onum{width:92px;background:var(--bg2);border:1px solid var(--line);border-radius:9px;padding:7px 10px;
+    font-family:var(--mono);font-size:12.5px;color:var(--ink);outline:0;text-align:right;flex:none}
+  .onum:focus{border-color:var(--line2)}
+  .onum.otxt{width:240px;text-align:left}
+  .osel{background:var(--bg2);border:1px solid var(--line);border-radius:9px;padding:7px 10px;
+    font-size:12.5px;color:var(--ink);outline:0;flex:none;font-family:var(--sans)}
+  .setrow{margin:16px 0}
+  .setrow .k{font-size:12.5px;color:var(--muted);margin-bottom:7px}
+  .pathrow{display:flex;gap:8px}
+  .pathrow input{flex:1;min-width:0;background:var(--bg2);border:1px solid var(--line);border-radius:10px;
+    padding:10px 12px;font-family:var(--mono);font-size:12.5px;color:var(--ink);outline:0}
+  .pathrow input:focus{border-color:var(--line2)}
+  .mpvstat{font-size:12px;margin-top:8px;font-family:var(--mono)}
+  .mpvstat.ok{color:var(--green)} .mpvstat.bad{color:var(--red)}
+  /* source / exclude rows */
+  .srow{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:9px;font-size:13px}
+  .srow:hover{background:rgba(255,255,255,.03)}
+  .spath{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--ink)}
+  .srm{color:var(--dim);cursor:pointer;font-size:12px;padding:2px 7px;border-radius:6px}
+  .srm:hover{color:var(--red);background:rgba(255,107,107,.12)}
+  /* 포함 폴더 트리 */
+  .dtree{max-height:460px;overflow-y:auto;font-size:13px;margin:-2px -4px}
+  .dnode{display:flex;align-items:center;gap:8px;padding:5px 6px;border-radius:7px;white-space:nowrap}
+  .dnode:hover{background:rgba(255,255,255,.035)}
+  .darr{cursor:pointer;color:var(--dim);width:14px;text-align:center;flex:none;font-size:10px;transition:transform .12s;display:inline-block}
+  .darr.open{transform:rotate(90deg);color:var(--muted)}
+  .darr-none{width:14px;flex:none}
+  .dcb{width:16px;height:16px;border-radius:5px;border:1.5px solid rgba(255,255,255,.28);cursor:pointer;flex:none;position:relative}
+  .dcb.on{background:var(--glow);border-color:transparent}
+  .dcb.on::after{content:"✓";position:absolute;inset:0;display:grid;place-items:center;color:#fff;font-size:11px;font-weight:700}
+  .dcb.mid{background:rgba(139,155,255,.22);border-color:var(--indigo)}
+  .dcb.mid::after{content:"–";position:absolute;left:0;right:0;top:-1px;display:grid;place-items:center;color:var(--indigo);font-size:13px;font-weight:700}
+  .dname{cursor:pointer;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}
+  /* table view */
+  .rtable{width:100%;border-collapse:collapse;font-size:12.5px;margin-bottom:14px}
+  .rtable th{text-align:left;color:var(--muted);font-weight:500;font-size:11px;letter-spacing:.02em;padding:7px 10px;border-bottom:1px solid var(--line)}
+  .rtable td{padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap;color:var(--ink)}
+  .rtable tr:hover td{background:rgba(255,255,255,.03)}
+  .rtable .tpath{max-width:420px;overflow:hidden;text-overflow:ellipsis}
+  .rtable .tmono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+  .tcb{width:16px;height:16px;border-radius:5px;border:1.5px solid rgba(255,255,255,.28);cursor:pointer;display:inline-block;position:relative;vertical-align:middle}
+  .tcb.cut{background:var(--red);border-color:var(--red)}
+  .tcb.cut::after{content:"✕";position:absolute;inset:0;display:grid;place-items:center;color:#fff;font-size:9px}
+  /* console drawer */
+  .console{position:fixed;left:0;right:0;bottom:0;z-index:55;height:230px;display:none;flex-direction:column;
+    background:rgba(13,13,15,.95);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
+    border-top:1px solid var(--line2);box-shadow:0 -14px 44px -14px rgba(0,0,0,.7)}
+  .console.open{display:flex}
+  .chead{display:flex;align-items:center;gap:9px;padding:10px 18px;border-bottom:1px solid var(--line)}
+  .clog-clear,.clog-x{cursor:pointer;font-size:12px;color:var(--dim);padding:3px 9px;border-radius:6px}
+  .clog-clear:hover,.clog-x:hover{color:var(--ink);background:rgba(255,255,255,.06)}
+  .clog{flex:1;overflow-y:auto;padding:10px 18px;font-family:var(--mono);font-size:12px;line-height:1.75}
+  .cline{color:var(--data);white-space:pre-wrap}
+  .cline .ct{color:var(--dim);margin-right:9px}
+  .cline.err{color:var(--red)} .cline.ok{color:var(--green)} .cline.warn{color:var(--amber)}
+  /* command palette (Ctrl+K) — transient overlay, allowed exception to the no-panel rule */
+  .cmdk{position:fixed;inset:0;z-index:70;display:none;background:rgba(10,10,12,.55);backdrop-filter:blur(4px)}
+  .cmdk.open{display:block}
+  .ckbox{width:min(560px,92vw);margin:12vh auto 0;background:var(--card);border:1px solid var(--line2);border-radius:14px;
+    box-shadow:0 30px 80px rgba(0,0,0,.6);overflow:hidden;animation:fade .18s ease}
+  .ckhead{display:flex;align-items:center;gap:10px;padding:2px 14px;border-bottom:1px solid var(--line)}
+  .ckhead input{flex:1;background:none;border:none;outline:none;color:var(--ink);font:15px var(--sans);padding:13px 0}
+  .ckhead input::placeholder{color:var(--dim)}
+  .ckkey{font:10.5px var(--mono);color:var(--dim);border:1px solid var(--line2);border-radius:6px;padding:2px 7px}
+  .cklist{max-height:46vh;overflow-y:auto;padding:6px}
+  .ckitem{display:flex;align-items:center;gap:10px;padding:9px 11px;border-radius:9px;cursor:pointer;font-size:13.5px;color:var(--muted)}
+  .ckitem .ckcat{font-size:10.5px;color:var(--dim);border:1px solid var(--line);border-radius:5px;padding:1px 6px;flex-shrink:0}
+  .ckitem.on{background:var(--raised);color:var(--ink)}
+  .ckitem.on .ckcat{color:var(--amber);border-color:rgba(230,171,90,.4)}
+  .ckempty{padding:18px;text-align:center;font-size:12.5px;color:var(--dim)}
+  @media(max-width:900px){.review{grid-template-columns:1fr}.grid2,.grid3{grid-template-columns:1fr}}
+</style>
+
+<div class="appbar">
+  <span class="brand">VDF</span>
+  <span class="dbstat mono">DB <b>28,417</b> 파일 · <b>6</b> 드라이브 · 마지막 스윕 3일 전</span>
+  <span class="spacer"></span>
+  <span class="pill mono" onclick="openCmdk()" title="커맨드 팔레트 — Ctrl+K">⌘K</span><span class="pill" onclick="openSettings()">환경설정</span><span class="pill" onclick="toggleConsole()">콘솔</span>
+  <button class="cta ghost" onclick="doCompare()">비교만 다시</button>
+  <button class="cta" onclick="startFullScan()">▶ 전체 스캔</button>
+</div>
+
+<div class="rail" id="rail">
+  <div class="chip on" data-s="review" onclick="go('sources')"><span class="n">①</span> 소스</div>
+  <div class="chip" onclick="go('rules')"><span class="n">②</span> 규칙</div>
+  <div class="chip" onclick="go('scan')"><span class="n">③</span> 스캔</div>
+  <div class="chip" onclick="go('review')"><span class="n">④</span> 검토</div>
+  <div class="chip" onclick="go('reclaim')"><span class="n">⑤</span> 정리</div>
+</div>
+
+<div class="wrap">
+
+  <!-- SOURCES -->
+  <section class="screen" id="s-sources">
+    <div class="h1">① 소스 — 스캔할 폴더</div>
+    <div class="sub">여기 지정한 폴더만 ‘전체 스캔’이 훑는다. 실행 전엔 아무것도 안 건드림.</div>
+    <div class="row">
+      <div class="card pad" style="flex:1.6">
+        <div class="lbl" style="margin-bottom:10px">포함 트리 <span class="dim" style="font-weight:400">— 폴더 체크 = 스캔 대상 (하위 폴더 포함)</span></div>
+        <div class="dtree" id="dtree"></div>
+      </div>
+      <div class="card pad" style="flex:1">
+        <div style="display:flex;align-items:center;margin-bottom:12px">
+          <div class="lbl" style="margin:0">제외 디렉터리</div><span class="spacer"></span>
+          <button class="cta ghost" style="padding:6px 12px;font-size:12px" onclick="addExclude()">＋ 제외</button>
+        </div>
+        <div id="exList"></div>
+      </div>
+    </div>
+    <div class="card pad" style="margin-top:14px;display:flex;align-items:center">
+      <span class="mono muted" style="font-size:13px" id="srcRange">지정된 폴더 없음</span>
+      <span class="spacer"></span>
+      <button class="cta" onclick="startFullScan()">스캔 화면으로 →</button>
+    </div>
+  </section>
+
+  <!-- RULES -->
+  <section class="screen" id="s-rules">
+    <div class="h1">② 규칙 — 무엇을 중복으로 볼까?</div>
+    <div class="sub">여기서 바꾼 값은 다음 스캔부터 적용된다. 엔진 동작은 그대로 — 값만 조절.</div>
+    <div class="grid2">
+      <div class="card pad">
+        <div class="lbl">시각 매치</div>
+        <div class="field"><div class="k">유사도 임계값 (%) · 낮출수록 더 많이 매칭</div><input id="rPercent" class="inp" style="width:96px;min-width:0" onchange="setRuleNum('percent',this)"></div>
+        <div class="field"><div class="k">pHash 그레이 검증 (%)</div><input id="rGray" class="inp" style="width:96px;min-width:0" onchange="setRuleNum('phashGray',this)"></div>
+        <div class="field"><div class="k">재생시간 허용 오차 (%)</div><input id="rDur" class="inp" style="width:96px;min-width:0" onchange="setRuleNum('durationPct',this)"></div>
+        <label class="chkrow" onclick="toggleRule('usePHash',this.querySelector('.sw'))"><span class="sw" id="swPHash"></span> pHash 사용 <span class="dim" style="font-size:11px;margin-left:2px">끄면 그레이스케일 %가 직접 적용</span></label>
+        <label class="chkrow" onclick="toggleRule('compareFlipped',this.querySelector('.sw'))"><span class="sw" id="swFlip"></span> 좌우 반전본도 비교</label>
+        <label class="chkrow" onclick="toggleRule('ignoreBW',this.querySelector('.sw'))"><span class="sw" id="swBW"></span> 검은 · 흰 픽셀 무시</label>
+      </div>
+      <div class="card pad">
+        <div class="lbl">범위 · 필터</div>
+        <label class="chkrow" onclick="toggleRule('includeSubDirs',this.querySelector('.sw'))"><span class="sw" id="swSub"></span> 하위 폴더 포함</label>
+        <label class="chkrow" onclick="toggleRule('includeImages',this.querySelector('.sw'))"><span class="sw" id="swImg"></span> 이미지 포함</label>
+        <label class="chkrow" onclick="toggleRule('entireDb',this.querySelector('.sw'))"><span class="sw" id="swDb"></span> 전체 DB와 비교</label>
+        <label class="chkrow" onclick="toggleRule('filterBySize',this.querySelector('.sw'))"><span class="sw" id="swSize"></span> 파일 크기로 필터</label>
+        <div class="field" style="margin:4px 0 0 44px;display:flex;gap:10px;align-items:center">
+          <span class="dim" style="font-size:12px">최소</span><input id="rMinMB" class="inp" style="width:76px;min-width:0" onchange="setRuleNum('minFileSizeMB',this)">
+          <span class="dim" style="font-size:12px">최대</span><input id="rMaxMB" class="inp" style="width:76px;min-width:0" onchange="setRuleNum('maxFileSizeMB',this)">
+          <span class="dim" style="font-size:11px">MB · 0=제한 없음</span>
+        </div>
+        <div class="lbl" style="margin-top:16px">우선순위 (유지본 선정 기준) <span class="dim" style="font-weight:400">— 드래그로 순서 변경 · 위일수록 우선</span></div>
+        <div id="prioChips" style="display:flex;flex-wrap:wrap;gap:7px"></div>
+      </div>
+    </div>
+    <div class="card pad" style="margin-top:14px;display:flex;align-items:center">
+      <span class="mono muted" style="font-size:12.5px">값 변경 즉시 저장 · 다음 비교부터 적용</span>
+      <span class="spacer"></span>
+      <button class="cta" onclick="doCompare()">이 규칙으로 비교 →</button>
+    </div>
+  </section>
+
+  <!-- SCAN -->
+  <section class="screen" id="s-scan">
+    <div style="display:flex;align-items:center">
+      <div class="h1">③ 스캔</div>
+      <span class="spacer"></span>
+      <span id="scanCtl" style="display:none;gap:8px;margin-right:8px">
+        <button class="cta ghost" id="btnPause" onclick="pauseScanUi()">⏸ 일시정지</button>
+        <button class="cta ghost" id="btnStop" onclick="stopScanUi()" style="color:var(--red);border-color:rgba(255,107,107,.35)">⏹ 중지</button>
+      </span>
+      <button class="cta" onclick="doStartScan()">▶ 스캔 시작</button>
+    </div>
+    <div class="sub">드라이브별 완료 상태 (현재 DB 기준) · 스캔 시작하면 실시간 진행.</div>
+    <div class="row">
+      <div class="card pad" style="flex:2.4" id="drives"></div>
+      <div class="card pad" style="flex:1">
+        <div class="lbl">실시간 집계</div>
+        <div id="tallies"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- REVIEW (hero) -->
+  <section class="screen on" id="s-review">
+    <div class="h1">④ 검토</div>
+    <div class="query">
+      <span class="gt">&gt;</span>
+      <input id="q" placeholder="경로·이름 필터 (예: 2160p, drive:F)" oninput="filter()">
+      <span class="qhint">유지할 1개만 남기고 나머지를 체크 = 삭제 후보</span>
+      <button class="cta" style="padding:7px 15px;font-size:12.5px" onclick="doMpvCompare()">▶ 순회비교</button>
+      <div class="toggle"><button id="viewStrip" class="on" onclick="setView('strip')">스트립</button><button id="viewTable" onclick="setView('table')">테이블</button></div>
+    </div>
+    <div class="facets">
+      <span class="facet">4K <span class="mono">14</span></span>
+      <span class="facet">1080p <span class="mono">3650</span></span>
+      <span class="facet">&lt;720p <span class="mono">1740</span></span>
+      <span class="facet g">│ 드라이브</span>
+      <span class="facet">D <span class="mono">4</span></span><span class="facet">F <span class="mono">10</span></span><span class="facet">G <span class="mono">7</span></span>
+      <span class="facet g">│</span>
+      <span class="facet">처리 <span class="mono">796/812</span></span>
+    </div>
+    <div class="review">
+      <div id="groups"></div>
+      <div class="tray">
+        <div class="lab">정리 대기함</div>
+        <div class="big" id="reclaimSize">1.76 TB</div>
+        <div class="mono muted" style="font-size:12.5px">삭제 <span id="cutN">1,176</span> 파일</div>
+        <hr>
+        <div class="brk"><span>휴지통 <span class="dim">되돌림 · 기본</span></span><span class="mono" id="brkTrash">0</span></div>
+        <div class="brk"><span>심볼릭 링크</span><span class="mono dim">0</span></div>
+        <div class="brk"><span>영구 삭제</span><span class="mono dim">0</span></div>
+        <div class="safe">✓ 유지본은 체크 해제 상태 · 실행 전엔 디스크 무접촉</div>
+        <button class="reclaim-cta" onclick="go('reclaim')">정리 ▸</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- RECLAIM -->
+  <section class="screen" id="s-reclaim">
+    <div class="h1">⑤ 정리 — 실행 계획 검토</div>
+    <div class="sub">체크한 항목만 처리된다. 실행 전엔 디스크에 아무것도 안 닿음. 되돌리기 Ctrl+Z.</div>
+    <div class="row">
+      <div class="card pad" style="flex:1.1">
+        <div class="lab">정리 대기함</div>
+        <div class="big" style="font-size:40px" id="reclaimSize5">—</div>
+        <div class="mono muted" style="font-size:13px">체크 <span id="cutN5">0</span> 파일</div>
+        <button class="reclaim-cta" onclick="doReclaim()">🗑  휴지통으로 정리 ▸</button>
+        <div style="font-size:11.5px;color:var(--muted);margin-top:10px">체크된 파일을 휴지통으로. 유지본은 그대로.</div>
+      </div>
+      <div style="flex:1.9;display:flex;flex-direction:column;gap:14px">
+        <div class="card pad">
+          <div class="lbl">선택 도우미</div>
+          <div style="display:flex;gap:8px"><button class="cta ghost" onclick="selBulk('auto')">우선순위 자동선택</button><button class="cta ghost" onclick="selBulk('invert')">선택 반전</button><button class="cta ghost" onclick="selBulk('clear')">선택 해제</button></div>
+        </div>
+        <div class="card pad">
+          <div class="lbl">액션별 계획</div>
+          <div class="tally"><span>🗑 휴지통 <span class="dim">되돌림 · 기본</span></span><span class="mono" id="planTrash">0 파일 · —</span></div>
+          <div class="tally"><span>↳ 심볼릭 링크로 대체</span><span class="mono dim">0 · per-item, 곧</span></div>
+          <div class="tally"><span>⚠ 영구 삭제</span><span class="mono dim">0 · per-item, 곧</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<div class="console" id="console">
+  <div class="chead"><b style="color:var(--muted);font-weight:500">콘솔</b> <span class="dim" style="font-size:11px">엔진 로그 · 경로 미표시</span><span class="spacer"></span><span class="clog-clear" onclick="clearConsole()">지우기</span><span class="clog-x" onclick="toggleConsole()">✕</span></div>
+  <div class="clog" id="clog"></div>
+</div>
+
+<!-- COMMAND PALETTE (Ctrl+K) -->
+<div class="cmdk" id="cmdk" onclick="if(event.target===this)closeCmdk()">
+  <div class="ckbox">
+    <div class="ckhead"><input id="ckq" placeholder="명령 검색 — 이동 · 실행 · 설정" spellcheck="false" autocomplete="off"><span class="ckkey">Ctrl K</span></div>
+    <div class="cklist" id="cklist"></div>
+  </div>
+</div>
+
+<!-- SETTINGS (in-page screen — no modal; left section tabs) -->
+<section class="screen" id="s-settings" style="max-width:1440px;margin:0 auto;padding:10px 20px 60px">
+    <div class="h1">환경설정</div>
+    <div class="sub">변경 즉시 저장 · 엔진 옵션은 다음 스캔/비교부터 적용.</div>
+    <div class="setwrap">
+      <div class="stabs" id="stabs"></div>
+      <div class="card pad spanel">
+        <div id="dbPanel">
+          <div class="setrow" style="margin-top:0">
+            <div class="lbl" style="margin-bottom:8px">순회비교 플레이어</div>
+            <div class="k">mpvGrid.exe 경로 — 검토 화면 ‘▶ 순회비교’가 이 실행 파일로 그룹을 넘긴다</div>
+            <div class="pathrow">
+              <input id="mpvPath" placeholder="예: C:\tools\mpvGrid\mpvgrid.exe" spellcheck="false">
+              <button class="cta ghost" onclick="browseMpv()">찾아보기</button>
+              <button class="cta" onclick="saveMpvPath()">저장</button>
+            </div>
+            <div class="mpvstat" id="mpvStatus">○ 미지정</div>
+          </div>
+          <div class="setrow" style="border-top:1px solid var(--line);padding-top:18px">
+            <div class="lbl" style="margin-bottom:8px">데이터베이스</div>
+            <label class="chkrow" onclick="toggleRealDb(this.querySelector('.sw'))" style="margin:0 0 10px">
+              <span class="sw" id="swRealDb"></span> 실제 DB 사용 <span class="dim" style="font-size:11px;margin-left:2px">끄면 안전한 사본(기본) · 켜면 실제 인덱스에 스캔/비교가 기록됨</span>
+            </label>
+            <div class="k">실제 DB 폴더 — <span class="mono">ScannedFiles.db</span> 가 있는 곳 (VDF의 사용자 지정 DB 폴더)</div>
+            <div class="pathrow">
+              <input id="realDbPath" placeholder="예: D:\VDF" spellcheck="false" onchange="saveRealDbFolder(this)">
+              <button class="cta ghost" onclick="browseRealDb()">찾아보기</button>
+            </div>
+            <div class="mpvstat" id="realDbStatus">○ 사본 사용 중 (안전 · 기본)</div>
+          </div>
+        </div>
+        <div id="optList" style="display:none"></div>
+      </div>
+    </div>
+</section>
+
+<div class="proto-tag">PROTOTYPE · Deep Space (웹 UI · 실제 엔진 그대로)</div>
+
+<script>
+  const DR=[["D:\\","SSD",91,"8204/9010","62"],["F:\\","HDD",44,"4930/11200","14"],["G:\\","HDD",96,"10191/10510","31"],["H:\\","HDD",22,"640/2900","9"]];
+  document.getElementById("drives").innerHTML='<div class="lbl">드라이브 — 적응형 동시성</div>'+DR.map(d=>`<div class="drive"><div class="dinfo"><span><b style="color:var(--ink)">${d[0]}</b> · ${d[1]}</span><span>done ${d[3]} · ${d[4]} f/s</span></div><div class="dbar"><i style="width:${d[2]}%"></i></div></div>`).join("");
+  const TAL=[["분석","21,880"],["지문","20,914"],["그룹","643"],["절약","1.72 TB"],["누락","214"],["썸네일","71%"]];
+  document.getElementById("tallies").innerHTML=TAL.map(t=>`<div class="tally"><span>${t[0]}</span><span class="mono">${t[1]}</span></div>`).join("");
+
+  // review groups (mock sample; replaced by real data from the bridge on 비교)
+  var GB=1073741824;
+  var GROUPS=[
+    {sim:"92%",files:[
+      {p:"D:\\Media\\The.Batman.2160p.DV.mkv",t:"2:54:36",res:"2160p",keep:1,bytes:13.1*GB,m:["2160p","13.1 GB","14,600k","24fps","HDR"]},
+      {p:"F:\\arch\\The.Batman.1080p.BluRay.mkv",t:"2:54:36",res:"1080p",bytes:7.6*GB,m:["−1080p","−5.5G","−8,700","=","none!"]},
+      {p:"G:\\dup\\The Batman 1080p copy.mkv",t:"2:54:30",res:"1080p",bytes:7.1*GB,m:["−1080p","−6.0G","−8,900","−0:06","none!"]},
+    ]},
+    {sim:"98%",files:[
+      {p:"F:\\4k\\Dune.Part.Two.2160p.HDR10Plus.mkv",t:"2:36:06",res:"2160p",keep:1,bytes:11.7*GB,m:["2160p","11.7 GB","13,800k","24fps","HDR10+"]},
+      {p:"D:\\Media\\Dune2.1080p.web.copy.mkv",t:"2:36:00",res:"1080p",bytes:6.8*GB,m:["−1080p","−4.9G","−8,400","=","none!"]},
+    ]},
+    {sim:"100%",files:[
+      {p:"F:\\show\\Planet.Earth.III.E01.2160p.mkv",t:"59:00",res:"2160p",keep:1,bytes:8.9*GB,m:["2160p","8.9 GB","11,800k","29.97","HDR"]},
+      {p:"G:\\bak\\PlanetEarth3.E01.copy.mkv",t:"59:00",res:"2160p",bytes:8.9*GB,m:["=","=","=","=","="]},
+    ]},
+  ];
+  var cutState={};    // path -> bool (checked = deletion candidate). Default: every non-keep member.
+  var __files=[];     // flat render list so checkbox onclick can use a stable index (paths are unsafe in attrs)
+  // A KEEP file is NEVER a deletion candidate — the keep flag hard-overrides any stale cutState entry
+  // (a path-keyed cut can outlive a re-compare that promotes that path to keeper). Non-keepers default to cut.
+  function isCut(f){ if(f.keep) return false; return (f.p in cutState) ? cutState[f.p] : true; }
+  function migrateCut(oldP,newP){
+    // Case-insensitive: the mpv sidecar's path casing can differ from the engine's (Windows paths) —
+    // an exact-key miss would orphan the user's uncheck and flip the renamed file back to default-cut.
+    // Delete EVERY case-variant first, then assign (a first-match move could migrate a stale variant
+    // while orphaning the live exact key, and k===newP would self-assign-then-delete the entry).
+    var lc=oldP.toLowerCase();
+    function rekey(m){
+      var has=false, val;
+      for(var k in m) if(k.toLowerCase()===lc){ if(!has||k===oldP){ val=m[k]; has=true; } delete m[k]; }
+      if(has) m[newP]=val;
+    }
+    rekey(cutState);
+    _undo.forEach(rekey);   // undo snapshots must follow renames too
+  }
+  function humanBytes(n){
+    if(!n||n<=0) return "0 B";
+    var u=["B","KB","MB","GB","TB","PB"], i=Math.floor(Math.log(n)/Math.log(1024));
+    i=Math.max(0,Math.min(i,u.length-1));
+    var v=n/Math.pow(1024,i);
+    return v.toFixed(i>=4?2:(i>=3?1:0))+" "+u[i];
+  }
+  function mClass(f,x){ return f.keep?"m-best":(x==="="?"m-eq":((x.charAt(0)==="−"||x.slice(-1)==="!")?"m-bad":"m-eq")); }
+  function renderGroups(){
+    var qi=document.getElementById("q"), q=(qi?qi.value:"").toLowerCase();
+    var html=""; __files=[]; window.__thumbByPath={}; window.__pathByIdx={};
+    var why=window.__why||"HDR › 해상도 › 비트레이트";
+    var table = window.__view==="table";
+    GROUPS.forEach(function(g){
+      var fs=g.files.filter(function(f){return !q||f.p.toLowerCase().indexOf(q)>=0;});
+      if(!fs.length)return;
+      html+='<div class="ghead">중복 그룹 · <span class="mono">'+g.files.length+'</span> 파일 · 유사도 <span class="mono">'+g.sim+'</span><span class="why">선정 근거: <b>'+why+'</b></span></div>';
+      if(table){
+        html+='<table class="rtable"><thead><tr><th></th><th>경로</th><th>해상도</th><th>크기</th><th>비트레이트</th><th>fps</th><th>HDR</th><th>유사도</th></tr></thead><tbody>';
+        fs.forEach(function(f){
+          var idx=__files.length; __files.push(f); window.__thumbByPath[f.p]=idx; window.__pathByIdx[idx]=f.p;
+          var cells=f.m.map(function(x){return '<td class="tmono '+mClass(f,x)+'">'+x+'</td>';}).join("");
+          html+='<tr><td><span class="tcb '+(isCut(f)?'cut':'')+'" id="cb'+idx+'" onclick="tog('+idx+')"></span></td>'
+            +'<td class="tpath" title="'+f.p.replace(/"/g,"&quot;")+'">'+f.p+(f.keep?' <span class="keep-tag">유지</span>':'')+'</td>'
+            +cells+'<td class="tmono">'+g.sim+'</td></tr>';
+        });
+        html+='</tbody></table>';
+      } else {
+        fs.forEach(function(f){
+          var idx=__files.length; __files.push(f); window.__thumbByPath[f.p]=idx; window.__pathByIdx[idx]=f.p;
+          var mtxt=f.m.map(function(x){return '<span class="'+mClass(f,x)+'">'+x+'</span>';}).join("");
+          html+='<div class="fcard"><span class="cb '+(isCut(f)?'cut':'')+'" id="cb'+idx+'" onclick="tog('+idx+')"></span>'
+            +'<div class="thumb" id="thumb'+idx+'" data-i="'+idx+'" data-t="'+f.t+'"><span class="res">'+f.res+'</span></div>'
+            +'<div class="fmeta"><div class="fpath">'+f.p+(f.keep?' <span class="keep-tag">유지</span>':'')+'</div><div class="fmetrics">'+mtxt+'</div></div>'
+            +'<span class="sim">'+g.sim+'</span></div>';
+        });
+      }
+    });
+    document.getElementById("groups").innerHTML=html||'<div class="muted" style="padding:40px;text-align:center">필터에 걸리는 결과 없음. 상단 ‘비교만 다시’로 중복을 불러와.</div>';
+    recount();
+    if(window.onGroupsRendered) window.onGroupsRendered();
+  }
+  function setView(v){ window.__view=v;
+    var s=document.getElementById("viewStrip"), t=document.getElementById("viewTable");
+    if(s)s.classList.toggle("on",v==="strip"); if(t)t.classList.toggle("on",v==="table");
+    renderGroups();
+  }
+  window.setView=setView;
+  function tog(i){var f=__files[i]; if(!f||f.keep)return; selSnap(); cutState[f.p]=!isCut(f); var el=document.getElementById("cb"+i); if(el)el.classList.toggle("cut"); recount();}
+  // 선택 도구 — 원본 GUI의 ClearChecked/InvertChecked/CheckLowestQuality 대응.
+  // 의도적 차이: 키퍼는 절대 체크되지 않는다(삭제 안전 불변식) · '자동선택'은 규칙 화면의 우선순위가
+  // 기준이라 다이얼로그 없이 기본 선택 복원(cutState 리셋)과 동일하다.
+  var _undo=[];
+  function selSnap(){ _undo.push(Object.assign({},cutState)); if(_undo.length>50)_undo.shift(); }
+  function selBulk(mode){
+    if(window.__busy&&window.__busy()){ toast("작업 진행 중… 끝나면 다시"); return; }
+    selSnap();
+    if(mode==="auto") cutState={};
+    else GROUPS.forEach(function(g){ g.files.forEach(function(f){ if(f.keep)return; cutState[f.p]= mode==="clear" ? false : !isCut(f); }); });
+    renderGroups(); recount();
+    toast(mode==="auto"?"우선순위 기준 자동 선택 복원":(mode==="clear"?"선택 모두 해제":"선택 반전"));
+  }
+  function selUndo(){
+    if(window.__busy&&window.__busy()){ toast("작업 진행 중… 끝나면 다시"); return; }
+    if(!_undo.length){ toast("되돌릴 선택 변경이 없다"); return; }
+    cutState=_undo.pop(); renderGroups(); recount(); toast("선택 되돌림");
+  }
+  function selReset(){ _undo=[]; }   // new result set / DB switch: old snapshots are meaningless
+  document.addEventListener("keydown",function(e){
+    if((e.ctrlKey||e.metaKey)&&!e.shiftKey&&(e.key==="z"||e.key==="Z")){   // Ctrl+Shift+Z(redo)는 undo가 아니다
+      var t=e.target; if(t&&(t.tagName==="INPUT"||t.tagName==="TEXTAREA"||t.tagName==="SELECT"||t.isContentEditable))return;
+      var ck=document.getElementById("cmdk"); if(ck&&ck.classList.contains("open"))return;   // 팔레트 뒤에서 몰래 동작 금지
+      e.preventDefault(); selUndo();
+    }
+  });
+  function recount(){
+    var bytes=0,count=0;
+    GROUPS.forEach(function(g){g.files.forEach(function(f){ if(isCut(f)){ bytes+=(f.bytes||0); count++; } });});
+    var human=count?humanBytes(bytes):"—", cnt=count.toLocaleString();
+    ["reclaimSize","reclaimSize5"].forEach(function(id){var e=document.getElementById(id); if(e)e.textContent=human;});
+    ["cutN","cutN5","brkTrash"].forEach(function(id){var e=document.getElementById(id); if(e)e.textContent=cnt;});
+    var pt=document.getElementById("planTrash"); if(pt)pt.textContent=cnt+" 파일 · "+human;
+  }
+  function filter(){renderGroups();}
+  window.renderGroups=renderGroups; window.tog=tog; window.isCut=isCut; window.migrateCut=migrateCut;
+  window.selBulk=selBulk; window.selUndo=selUndo; window.selReset=selReset;
+  renderGroups();
+
+  function go(s){document.querySelectorAll(".screen").forEach(e=>e.classList.remove("on"));document.getElementById("s-"+s).classList.add("on");
+    const idx={sources:0,rules:1,scan:2,review:3,reclaim:4}[s];
+    document.querySelectorAll("#rail .chip").forEach((c,i)=>c.classList.toggle("on",i===idx));window.scrollTo({top:0,behavior:"smooth"});}
+  // fix the sources chip onclick mapping
+  document.querySelectorAll("#rail .chip").forEach((c,i)=>{c.onclick=()=>go(["sources","rules","scan","review","reclaim"][i]);});
+  go('review'); // sync initial state (④ 검토 hero)
+  let tt;function toast(m){clearTimeout(tt);let t=document.getElementById("_t");if(!t){t=document.createElement("div");t.id="_t";t.style.cssText="position:fixed;left:50%;bottom:60px;transform:translateX(-50%);z-index:60;background:rgba(30,30,36,.9);backdrop-filter:blur(10px);border:1px solid var(--line);color:var(--ink);padding:9px 16px;border-radius:11px;font-size:13px;box-shadow:0 10px 30px rgba(0,0,0,.5)";document.body.appendChild(t);}t.textContent=m;t.style.opacity=1;tt=setTimeout(()=>t.style.opacity=0,1400);}
+</script>
+
+<script>
+// VDF Photino bridge — JS side. Injected into wwwroot/index.html by build-index.js.
+(function () {
+  function send(cmd, payload) {   // false = no bridge (plain-browser QA): callers must NOT latch _busy on it
+    if (!(window.external && window.external.sendMessage)) return false;
+    window.external.sendMessage(JSON.stringify({ cmd: cmd, payload: payload || null }));
+    return true;
+  }
+  var handlers = {};
+  var _busy = false;   // one long engine op (compare/scan) at a time — the C# side serializes too
+  window.vdf = { send: send, on: function (c, f) { handlers[c] = f; } };
+
+  // ---- 콘솔 드로어 (path-free operation log) ----
+  function clog(msg, cls) {
+    var box = document.getElementById("clog"); if (!box) return;
+    var t = new Date(), z = function (n) { return ("0" + n).slice(-2); };
+    var line = document.createElement("div");
+    line.className = "cline" + (cls ? " " + cls : "");
+    line.innerHTML = '<span class="ct">' + z(t.getHours()) + ':' + z(t.getMinutes()) + ':' + z(t.getSeconds()) + '</span>' + msg;
+    box.appendChild(line); box.scrollTop = box.scrollHeight;
+    while (box.childNodes.length > 300) box.removeChild(box.firstChild);
+  }
+  window.clog = clog;
+  window.toggleConsole = function () { var c = document.getElementById("console"); if (c) c.classList.toggle("open"); };
+  window.clearConsole = function () { var b = document.getElementById("clog"); if (b) b.innerHTML = ""; };
+  var _lastStage = "";
+  function stageLog(prefix, pct, stage) { if (stage && stage !== _lastStage) { _lastStage = stage; clog(prefix + " · " + stage + " (" + (pct || 0) + "%)"); } }
+  function dispatch(raw) {
+    var m; try { m = JSON.parse(raw); } catch (e) { return; }
+    var f = handlers[m.cmd]; if (f) f(m.data);
+  }
+  window.__rx = dispatch;   // QA handle: browser tests inject C#-side messages
+  if (window.external && window.external.receiveMessage) {
+    window.external.receiveMessage(dispatch);
+  }
+
+  // Top-bar DB stats, live from VDF.Core (reading an isolated copy of the real DB).
+  window.vdf.on("stats", function (d) {
+    var el = document.querySelector(".dbstat");
+    if (el) {
+      var files = (d.files != null && d.files > 0) ? Number(d.files).toLocaleString() : "—";
+      var last = d.lastScan ? (" · <span class=dim>스캔 " + d.lastScan + "</span>") : "";
+      var badge = d.activeReal ? ' <b style="color:var(--red)">● 실 DB</b>' : '';
+      el.innerHTML = "DB <b>" + files + "</b> 파일 · <b>" + d.drives + "</b> 드라이브" + last + badge;
+      el.title = "VDF.Core " + d.core + " · " + d.machine + (d.activeReal ? " · 실제 인덱스에 기록됨" : " · 사본(안전)");
+      clog("DB 로드 · " + files + " 파일 · " + d.drives + " 드라이브" + (d.activeReal ? " · ⚠ 실 DB" : ""), d.activeReal ? "warn" : "ok");
+    }
+    if (window.toast) toast("DB 로드됨 · " + (d.files != null ? Number(d.files).toLocaleString() : 0) + " 파일");
+  });
+
+  // Re-run duplicate detection over the loaded DB (no re-scan) and render real groups.
+  window.doCompare = function () {
+    if (_busy) { if (window.toast) toast("작업 진행 중… 끝나면 다시"); return; }
+    _lastStage = "";
+    clog("비교 시작 — 전체 DB 재비교");
+    if (window.toast) toast("비교 중… 전체 DB 재비교 (기존 지문)");
+    _busy = send("compare");   // a bridge-less send can never unlatch — don't latch on it
+  };
+
+  window.vdf.on("progress", function (d) {
+    scanCtl(true);   // compare-only runs are pausable/stoppable too — surface the controls on ③
+    stageLog("비교", d.pct, d.stage);
+    if (window.toast) toast("비교 중… " + (d.pct || 0) + "%" + (d.stage ? " · " + d.stage : ""));
+  });
+
+  window.vdf.on("groups", function (d) {
+    _busy = false; scanCtl(false);
+    if (!d || !d.groups) return;
+    if (window.selReset) selReset();          // undo snapshots from the previous result set are stale
+    window.GROUPS = d.groups;                 // replace the mock sample data
+    if (d.why) window.__why = d.why;          // 선정 근거 from the priority order
+    if (window.renderGroups) renderGroups();
+    if (window.go) go("review");
+    clog("비교 완료 · " + (d.totalGroups || 0).toLocaleString() + " 그룹 · " + (d.items || 0).toLocaleString() + " 파일" +
+         (d.shown < d.totalGroups ? " (상위 " + d.shown + " 표시)" : ""), "ok");
+    if (window.toast)
+      toast("중복 " + (d.totalGroups || 0).toLocaleString() + "개 그룹 · " +
+            (d.items || 0).toLocaleString() + " 파일" +
+            (d.shown < d.totalGroups ? " (상위 " + d.shown + " 표시)" : ""));
+  });
+
+  // ---- 환경설정 (mpvGrid path) ----
+  window.vdf.on("settings", function (d) {
+    var inp = document.getElementById("mpvPath");
+    if (inp) inp.value = d.mpvGridPath || "";
+    var st = document.getElementById("mpvStatus");
+    if (st) {
+      st.textContent = d.mpvGridPath ? (d.mpvGridExists ? "● 확인됨" : "● 파일 없음") : "○ 미지정";
+      st.className = "mpvstat " + (d.mpvGridExists ? "ok" : "bad");
+    }
+    // 데이터베이스 모드
+    var dbi = document.getElementById("realDbPath");
+    if (dbi) dbi.value = d.realDbFolder || "";
+    var dsw = document.getElementById("swRealDb");
+    if (dsw) dsw.classList.toggle("on", !!d.realDbMode);
+    var dst = document.getElementById("realDbStatus");
+    if (dst) {
+      dst.textContent = d.activeReal ? "● 실 DB 사용 중 — 실제 인덱스에 스캔/비교 기록됨"
+        : (d.realDbMode ? (d.realDbHasDb ? "● 실 DB 준비됨 (토글 켜짐, 유효 폴더)" : "● 폴더에 ScannedFiles.db 가 없음")
+        : "○ 사본 사용 중 (안전 · 기본)");
+      dst.className = "mpvstat " + (d.activeReal || (d.realDbMode && !d.realDbHasDb) ? "bad" : "ok");
+    }
+  });
+  window.toggleRealDb = function (sw) {
+    var on = !sw.classList.contains("on");
+    sw.classList.toggle("on", on);
+    send("saveSetting", { key: "realDbMode", val: on });
+  };
+  window.browseRealDb = function () { send("browseRealDb"); };
+  window.saveRealDbFolder = function (el) { send("saveSetting", { key: "realDbFolder", val: el ? el.value : "" }); };
+  window.vdf.on("dbModeChanged", function (d) {
+    send("stats");
+    window.GROUPS = [];                      // groups from the previous DB are now stale — re-compare
+    if (window.selReset) selReset();         // undo snapshots point at the old result set
+    if (window.renderGroups) renderGroups();
+    clog("DB 모드 전환 · " + (d.activeReal ? "⚠ 실 DB (실사용)" : "사본 (안전)"), d.activeReal ? "warn" : "ok");
+    if (window.toast) toast(d.activeReal ? "⚠ 실 DB 모드 — 실제 인덱스에 기록된다. ‘비교만 다시’로 갱신" : "사본 모드 (안전)");
+  });
+  // 환경설정 is an in-page screen (no modal) — reuse the main window like the 5 stages
+  window.openSettings = function () { send("getSettings"); send("getRules"); if (window.go) go("settings"); };
+  window.browseMpv = function () { send("browseMpv"); };
+  window.saveMpvPath = function () { var v = document.getElementById("mpvPath"); send("saveSetting", { key: "mpvGridPath", val: v ? v.value : "" }); };
+
+  // ---- 규칙 (engine Settings) ----
+  function setVal(id, v) { var e = document.getElementById(id); if (e) e.value = v; }
+  function setSw(id, on) { var e = document.getElementById(id); if (e) e.classList.toggle("on", !!on); }
+  var PRIO_LABEL = { hdr: "HDR", res: "해상도", bitrate: "비트레이트", duration: "재생시간", size: "크기" };
+  var _prio = ["hdr", "res", "bitrate", "duration", "size"];
+  window.__why = "HDR › 해상도 › 비트레이트";
+  function renderPrio() {
+    var box = document.getElementById("prioChips"); if (!box) return;
+    box.innerHTML = _prio.map(function (k, i) {
+      return '<span class="facet prio" draggable="true" data-k="' + k + '">' +
+        '<b class="mono" style="color:var(--indigo);margin-right:6px">' + (i + 1) + '</b>' + PRIO_LABEL[k] + '</span>';
+    }).join("");
+    var dragK = null;
+    box.querySelectorAll(".prio").forEach(function (el) {
+      el.addEventListener("dragstart", function () { dragK = el.getAttribute("data-k"); el.style.opacity = .4; });
+      el.addEventListener("dragend", function () { el.style.opacity = 1; });
+      el.addEventListener("dragover", function (e) { e.preventDefault(); });
+      el.addEventListener("drop", function (e) {
+        e.preventDefault();
+        var tgt = el.getAttribute("data-k"); if (!dragK || dragK === tgt) return;
+        var from = _prio.indexOf(dragK), to = _prio.indexOf(tgt);
+        _prio.splice(from, 1); _prio.splice(to, 0, dragK);
+        renderPrio();
+        window.__why = _prio.slice(0, 3).map(function (k) { return PRIO_LABEL[k]; }).join(" › ");
+        send("setRule", { key: "priority", val: _prio });
+        if (window.toast) toast("우선순위: " + _prio.map(function (k) { return PRIO_LABEL[k]; }).join(" › ") + " · 다음 비교부터");
+      });
+    });
+  }
+  window.vdf.on("rules", function (d) {
+    setVal("rPercent", d.percent); setVal("rGray", d.phashGray); setVal("rDur", d.durationPct);
+    setVal("rMinMB", d.minFileSizeMB); setVal("rMaxMB", d.maxFileSizeMB);
+    setSw("swPHash", d.usePHash); setSw("swFlip", d.compareFlipped); setSw("swBW", d.ignoreBW);
+    setSw("swSub", d.includeSubDirs); setSw("swImg", d.includeImages);
+    setSw("swDb", d.entireDb); setSw("swSize", d.filterBySize);
+    if (d.priority && d.priority.length) {
+      _prio = d.priority.slice();
+      window.__why = _prio.slice(0, 3).map(function (k) { return PRIO_LABEL[k]; }).join(" › ");
+    }
+    renderPrio();
+    window.__lastRules = d;                        // re-fill when a settings tab renders its controls
+    if (window.__fillOpts) window.__fillOpts(d);   // full engine options in the settings screen
+  });
+  window.setRuleNum = function (key, el) { var v = parseFloat(el.value); if (!isNaN(v)) send("setRule", { key: key, val: v }); };
+  window.toggleRule = function (key, sw) {
+    var on = !sw.classList.contains("on"); sw.classList.toggle("on", on);
+    send("setRule", { key: key, val: on });
+  };
+
+  // ---- 환경설정: full engine options (schema-driven; mirrors VDF.Core Settings) ----
+  var OPT_SECTIONS = [
+    { t: "스캔 성능", items: [
+      { k: "maxDegreeOfParallelism", l: "최대 병렬 처리 수", ty: "num", h: "-1=모든 코어 · 1=한 개씩" },
+      { k: "hddMaxDegreeOfParallelism", l: "HDD 병렬 처리 수", ty: "num", h: "스핀들 HDD 드라이브별" },
+      { k: "adaptiveConcurrency", l: "드라이브별 적응형 동시성", ty: "sw" },
+      { k: "adaptiveWindowSeconds", l: "적응 윈도 (초)", ty: "num" },
+      { k: "hardwareAccelerationMode", l: "하드웨어 가속", ty: "sel", opts: ["none","auto","dxva2","d3d11va","qsv","cuda","vulkan","vaapi","vdpau","videotoolbox","drm","mediacodec"] },
+      { k: "useNativeFfmpegBinding", l: "네이티브 FFmpeg 바인딩", ty: "sw" },
+      { k: "parallelAudioDecodeThreads", l: "오디오 병렬 디코드 스레드", ty: "num", h: "0·1=순차 · 네이티브 바인딩 필요" },
+    ]},
+    { t: "썸네일", items: [
+      { k: "thumbnailCount", l: "샘플 프레임 수", ty: "num", h: "1=중간 지점만 · 늘리면 오탐↓ 스캔 느려짐 · 변경 시 다음 스캔에서 전체 재추출" },
+      { k: "thumbnailMaxWidth", l: "미리보기 너비 (px)", ty: "num", h: "표시 전용 — 판정에 영향 없음" },
+    ]},
+    { t: "파일 처리", items: [
+      { k: "ignoreReadOnlyFolders", l: "읽기 전용 폴더 무시", ty: "sw" },
+      { k: "ignoreReparsePoints", l: "리파스 포인트(심링크) 무시", ty: "sw" },
+      { k: "excludeHardLinks", l: "하드링크 제외", ty: "sw" },
+      { k: "includeNonExistingFiles", l: "없는 파일도 결과에 포함", ty: "sw" },
+      { k: "useExifCreationDate", l: "EXIF 생성일 사용", ty: "sw" },
+      { k: "alwaysRetryFailedSampling", l: "샘플링 실패 항상 재시도", ty: "sw" },
+      { k: "maxSamplingRetryAttempts", l: "재시도 상한", ty: "num", h: "0=무한 재시도" },
+      { k: "autoDeleteUnrecoverableFiles", l: "복구불능 파일 자동 휴지통", ty: "sw", warn: 1, h: "⚠ 스캔 끝에 디코드 불가 영상을 휴지통으로 — 신중히" },
+    ]},
+    { t: "매칭 고급", items: [
+      { k: "threshhold", l: "프레임 임계값 (0–255)", ty: "num" },
+      { k: "durationDifferenceMinSeconds", l: "최소 길이 차이 (초)", ty: "num", h: "0=하한 없음" },
+      { k: "durationDifferenceMaxSeconds", l: "최대 길이 차이 (초)", ty: "num", h: "0=상한 없음" },
+      { k: "maxSamplingDurationSeconds", l: "최대 샘플링 길이 (초)", ty: "num", h: "0=전체 길이에 분산" },
+      { k: "folderMatchMode", l: "폴더 매칭", ty: "sel", opts: [[0, "제한 없음"], [1, "같은 폴더끼리만"], [2, "다른 폴더끼리만"]] },
+      { k: "sameFolderDepth", l: "같은 폴더 깊이", ty: "num" },
+    ]},
+    { t: "부분 클립 (오디오 지문)", items: [
+      { k: "enablePartialClipDetection", l: "오디오 지문 비교", ty: "sw", warn: 1, h: "⚠ 전 영상 오디오 디코딩 — 첫 스캔이 크게 느려짐 (결과 캐시됨)" },
+      { k: "audioCompareMethod", l: "비교 방식", ty: "sel", opts: [[0, "BruteForce (검증됨)"], [1, "InvertedIndex (40×+ 빠름)"]] },
+      { k: "partialClipMinRatio", l: "최소 클립/원본 비율 (%)", ty: "num", scale: 100 },
+      { k: "partialClipSimilarityThreshold", l: "최소 오디오 유사도 (%)", ty: "num", scale: 100 },
+      { k: "partialClipRequireVisualMatch", l: "시각적 일치 요구", ty: "sw", h: "같은 배경음악 오탐 방지" },
+      { k: "partialClipVisualThreshold", l: "최소 시각 유사도 (%)", ty: "num", scale: 100 },
+    ]},
+    { t: "기타", items: [
+      { k: "customFFArguments", l: "사용자 지정 FF 인자", ty: "txt", h: "대부분 비워두면 됨" },
+      { k: "extendedFFToolsLogging", l: "확장 FFTools 로깅", ty: "sw" },
+      { k: "logExcludedFiles", l: "제외된 파일 로깅", ty: "sw" },
+      { k: "databaseCheckpointIntervalMinutes", l: "DB 체크포인트 간격 (분)", ty: "num", h: "0=단계 경계에서만 저장" },
+    ]},
+  ];
+  var OPT_BY_KEY = {};
+  OPT_SECTIONS.forEach(function (s) { s.items.forEach(function (it) { OPT_BY_KEY[it.k] = it; }); });
+
+  function optRow(it) {
+    var hint = it.h ? '<div class="ohint' + (it.warn ? ' warn' : '') + '">' + it.h + '</div>' : '';
+    var ctl;
+    if (it.ty === "sw") ctl = '<span class="sw" id="opt_' + it.k + '" onclick="optToggle(\'' + it.k + '\',this)"></span>';
+    else if (it.ty === "sel") ctl = '<select class="osel" id="opt_' + it.k + '" onchange="optSel(\'' + it.k + '\',this)">' +
+      it.opts.map(function (o) { var v = Array.isArray(o) ? o[0] : o, l = Array.isArray(o) ? o[1] : o; return '<option value="' + v + '">' + l + '</option>'; }).join("") + '</select>';
+    else if (it.ty === "txt") ctl = '<input class="onum otxt" id="opt_' + it.k + '" onchange="optTxt(\'' + it.k + '\',this)" spellcheck="false">';
+    else ctl = '<input class="onum" id="opt_' + it.k + '" onchange="optNum(\'' + it.k + '\',this)">';
+    return '<div class="orow' + (it.warn ? ' warnrow' : '') + '"><div class="olab">' + it.l + hint + '</div>' + ctl + '</div>';
+  }
+
+  // Settings screen: left section tabs — tab 0 = the static 연동·데이터 panel, 1.. = engine sections
+  var SET_TABS = ["연동 · 데이터"].concat(OPT_SECTIONS.map(function (s) { return s.t; }));
+  window.__optTab = 0;
+  function renderSetTabs() {
+    var box = document.getElementById("stabs"); if (!box) return;
+    box.innerHTML = SET_TABS.map(function (t, i) {
+      return '<div class="stab' + (i === window.__optTab ? ' on' : '') + '" onclick="setOptTab(' + i + ')">' + t + '</div>';
+    }).join("");
+  }
+  window.setOptTab = function (i) {
+    window.__optTab = i; renderSetTabs();
+    var db = document.getElementById("dbPanel"), ol = document.getElementById("optList");
+    if (db) db.style.display = i === 0 ? "block" : "none";
+    if (ol) {
+      ol.style.display = i === 0 ? "none" : "block";
+      if (i > 0) {
+        ol.innerHTML = OPT_SECTIONS[i - 1].items.map(optRow).join("");
+        if (window.__lastRules) fillOpts(window.__lastRules);   // fill the freshly-rendered controls
+      }
+    }
+  };
+  function fillOpts(d) {
+    OPT_SECTIONS.forEach(function (sec) { sec.items.forEach(function (it) {
+      var el = document.getElementById("opt_" + it.k); if (!el || !(it.k in d)) return;
+      var v = d[it.k];
+      if (it.ty === "sw") el.classList.toggle("on", !!v);
+      else if (it.ty === "sel") el.value = String(v);
+      else el.value = it.scale ? +((v * it.scale).toFixed(4)) : v;
+    }); });
+  }
+  window.__fillOpts = fillOpts;   // QA handle
+  window.optToggle = function (k, el) { var on = !el.classList.contains("on"); el.classList.toggle("on", on); send("setRule", { key: k, val: on }); };
+  window.optNum = function (k, el) {
+    var it = OPT_BY_KEY[k], v = parseFloat(el.value);
+    if (isNaN(v)) return;
+    send("setRule", { key: k, val: it && it.scale ? v / it.scale : v });
+  };
+  window.optSel = function (k, el) {
+    var it = OPT_BY_KEY[k];
+    var numeric = it && it.opts.length && Array.isArray(it.opts[0]);
+    send("setRule", { key: k, val: numeric ? parseInt(el.value, 10) : el.value });
+  };
+  window.optTxt = function (k, el) { send("setRule", { key: k, val: el.value }); };
+  renderSetTabs(); window.setOptTab(0);
+
+  // ---- 커맨드 팔레트 (Ctrl+K) — 이동/실행/설정 점프. 삭제류 명령은 의도적으로 제외 ----
+  var CK_BASE = [
+    { c: "이동", t: "① 소스 — 스캔할 폴더", k: "sources go", run: function () { go("sources"); } },
+    { c: "이동", t: "② 규칙 — 매칭 기준", k: "rules go", run: function () { go("rules"); } },
+    { c: "이동", t: "③ 스캔", k: "scan go", run: function () { go("scan"); } },
+    { c: "이동", t: "④ 검토 — 중복 그룹", k: "review dup go", run: function () { go("review"); } },
+    { c: "이동", t: "⑤ 정리 — 휴지통 계획", k: "reclaim trash go", run: function () { go("reclaim"); } },
+    { c: "실행", t: "▶ 전체 스캔 시작", k: "full scan start", run: function () { startFullScan(); } },
+    { c: "실행", t: "비교만 다시 실행", k: "compare rerun", run: function () { doCompare(); } },
+    { c: "보기", t: "검토 — 스트립 보기", k: "view strip", run: function () { go("review"); setView("strip"); } },
+    { c: "보기", t: "검토 — 테이블 보기", k: "view table", run: function () { go("review"); setView("table"); } },
+    { c: "콘솔", t: "콘솔 열기/닫기", k: "console toggle log", run: function () { toggleConsole(); } },
+    { c: "콘솔", t: "콘솔 지우기", k: "console clear", run: function () { clearConsole(); } }
+  ];
+  function ckCmds() {
+    return CK_BASE.concat(SET_TABS.map(function (t, i) {
+      return { c: "설정", t: "환경설정 — " + t, k: "settings options", run: function () { window.openSettings(); window.setOptTab(i); } };
+    }));
+  }
+  var _ckSel = 0, _ckItems = [];
+  function ckRender() {
+    var q = (document.getElementById("ckq").value || "").toLowerCase().trim();
+    _ckItems = ckCmds().filter(function (x) { return !q || (x.t + " " + x.k).toLowerCase().indexOf(q) >= 0; });
+    if (_ckSel >= _ckItems.length) _ckSel = 0;
+    var el = document.getElementById("cklist");
+    el.innerHTML = _ckItems.length ? _ckItems.map(function (x, i) {
+      return '<div class="ckitem' + (i === _ckSel ? " on" : "") + '" onmousemove="ckHover(' + i + ')" onclick="ckRun(' + i + ')"><span class="ckcat">' + x.c + '</span>' + x.t + '</div>';
+    }).join("") : '<div class="ckempty">일치하는 명령 없음</div>';
+    var on = el.children[_ckSel]; if (on && on.scrollIntoView) on.scrollIntoView({ block: "nearest" });
+  }
+  window.ckHover = function (i) { if (i !== _ckSel) { _ckSel = i; ckRender(); } };
+  window.ckRun = function (i) { var x = _ckItems[i]; closeCmdk(); if (x) x.run(); };
+  window.openCmdk = function () {
+    var q = document.getElementById("ckq");
+    document.getElementById("cmdk").classList.add("open");
+    q.value = ""; _ckSel = 0; ckRender(); q.focus();
+  };
+  window.closeCmdk = function () { document.getElementById("cmdk").classList.remove("open"); };
+  var _ckq = document.getElementById("ckq");
+  if (_ckq) _ckq.addEventListener("input", function () { _ckSel = 0; ckRender(); });
+  document.addEventListener("keydown", function (e) {
+    if ((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "K")) {
+      e.preventDefault();
+      document.getElementById("cmdk").classList.contains("open") ? closeCmdk() : window.openCmdk();
+      return;
+    }
+    var open = document.getElementById("cmdk").classList.contains("open");
+    if (!open) return;
+    if (e.key === "Escape") closeCmdk();
+    else if (e.key === "ArrowDown") { e.preventDefault(); if (_ckItems.length) { _ckSel = (_ckSel + 1) % _ckItems.length; ckRender(); } }
+    else if (e.key === "ArrowUp") { e.preventDefault(); if (_ckItems.length) { _ckSel = (_ckSel - 1 + _ckItems.length) % _ckItems.length; ckRender(); } }
+    else if (e.key === "Enter") { e.preventDefault(); window.ckRun(_ckSel); }
+  });
+
+  // ---- 순회비교 (launch mpvGrid on the visible groups) ----
+  function collectVisibleGroups() {
+    var qi = document.getElementById("q");
+    var q = (qi ? qi.value : "").toLowerCase();
+    var out = [];
+    (window.GROUPS || []).forEach(function (g) {
+      var ps = g.files.filter(function (f) { return !q || f.p.toLowerCase().indexOf(q) >= 0; }).map(function (f) { return f.p; });
+      if (ps.length >= 2) out.push(ps);
+    });
+    return out;
+  }
+  window.doMpvCompare = function () {
+    var groups = collectVisibleGroups();
+    if (!groups.length) { if (window.toast) toast("순회할 그룹이 없다 — 먼저 ‘비교만 다시’ 실행"); return; }
+    send("compareInMpv", { groups: groups });
+  };
+  window.vdf.on("compareStarted", function (d) {
+    clog("순회비교 → mpvGrid · " + d.groups + " 그룹 " + d.files + " 편");
+    if (window.toast) toast("순회비교 시작 · " + d.groups + "개 그룹 " + d.files + "편 → mpvGrid");
+  });
+
+  // ---- ① 소스 (scan folders + excludes) ----
+  function esc(s) { return String(s).replace(/\\/g, "\\\\").replace(/'/g, "\\'"); }  // backslashes FIRST (Windows paths)
+  window.vdf.on("sources", function (d) {
+    var inc = document.getElementById("srcList");
+    if (inc) inc.innerHTML = (d.sources && d.sources.length)
+      ? d.sources.map(function (s) {
+          return '<div class="srow"><span class="drivedot" style="background:' + (s.exists ? 'var(--green)' : 'var(--red)') + '"></span>' +
+            '<span class="spath">' + s.path + '</span><span class="srm" onclick="removeSource(\'' + esc(s.path) + '\')">✕</span></div>';
+        }).join("")
+      : '<div class="dim" style="padding:16px 4px;font-size:13px">아직 없음 — ‘폴더 추가’로 스캔 대상을 지정해.</div>';
+    var ex = document.getElementById("exList");
+    if (ex) ex.innerHTML = (d.excludes && d.excludes.length)
+      ? d.excludes.map(function (p) {
+          return '<div class="srow"><span class="spath mono">' + p + '</span><span class="srm" onclick="removeExclude(\'' + esc(p) + '\')">✕</span></div>';
+        }).join("")
+      : '<div class="dim" style="padding:12px 4px;font-size:12.5px">제외 없음</div>';
+    var n = (d.sources || []).length;
+    var rng = document.getElementById("srcRange");
+    if (rng) rng.textContent = n ? (n + "개 폴더 포함됨 · ‘전체 스캔’ 준비됨") : "포함 폴더 없음 · 트리에서 체크해";
+    window.__includes = (d.sources || []).map(function (s) { return s.path; });   // tree's only selection state
+    if (window.renderTree) renderTree();
+  });
+  window.addSource = function () { send("addSource"); };
+  window.addExclude = function () { send("addExclude"); };
+  window.removeSource = function (p) { send("removeSource", { path: p }); };
+  window.removeExclude = function (p) { send("removeExclude", { path: p }); };
+
+  // ---- 포함 폴더 트리 (mirror of the old GUI: the include list IS the only selection state; checkbox derived) ----
+  window.__includes = window.__includes || [];
+  var _dir = {};        // path -> child entries (loaded lazily)
+  var _open = {};       // path -> expanded?
+  window.__dir = _dir; window.__open = _open;   // QA handles (browser rendering test without the C# bridge)
+  function norm(s) { return String(s).replace(/[\\/]+$/, "").toLowerCase(); }
+  function isUnder(child, anc) {
+    var c = norm(child), a = norm(anc);
+    if (c.length <= a.length || c.indexOf(a) !== 0) return false;
+    return a.charAt(a.length - 1) === ":" || c.charAt(a.length) === "\\" || c.charAt(a.length) === "/";
+  }
+  function selfOrAncInc(p) { return window.__includes.some(function (i) { return norm(i) === norm(p) || isUnder(p, i); }); }
+  function descInc(p) { return window.__includes.some(function (i) { return isUnder(i, p); }); }
+  function checkState(p) { return selfOrAncInc(p) ? "on" : (descInc(p) ? "mid" : "off"); }
+  window.toggleNode = function (p) {
+    if (selfOrAncInc(p)) {
+      // ClearSubtree — drop this path + everything under it (an included ANCESTOR is left alone; carve it out via 제외)
+      window.__includes = window.__includes.filter(function (i) { return !(norm(i) === norm(p) || isUnder(i, p)); });
+    } else {
+      // SelectThis — drop redundant descendants, add this path (no ancestor covers it here)
+      window.__includes = window.__includes.filter(function (i) { return !isUnder(i, p); });
+      window.__includes.push(p);
+    }
+    send("setSources", { sources: window.__includes });
+    renderTree();
+  };
+  window.vdf.on("dirList", function (d) { _dir[d.path || ""] = d.entries || []; renderTree(); });
+  window.toggleExpand = function (ev, p) {
+    if (ev) ev.stopPropagation();
+    if (_open[p]) { _open[p] = false; renderTree(); }
+    else { _open[p] = true; if (!_dir[p]) send("listDir", { path: p }); else renderTree(); }
+  };
+  function treeNode(n, depth) {
+    var cs = checkState(n.path), exp = _open[n.path];
+    var arrow = n.hasChildren
+      ? '<span class="darr' + (exp ? " open" : "") + '" onclick="toggleExpand(event,\'' + esc(n.path) + '\')">▸</span>'
+      : '<span class="darr-none"></span>';
+    var h = '<div class="dnode" style="padding-left:' + (depth * 18) + 'px">' + arrow +
+      '<span class="dcb ' + cs + '" onclick="toggleNode(\'' + esc(n.path) + '\')"></span>' +
+      '<span class="dname"' + (n.isDrive ? ' style="font-weight:600;color:var(--ink)"' : '') + ' onclick="toggleExpand(event,\'' + esc(n.path) + '\')">' + n.name + '</span></div>';
+    if (exp && _dir[n.path]) h += _dir[n.path].map(function (c) { return treeNode(c, depth + 1); }).join("");
+    return h;
+  }
+  function renderTree() {
+    var box = document.getElementById("dtree"); if (!box) return;
+    var roots = _dir[""] || [];
+    box.innerHTML = roots.length ? roots.map(function (n) { return treeNode(n, 0); }).join("")
+      : '<div class="dim" style="padding:12px 4px;font-size:12.5px">드라이브 불러오는 중…</div>';
+  }
+  window.renderTree = renderTree;
+
+  // ---- ③ 스캔 (real per-drive state from the DB; live progress during a scan) ----
+  function renderDrives(drives) {
+    var box = document.getElementById("drives"); if (!box) return;
+    box.innerHTML = '<div class="lbl">드라이브 — 라이브러리 스캔 상태</div>' + drives.map(function (d) {
+      var fps = d.fps ? (' · ' + d.fps + ' f/s') : '';
+      return '<div class="drive"><div class="dinfo"><span><b style="color:var(--ink)">' + d.root + '</b></span>' +
+        '<span>done ' + d.doneFiles.toLocaleString() + '/' + d.totalFiles.toLocaleString() + fps + '</span></div>' +
+        '<div class="dbar"><i style="width:' + d.pct + '%"></i></div></div>';
+    }).join("");
+  }
+  function renderTallies(tallies) {
+    var box = document.getElementById("tallies"); if (!box) return;
+    box.innerHTML = tallies.map(function (t) {
+      return '<div class="tally"><span>' + t[0] + '</span><span class="mono">' + t[1] + '</span></div>';
+    }).join("");
+  }
+  window.vdf.on("driveInfo", function (d) { if (d.drives) renderDrives(d.drives); if (d.tallies) renderTallies(d.tallies); });
+  window.vdf.on("scanProgress", function (d) {
+    if (d.drives) renderDrives(d.drives);
+    scanCtl(true);
+    if (_paused) {   // progress while "paused" = the pause never took (engine no-op window) — self-correct
+      _paused = false; var pb = document.getElementById("btnPause"); if (pb) pb.textContent = "⏸ 일시정지";
+    }
+    stageLog("스캔", d.pct, d.stage);
+    if (window.toast) toast("스캔 중… " + (d.pct || 0) + "%" + (d.stage ? " · " + d.stage : ""));
+  });
+
+  // ---- 스캔 제어 (Core의 2단계 Stop: 1차=안전 드레인 — 진행 중 파일 마무리·지문 저장, 2차=강제) ----
+  var _paused = false;
+  function scanCtl(show) {
+    var el = document.getElementById("scanCtl"); if (el) el.style.display = show ? "inline-flex" : "none";
+    if (!show) {
+      _paused = false;
+      var p = document.getElementById("btnPause"), s = document.getElementById("btnStop");
+      if (p) { p.textContent = "⏸ 일시정지"; p.style.display = ""; }   // scanStopping hides it during the drain
+      if (s) s.textContent = "⏹ 중지";
+    }
+  }
+  window.pauseScanUi = function () { send(_paused ? "resumeScan" : "pauseScan"); };
+  var _lastStop = 0;
+  window.stopScanUi = function () {   // debounce: an accidental double-click must not skip the safe drain and force-abort
+    var now = Date.now(); if (now - _lastStop < 700) return; _lastStop = now;
+    send("stopScan");
+  };
+  window.vdf.on("scanPaused", function () {
+    _paused = true; var b = document.getElementById("btnPause"); if (b) b.textContent = "▶ 재개";
+    clog("스캔 일시정지 — 완료된 작업은 저장됨", "warn"); if (window.toast) toast("스캔 일시정지");
+  });
+  window.vdf.on("scanResumed", function () {
+    _paused = false; var b = document.getElementById("btnPause"); if (b) b.textContent = "⏸ 일시정지";
+    clog("스캔 재개"); if (window.toast) toast("스캔 재개");
+  });
+  window.vdf.on("scanStopping", function (d) {
+    if (!_busy) return;   // raced a just-finished scan: the terminal reply already reset the controls
+    // engine.Stop() silently RESUMES a paused scan to run the drain — mirror that here, and hide the
+    // pause button so a stray click can't pause the very drain the user is trying to end.
+    var pb = document.getElementById("btnPause");
+    if (pb) { pb.style.display = "none"; pb.textContent = "⏸ 일시정지"; }
+    _paused = false;
+    if (d && d.safe) {
+      var b = document.getElementById("btnStop"); if (b) b.textContent = "⏹ 강제 중단";
+      clog("안전 중지 — 진행 중 파일만 마무리하고 끝낸다 (한 번 더 누르면 강제 중단)", "warn");
+      if (window.toast) toast("안전 중지 요청됨");
+    } else { clog("강제 중단 요청", "warn"); if (window.toast) toast("강제 중단…"); }
+  });
+  window.vdf.on("scanAborted", function () {
+    _busy = false; scanCtl(false);
+    clog("스캔 중단됨 — 지금까지 완료된 지문은 DB에 남는다", "warn");
+    if (window.toast) toast("스캔 중단됨");
+  });
+  window.vdf.on("scanBlocked", function (d) { _busy = false; clog(d.message, "warn"); if (window.toast) toast(d.message); if (window.go) go("sources"); });
+  window.startFullScan = function () { if (window.go) go("scan"); send("driveInfo"); };
+  window.doStartScan = function () {
+    if (_busy) { if (window.toast) toast("작업 진행 중… 끝나면 다시"); return; }
+    _lastStage = "";
+    clog("스캔 시작");
+    if (window.toast) toast("스캔 시작…");
+    _busy = send("startScan");   // see doCompare
+  };
+
+  // ---- ⑤ 정리 실행 (recycle the checked duplicates) ----
+  window.doReclaim = function () {
+    if (_busy) { if (window.toast) toast("작업 진행 중… 끝나면 다시"); return; }
+    var cut = window.isCut || function (f) { return !f.keep; };
+    var paths = [], keepers = [];
+    (window.GROUPS || []).forEach(function (g) {
+      g.files.forEach(function (f) {
+        if (f.keep) keepers.push(f.p);       // never delete a keeper …
+        else if (cut(f)) paths.push(f.p);    // … only checked non-keepers
+      });
+    });
+    // A path can sit in two groups (regular + partial-clip) as keeper in one and member in the other —
+    // anything that is a keeper ANYWHERE never goes in the delete list. (C# refuses them too.)
+    var ks = {}; keepers.forEach(function (p) { ks[p.toLowerCase()] = 1; });
+    paths = paths.filter(function (p) { return !ks[p.toLowerCase()]; });
+    if (!paths.length) { if (window.toast) toast("정리할 체크 항목이 없다 — 유지본은 삭제 대상이 아냐"); return; }
+    // latch until reclaimDone/reclaimCancelled/fatal error — a second 정리 click mid-deletion would
+    // re-collect the same paths. Bridge-less send (browser QA) can never unlatch → don't latch.
+    _busy = send("reclaim", { paths: paths, keepers: keepers });   // C# ALSO refuses any keeper path (defense in depth)
+  };
+  window.vdf.on("reclaimDone", function (d) {
+    _busy = false;
+    var msg = "정리 완료 · " + d.deleted + "개 휴지통으로 · " + d.freed + " 확보" +
+      (d.skipped ? (" · 건너뜀 " + d.skipped) : "") + (d.failed ? (" · 실패 " + d.failed) : "");
+    clog(msg, d.failed ? "warn" : "ok");
+    if (window.toast) toast(msg);
+  });
+  window.vdf.on("reclaimCancelled", function () { _busy = false; clog("정리 취소"); if (window.toast) toast("정리 취소됨"); });
+
+  // ---- 썸네일 (lazy: extract a frame only when a card scrolls into view) ----
+  var _thumbObs = null, _thumbQ = {}, _thumbTimer = null, _thumbDone = {};
+  function flushThumbs() {
+    var todo = Object.keys(_thumbQ).filter(function (p) { return !_thumbDone[p]; });
+    _thumbQ = {};
+    if (todo.length) send("thumbs", { paths: todo });
+  }
+  window.onGroupsRendered = function () {
+    if (!("IntersectionObserver" in window)) return;
+    if (_thumbObs) _thumbObs.disconnect();
+    _thumbObs = new IntersectionObserver(function (entries) {
+      var any = false;
+      entries.forEach(function (en) {
+        if (!en.isIntersecting) return;
+        var p = (window.__pathByIdx || {})[+en.target.getAttribute("data-i")];
+        if (p && !_thumbDone[p]) { _thumbQ[p] = 1; any = true; }
+        else if (p && typeof _thumbDone[p] === "string") {   // re-render after bulk select/undo: re-apply the cached frame
+          en.target.style.backgroundImage = "url('" + _thumbDone[p] + "')";
+          en.target.style.backgroundSize = "cover"; en.target.style.backgroundPosition = "center";
+        }
+        _thumbObs.unobserve(en.target);   // one-shot per card
+      });
+      if (any) { clearTimeout(_thumbTimer); _thumbTimer = setTimeout(flushThumbs, 180); }
+    }, { rootMargin: "300px" });
+    document.querySelectorAll("#groups .thumb").forEach(function (el) { _thumbObs.observe(el); });
+  };
+  window.vdf.on("thumb", function (d) {
+    _thumbDone[d.path] = d.uri;   // cache the data URI — bulk re-renders re-apply it without re-extracting
+    var idx = window.__thumbByPath ? window.__thumbByPath[d.path] : undefined;
+    var el = (idx != null) ? document.getElementById("thumb" + idx) : null;
+    if (el) { el.style.backgroundImage = "url('" + d.uri + "')"; el.style.backgroundSize = "cover"; el.style.backgroundPosition = "center"; }
+  });
+
+  // ---- mpvGrid deletion/merge sync → live row updates ----
+  function baseName(p) { var s = p.split("\\"); return s[s.length - 1]; }
+  window.vdf.on("removed", function (d) {
+    var lc = d.path.toLowerCase();
+    (window.GROUPS || []).forEach(function (g) { g.files = g.files.filter(function (f) { return f.p.toLowerCase() !== lc; }); });
+    window.GROUPS = (window.GROUPS || []).filter(function (g) { return g.files.length >= 2; });
+    (d.newKeeps || []).forEach(function (nkP) {   // the deleted file led group(s) — C# re-elected per group
+      var nk = nkP.toLowerCase();
+      (window.GROUPS || []).forEach(function (g) { g.files.forEach(function (f) { if (f.p.toLowerCase() === nk) f.keep = 1; }); });
+    });
+    if (window.renderGroups) renderGroups();
+    if (window.toast) toast("삭제 반영: " + baseName(d.path));
+  });
+  window.vdf.on("renamed", function (d) {
+    var lc = d.oldPath.toLowerCase();
+    (window.GROUPS || []).forEach(function (g) { g.files.forEach(function (f) { if (f.p.toLowerCase() === lc) f.p = d.newPath; }); });
+    if (window.migrateCut) window.migrateCut(d.oldPath, d.newPath);   // keep the user's check state with the renamed file
+    if (window.renderGroups) renderGroups();
+  });
+
+  // Only a FATAL error (C# marks the ones that end the long op) may clear the single-flight gate —
+  // an unrelated thumbs/listDir/mpv error mid-scan must not re-enable 스캔/정리 or hide the stop controls.
+  window.vdf.on("error", function (d) {
+    if (d && d.fatal) { _busy = false; scanCtl(false); }
+    clog("오류: " + (d && d.message), "err"); if (window.toast) toast("오류: " + (d && d.message));
+  });
+  window.__busy = function () { return _busy; };   // prototype-side bulk ops check this before touching GROUPS
+
+  window.addEventListener("load", function () { send("stats"); send("getRules"); send("getSources"); send("listDir", { path: "" }); });
+})();
+
+</script>
+</body></html>

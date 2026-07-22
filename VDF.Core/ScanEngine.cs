@@ -2521,7 +2521,7 @@ namespace VDF.Core {
 				return;
 			}
 
-			Logger.Instance.Info($"Partial clip detection: comparing {videos.Count} video(s) (fingerprint blocks: min={videos.Min(e => e.AudioFingerprint!.Length)}, max={videos.Max(e => e.AudioFingerprint!.Length)})...");
+			Logger.Instance.Info($"Partial clip detection: comparing {videos.Count} video(s) with {Settings.AudioCompareMethod} (fingerprint blocks: min={videos.Min(e => e.AudioFingerprint!.Length)}, max={videos.Max(e => e.AudioFingerprint!.Length)}, total={videos.Sum(e => (long)e.AudioFingerprint!.Length):N0})...");
 
 			float simThreshold = (float)Settings.PartialClipSimilarityThreshold;
 			currentStageLabel = T("Scan.Stage.PartialCompare");

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1">
+  <!-- Declare DPI awareness at process LOAD so Photino's per-window scaling reads the true monitor DPI
+       deterministically. Without this the window intermittently opened at 1440×⅔ = 960×613 (a 150%
+       scale applied by a racing thread-DPI context). PerMonitorV2 makes SetSize logical/consistent. -->
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WSM">PerMonitorV2</dpiAwareness>
+      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/pm</dpiAware>
+    </windowsSettings>
+  </application>
+</assembly>
