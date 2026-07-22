@@ -432,10 +432,31 @@
               <button class="cta ghost" onclick="browseRealDb()">찾아보기</button>
             </div>
             <div class="mpvstat" id="realDbStatus">○ 사본 사용 중 (안전 · 기본)</div>
+            <div style="margin-top:12px"><button class="cta ghost" onclick="openDbView()">DB 뷰어 열기 ▸</button>
+              <span class="dim" style="font-size:11.5px;margin-left:8px">인덱스 엔트리 검색·열람·정리</span></div>
           </div>
         </div>
         <div id="optList" style="display:none"></div>
       </div>
+    </div>
+</section>
+
+<!-- DB VIEWER (in-page screen — paged index browser) -->
+<section class="screen" id="s-dbview" style="max-width:1440px;margin:0 auto;padding:10px 20px 60px">
+    <div class="h1">DB 뷰어</div>
+    <div class="sub">지문 인덱스 엔트리 열람. ✕ = 인덱스에서 잊기(파일은 그대로, 재스캔 시 다시 등록) · 정리 = 미존재 파일 엔트리 일괄 제거.</div>
+    <div class="query" style="margin-bottom:14px">
+      <span class="gt">&gt;</span>
+      <input id="dbq" placeholder="경로 검색" oninput="dbSearch()">
+      <span class="qhint" id="dbCount">—</span>
+      <button class="cta ghost" style="padding:7px 15px;font-size:12.5px" onclick="window.vdf.send('dbCleanup')">🧹 미존재 정리</button>
+      <button class="cta ghost" style="padding:7px 15px;font-size:12.5px" onclick="go('settings')">← 환경설정</button>
+    </div>
+    <div id="dbTable" class="card pad" style="overflow-x:auto"></div>
+    <div style="display:flex;gap:8px;margin-top:12px;align-items:center">
+      <button class="cta ghost" id="dbPrev" onclick="dbPage(-1)">◀ 이전</button>
+      <button class="cta ghost" id="dbNext" onclick="dbPage(1)">다음 ▶</button>
+      <span class="dim" style="font-size:12px" id="dbPageInfo"></span>
     </div>
 </section>
 
@@ -909,7 +930,8 @@
     { c: "보기", t: "검토 — 스트립 보기", k: "view strip", run: function () { go("review"); setView("strip"); } },
     { c: "보기", t: "검토 — 테이블 보기", k: "view table", run: function () { go("review"); setView("table"); } },
     { c: "콘솔", t: "콘솔 열기/닫기", k: "console toggle log", run: function () { toggleConsole(); } },
-    { c: "콘솔", t: "콘솔 지우기", k: "console clear", run: function () { clearConsole(); } }
+    { c: "콘솔", t: "콘솔 지우기", k: "console clear", run: function () { clearConsole(); } },
+    { c: "데이터", t: "DB 뷰어 열기", k: "db viewer database index", run: function () { window.openDbView(); } }
   ];
   function ckCmds() {
     return CK_BASE.concat(SET_TABS.map(function (t, i) {
@@ -1168,6 +1190,53 @@
     if (window.toast) toast("중복 아님으로 기록됨");
   });
   window.vdf.on("notMatchCancelled", function () { if (window.toast) toast("취소됨"); });
+
+  // ---- DB 뷰어 (paged index browser) ----
+  var _dbOff = 0, _dbTimer = null, _dbState = { matched: 0, page: 200 };
+  window.openDbView = function () { go("dbview"); _dbOff = 0; dbLoad(); };
+  function dbLoad() { send("dbQuery", { q: (document.getElementById("dbq") || {}).value || "", offset: _dbOff }); }
+  window.dbSearch = function () { clearTimeout(_dbTimer); _dbOff = 0; _dbTimer = setTimeout(dbLoad, 250); };
+  window.dbPage = function (dir) {
+    var next = _dbOff + dir * _dbState.page;
+    if (next < 0 || next >= _dbState.matched) return;
+    _dbOff = next; dbLoad();
+  };
+  // stable row index → path (paths are unsafe inside onclick attrs — same pattern as __files)
+  var _dbRows = [];
+  window.dbOp = function (op, i) {
+    var p = _dbRows[i]; if (!p) return;
+    if (op === "reveal") send("revealFile", { path: p });
+    else send("dbRemove", { path: p });
+  };
+  window.vdf.on("dbRows", function (d) {
+    _dbState = { matched: d.matched, page: d.page };
+    _dbRows = d.rows.map(function (r) { return r.p; });
+    var esc = function (s) { return s.replace(/&/g, "&amp;").replace(/</g, "&lt;"); };
+    var h = '<table class="rtable"><thead><tr><th></th><th>경로</th><th>크기</th><th>길이</th><th>수정일</th><th>지문</th></tr></thead><tbody>';
+    d.rows.forEach(function (r, i) {
+      var fp = (r.fp ? "영상" : "") + (r.fp && r.au ? "·" : "") + (r.au ? "음성" : "") || "—";
+      h += '<tr><td><span class="fop" title="인덱스에서 잊기" onclick="dbOp(\'rm\',' + i + ')">✕</span>'
+        + '<span class="fop" title="탐색기에서 표시" onclick="dbOp(\'reveal\',' + i + ')">📂</span></td>'
+        + '<td class="tpath" title="' + esc(r.p).replace(/"/g, "&quot;") + '">' + esc(r.p) + (r.err ? ' <span style="color:var(--red);font-size:10.5px">meta오류</span>' : '') + '</td>'
+        + '<td class="tmono">' + r.size + '</td><td class="tmono">' + r.dur + '</td><td class="tmono">' + r.mod + '</td>'
+        + '<td class="tmono">' + fp + '</td></tr>';
+    });
+    h += "</tbody></table>";
+    var box = document.getElementById("dbTable"); if (box) box.innerHTML = d.rows.length ? h : '<div class="muted" style="padding:30px;text-align:center">검색 결과 없음</div>';
+    var c = document.getElementById("dbCount"); if (c) c.textContent = d.matched.toLocaleString() + " / 전체 " + d.total.toLocaleString() + " 엔트리";
+    var info = document.getElementById("dbPageInfo");
+    if (info) info.textContent = d.matched ? (d.offset + 1) + "–" + Math.min(d.offset + d.page, d.matched) + " 표시" : "";
+  });
+  window.vdf.on("dbRemoved", function (d) {
+    clog("DB에서 잊음 · 남은 엔트리 " + d.total.toLocaleString(), "warn");
+    dbLoad();   // refresh the current page
+  });
+  window.vdf.on("dbCleanupDone", function (d) {
+    clog("DB 정리 완료 · " + d.removed.toLocaleString() + "개 제거 · " + d.total.toLocaleString() + "개 남음", "ok");
+    if (window.toast) toast("미존재 엔트리 " + d.removed.toLocaleString() + "개 제거");
+    _dbOff = 0; dbLoad();
+    send("stats");   // top-bar count changed
+  });
 
   // ---- 썸네일 (lazy: extract a frame only when a card scrolls into view) ----
   var _thumbObs = null, _thumbQ = {}, _thumbTimer = null, _thumbDone = {};

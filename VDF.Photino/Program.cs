@@ -116,6 +116,9 @@ static class Program {
 				}
 				case "reclaim": Reclaim(win, doc.RootElement); break;   // sync: native confirm dialog on the message thread
 				case "notMatch": MarkNotMatch(win, doc.RootElement); break;   // sync: native confirm on the message thread
+				case "dbQuery": Task.Run(() => { var el = doc.RootElement.Clone(); lock (_engineLock) DbQuery(win, el); }); break;
+				case "dbRemove": Task.Run(() => { var el = doc.RootElement.Clone(); lock (_engineLock) DbRemove(win, el); }); break;
+				case "dbCleanup": DbCleanup(win); break;   // sync confirm dialog, then locked Task.Run
 				case "getSources": ReplySources(win); break;
 				case "listDir": Task.Run(() => ListDir(win, doc.RootElement.Clone())); break;   // read-only folder enumeration for the source tree
 				case "setSources": SetSources(win, doc.RootElement); break;   // tree replaces the whole include list
@@ -908,6 +911,67 @@ static class Program {
 			StartSidecarWatch(win, manifest + ".deleted");
 			Process.Start(new ProcessStartInfo { FileName = _cfg.mpvGridPath, UseShellExecute = false, ArgumentList = { manifest } });
 			Reply(win, "compareStarted", new { groups = groups.Count, files = groups.Sum(g => g.Count) });
+		}
+		catch (Exception ex) { Reply(win, "error", new { message = ex.Message }); }
+	}
+
+	// ---------- DB 뷰어 (인덱스 열람 — 페이지드, 검색, 엔트리 제거, 미존재 정리) ----------
+	const int DbPageSize = 200;
+
+	static void DbQuery(PhotinoWindow win, JsonElement root) {
+		try {
+			EnsureDb();
+			string q = ""; int off = 0;
+			if (root.TryGetProperty("payload", out var pl) && pl.ValueKind == JsonValueKind.Object) {
+				if (pl.TryGetProperty("q", out var qe)) q = qe.GetString() ?? "";
+				if (pl.TryGetProperty("offset", out var oe) && oe.TryGetInt32(out int o)) off = Math.Max(0, o);
+			}
+			IEnumerable<FileEntry> src = DatabaseUtils.Database;
+			if (q.Length > 0) src = src.Where(e => e.Path.Contains(q, StringComparison.OrdinalIgnoreCase));
+			var matched = src.OrderBy(e => e.Path, StringComparer.OrdinalIgnoreCase).ToList();
+			var rows = matched.Skip(off).Take(DbPageSize).Select(e => new {
+				p = e.Path,
+				size = e.FileSize > 0 ? HumanBytes(e.FileSize) : "—",
+				dur = e.mediaInfo?.Duration is { TotalSeconds: > 0 } d ? FormatDuration(d) : "—",
+				mod = e.DateModified.Year > 1601 ? e.DateModified.ToString("yyyy-MM-dd") : "—",
+				fp = e.grayBytes is { Count: > 0 },              // visual fingerprints
+				au = e.AudioFingerprint is { Length: > 0 },      // audio fingerprint
+				err = e.HasMetadataError,
+			}).ToList();
+			Reply(win, "dbRows", new { total = DatabaseUtils.Database.Count, matched = matched.Count, offset = off, page = DbPageSize, rows });
+		}
+		catch (Exception ex) { Reply(win, "error", new { message = ex.Message }); }
+	}
+
+	// In-memory removal, same semantics as every other row removal (copy DB by default; a scan re-adds
+	// the file if it still exists — this is "forget", not "delete").
+	static void DbRemove(PhotinoWindow win, JsonElement root) {
+		try {
+			string? p = root.TryGetProperty("payload", out var pl) && pl.TryGetProperty("path", out var pe) ? pe.GetString() : null;
+			if (string.IsNullOrEmpty(p)) return;
+			_dbEngine.RemoveFromDatabase(new FileEntry { Path = p });
+			Reply(win, "dbRemoved", new { path = p, total = DatabaseUtils.Database.Count });
+		}
+		catch (Exception ex) { Reply(win, "error", new { message = ex.Message }); }
+	}
+
+	static void DbCleanup(PhotinoWindow win) {
+		try {
+			var choice = win.ShowMessage("DB 정리",
+				"디스크에 더 이상 없는 파일의 엔트리를 인덱스에서 제거할까?\n\n지금 연결 안 된 드라이브의 파일은 건드리지 않는다. 인덱스 파일에 저장된다.",
+				PhotinoDialogButtons.YesNo, PhotinoDialogIcon.Question);
+			if (choice != PhotinoDialogResult.Yes) return;
+			Task.Run(() => {
+				try {
+					lock (_engineLock) {
+						EnsureDb();
+						int before = DatabaseUtils.Database.Count;
+						DatabaseUtils.CleanupDatabase();
+						Reply(win, "dbCleanupDone", new { removed = before - DatabaseUtils.Database.Count, total = DatabaseUtils.Database.Count });
+					}
+				}
+				catch (Exception ex) { Reply(win, "error", new { message = ex.Message }); }
+			});
 		}
 		catch (Exception ex) { Reply(win, "error", new { message = ex.Message }); }
 	}
