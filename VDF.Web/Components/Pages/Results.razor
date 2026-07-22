@@ -8,7 +8,7 @@
 
 <PageTitle>Results — Video Duplicate Finder</PageTitle>
 
-<h1>Duplicate Groups</h1>
+<h1>중복 그룹</h1>
 
 @{
     var allDuplicates = Scan.Duplicates;
@@ -31,7 +31,7 @@
 }
 
 @if (!allDuplicates.Any()) {
-    <p>No duplicates found. <a href="/">Run a scan</a> first.</p>
+    <p>중복 없음 — 좌측 레일에서 폴더를 고르고 <b>스캔 시작</b>.</p>
 }
 else {
     <div class="results-toolbar" @onkeydown="OnKeyDown" tabindex="0">

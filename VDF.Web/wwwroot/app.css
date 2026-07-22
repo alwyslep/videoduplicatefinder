@@ -1420,3 +1420,18 @@ input.input-invalid:focus { box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.2); }
 .insp-kv .v.keep { color: var(--accent-success); font-weight: 600; }
 .insp-flag { margin-top: 0.6rem; display: inline-block; font-family: var(--font-mono); font-size: 11px; padding: 0.15rem 0.5rem; border-radius: 4px; }
 .insp-flag.partial { background: var(--badge-clip-bg); color: #fff; }
+
+/* ===== Stage 2 수정: 레일 버튼 클립·체크박스 색·가로 오버플로 ===== */
+/* 체크박스 = 앰버골드 (쿨 블루 기본색 제거) */
+input[type=checkbox] { accent-color: var(--accent-primary); }
+/* 레일은 가로 스크롤/오버플로 금지 */
+.wb-rail { overflow-x: hidden; }
+/* ★좁은 레일: 경로 입력=전폭 한 줄, 추가/찾기 버튼=아래 줄에 반반 (버튼 뭉개짐/잘림 해결) */
+.wb-rail .add-path { flex-wrap: wrap; gap: 0.4rem; }
+.wb-rail .add-path input { flex: 1 1 100%; min-width: 0; }
+.wb-rail .add-path button { flex: 1 1 0; white-space: nowrap; padding-left: 0.4rem; padding-right: 0.4rem; }
+.wb-rail .path-entry { flex-wrap: wrap; }
+.wb-rail .path-entry span:not(.path-status) { min-width: 0; }
+/* 페이지 자체는 안 스크롤 — 각 열이 내부 스크롤 */
+.wb-shell { overflow: hidden; }
+.wb-main { overflow-x: hidden; }

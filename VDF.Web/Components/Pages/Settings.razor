@@ -6,10 +6,10 @@
 
 <PageTitle>Settings — Video Duplicate Finder</PageTitle>
 
-<h1>Settings</h1>
+<h1>설정</h1>
 
 <div class="start-row" style="margin-bottom:1rem;margin-top:0;">
-    <button class="primary" @onclick="SaveSettings">Save Settings</button>
+    <button class="primary" @onclick="SaveSettings">설정 저장</button>
     @if (_saveMsg != null) {
         <span class="@(_saveFailed ? "aborted-msg" : "done-msg")" style="margin:0;">@_saveMsg</span>
     }

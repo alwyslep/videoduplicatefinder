@@ -2,6 +2,7 @@
 @inject ScanService Scan
 @inject InspectorState Inspector
 @implements IDisposable
+@rendermode InteractiveServer
 
 <div class="rail-scroll">
     @if (Scan.State == ScanState.Error) {
