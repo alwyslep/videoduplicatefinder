@@ -80,6 +80,7 @@
   .facet.on{border-color:var(--indigo);color:var(--ink)}
   .fop{cursor:pointer;color:var(--dim);margin-left:7px;font-size:11.5px}
   .fop:hover{color:var(--ink)}
+  input.rn{background:var(--bg2);border:1px solid var(--indigo);color:var(--ink);border-radius:6px;padding:2px 8px;font:inherit;min-width:280px}
   .facet .mono{color:var(--data);margin-left:5px}
   .facet.g{color:var(--dim);border:0;background:none;cursor:default}
 
@@ -383,6 +384,8 @@
         <div class="card pad">
           <div class="lbl">액션별 계획</div>
           <div class="tally"><span>🗑 휴지통 <span class="dim">되돌림 · 기본 · 유일한 삭제 경로</span></span><span class="mono" id="planTrash">0 파일 · —</span></div>
+          <div style="margin-top:12px"><button class="cta ghost" onclick="exportCsv()">📄 결과 CSV 내보내기</button>
+            <span class="dim" style="font-size:11.5px;margin-left:8px">그룹·유지본·체크 상태 포함</span></div>
         </div>
       </div>
     </div>
@@ -553,7 +556,7 @@
           var cells=f.m.map(function(x){return '<td class="tmono '+mClass(f,x)+'">'+x+'</td>';}).join("");
           html+='<tr><td><span class="tcb '+(isCut(f)?'cut':'')+'" id="cb'+idx+'" onclick="tog('+idx+')"></span></td>'
             +'<td class="tpath" title="'+f.p.replace(/"/g,"&quot;")+'">'+f.p+(f.keep?' <span class="keep-tag">유지</span>':'')
-            +'<span class="fop" title="재생" onclick="fileOp(event,\'open\','+idx+')">▶</span><span class="fop" title="탐색기에서 표시" onclick="fileOp(event,\'reveal\','+idx+')">📂</span></td>'
+            +'<span class="fop" title="재생" onclick="fileOp(event,\'open\','+idx+')">▶</span><span class="fop" title="탐색기에서 표시" onclick="fileOp(event,\'reveal\','+idx+')">📂</span><span class="fop" title="이름 변경" onclick="renameUi(event,'+idx+')">✏</span></td>'
             +cells+'<td class="tmono">'+g.sim+'</td></tr>';
         });
         html+='</tbody></table>';
@@ -564,7 +567,7 @@
           html+='<div class="fcard"><span class="cb '+(isCut(f)?'cut':'')+'" id="cb'+idx+'" onclick="tog('+idx+')"></span>'
             +'<div class="thumb" id="thumb'+idx+'" data-i="'+idx+'" data-t="'+f.t+'"><span class="res">'+f.res+'</span></div>'
             +'<div class="fmeta"><div class="fpath">'+f.p+(f.keep?' <span class="keep-tag">유지</span>':'')
-            +'<span class="fop" title="재생" onclick="fileOp(event,\'open\','+idx+')">▶</span><span class="fop" title="탐색기에서 표시" onclick="fileOp(event,\'reveal\','+idx+')">📂</span></div><div class="fmetrics">'+mtxt+'</div></div>'
+            +'<span class="fop" title="재생" onclick="fileOp(event,\'open\','+idx+')">▶</span><span class="fop" title="탐색기에서 표시" onclick="fileOp(event,\'reveal\','+idx+')">📂</span><span class="fop" title="이름 변경" onclick="renameUi(event,'+idx+')">✏</span></div><div class="fmetrics">'+mtxt+'</div></div>'
             +'<span class="sim">'+g.sim+'</span></div>';
         });
       }
@@ -584,6 +587,25 @@
   // ▶/📂 — plays/reveals the user's own file via the OS default handler (C# side).
   function fileOp(ev,op,i){ ev.stopPropagation(); var f=__files[i]; if(!f)return; window.vdf.send(op==="open"?"openFile":"revealFile",{path:f.p}); }
   window.fileOp=fileOp;
+  // ✏ 이름 변경 — inline input in the path cell; Enter=적용(C# renameFile → 'renamed' round-trip), Esc/blur=취소.
+  function renameUi(ev,i){
+    ev.stopPropagation();
+    var f=__files[i]; if(!f)return;
+    var box=ev.target.closest(".fpath")||ev.target.closest(".tpath"); if(!box)return;
+    var base=f.p.split("\\").pop();
+    box.innerHTML='<input class="rn" value="'+base.replace(/"/g,"&quot;")+'" spellcheck="false">';
+    var inp=box.querySelector("input"); inp.focus();
+    var dot=base.lastIndexOf("."); inp.setSelectionRange(0,dot>0?dot:base.length);
+    inp.onkeydown=function(e){
+      e.stopPropagation();
+      if(e.key==="Enter"){ var nn=inp.value.trim(); inp.onblur=null;
+        if(nn&&nn!==base) window.vdf.send("renameFile",{path:f.p,newName:nn});
+        else renderGroups();
+      } else if(e.key==="Escape"){ inp.onblur=null; renderGroups(); }
+    };
+    inp.onblur=function(){ renderGroups(); };
+  }
+  window.renameUi=renameUi;
   // ✕ 중복 아님 — C# confirms natively, records to BlacklistedGroups.json, replies notMatchDone.
   function notMatch(gi){
     var g=window.GROUPS[gi]; if(!g)return;
@@ -624,7 +646,15 @@
     ["reclaimSize","reclaimSize5"].forEach(function(id){var e=document.getElementById(id); if(e)e.textContent=human;});
     ["cutN","cutN5","brkTrash"].forEach(function(id){var e=document.getElementById(id); if(e)e.textContent=cnt;});
     var pt=document.getElementById("planTrash"); if(pt)pt.textContent=cnt+" 파일 · "+human;
+    // triage persistence: cutState is what a restart would lose — debounce-save it beside the DB.
+    // recount() runs after every cutState mutation (and some pure re-renders; extra saves are cheap).
+    clearTimeout(window.__triTimer);
+    window.__triTimer=setTimeout(function(){ if(window.vdf)window.vdf.send("saveTriage",{cut:cutState}); },600);
   }
+  window.__mergeTriage=function(saved){   // startup/DB-switch: session state wins over the saved file
+    Object.keys(saved||{}).forEach(function(k){ if(!(k in cutState)) cutState[k]=saved[k]; });
+    renderGroups(); recount();
+  };
   function filter(){renderGroups();}
   window.renderGroups=renderGroups; window.tog=tog; window.isCut=isCut; window.migrateCut=migrateCut;
   window.selBulk=selBulk; window.selUndo=selUndo; window.selReset=selReset;
@@ -751,6 +781,7 @@
   window.saveRealDbFolder = function (el) { send("saveSetting", { key: "realDbFolder", val: el ? el.value : "" }); };
   window.vdf.on("dbModeChanged", function (d) {
     send("stats");
+    send("getTriage");                       // each DB keeps its own saved triage
     window.GROUPS = [];                      // groups from the previous DB are now stale — re-compare
     if (window.selReset) selReset();         // undo snapshots point at the old result set
     if (window.renderGroups) renderGroups();
@@ -931,7 +962,8 @@
     { c: "보기", t: "검토 — 테이블 보기", k: "view table", run: function () { go("review"); setView("table"); } },
     { c: "콘솔", t: "콘솔 열기/닫기", k: "console toggle log", run: function () { toggleConsole(); } },
     { c: "콘솔", t: "콘솔 지우기", k: "console clear", run: function () { clearConsole(); } },
-    { c: "데이터", t: "DB 뷰어 열기", k: "db viewer database index", run: function () { window.openDbView(); } }
+    { c: "데이터", t: "DB 뷰어 열기", k: "db viewer database index", run: function () { window.openDbView(); } },
+    { c: "데이터", t: "결과 CSV 내보내기", k: "csv export results", run: function () { window.exportCsv(); } }
   ];
   function ckCmds() {
     return CK_BASE.concat(SET_TABS.map(function (t, i) {
@@ -1191,6 +1223,20 @@
   });
   window.vdf.on("notMatchCancelled", function () { if (window.toast) toast("취소됨"); });
 
+  // ---- 결과 CSV 내보내기 ----
+  window.exportCsv = function () {
+    var rows = [];
+    (window.GROUPS || []).forEach(function (g, gi) {
+      g.files.forEach(function (f) {
+        rows.push({ g: gi + 1, sim: g.sim, keep: f.keep ? 1 : 0, cut: (window.isCut && isCut(f)) ? 1 : 0, p: f.p, res: f.res || "", bytes: f.bytes || 0, t: f.t || "" });
+      });
+    });
+    if (!rows.length) { if (window.toast) toast("내보낼 결과가 없다 — 먼저 ‘비교만 다시’"); return; }
+    send("exportCsv", { rows: rows });
+  };
+  window.vdf.on("csvDone", function (d) { clog("CSV 내보내기 · " + d.rows + "행 · " + d.file, "ok"); if (window.toast) toast("CSV 저장됨 · " + d.rows + "행"); });
+  window.vdf.on("csvCancelled", function () { if (window.toast) toast("취소됨"); });
+
   // ---- DB 뷰어 (paged index browser) ----
   var _dbOff = 0, _dbTimer = null, _dbState = { matched: 0, page: 200 };
   window.openDbView = function () { go("dbview"); _dbOff = 0; dbLoad(); };
@@ -1299,7 +1345,8 @@
   });
   window.__busy = function () { return _busy; };   // prototype-side bulk ops check this before touching GROUPS
 
-  window.addEventListener("load", function () { send("stats"); send("getRules"); send("getSources"); send("listDir", { path: "" }); });
+  window.vdf.on("triage", function (d) { if (window.__mergeTriage) window.__mergeTriage(d.cut); });
+  window.addEventListener("load", function () { send("stats"); send("getRules"); send("getSources"); send("listDir", { path: "" }); send("getTriage"); });
 })();
 
 </script>

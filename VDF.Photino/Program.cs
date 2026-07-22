@@ -116,9 +116,12 @@ static class Program {
 				}
 				case "reclaim": Reclaim(win, doc.RootElement); break;   // sync: native confirm dialog on the message thread
 				case "notMatch": MarkNotMatch(win, doc.RootElement); break;   // sync: native confirm on the message thread
+				case "exportCsv": ExportCsv(win, doc.RootElement); break;     // sync: native save dialog on the message thread
 				case "dbQuery": Task.Run(() => { var el = doc.RootElement.Clone(); lock (_engineLock) DbQuery(win, el); }); break;
 				case "dbRemove": Task.Run(() => { var el = doc.RootElement.Clone(); lock (_engineLock) DbRemove(win, el); }); break;
 				case "dbCleanup": DbCleanup(win); break;   // sync confirm dialog, then locked Task.Run
+				case "getTriage": ReplyTriage(win); break;
+				case "saveTriage": SaveTriage(doc.RootElement); break;
 				case "getSources": ReplySources(win); break;
 				case "listDir": Task.Run(() => ListDir(win, doc.RootElement.Clone())); break;   // read-only folder enumeration for the source tree
 				case "setSources": SetSources(win, doc.RootElement); break;   // tree replaces the whole include list
@@ -135,6 +138,7 @@ static class Program {
 				case "compareInMpv": HandleMpvCompare(win, doc.RootElement); break;
 				case "openFile": OpenPath(win, doc.RootElement, reveal: false); break;    // 기본 플레이어로 재생
 				case "revealFile": OpenPath(win, doc.RootElement, reveal: true); break;   // 탐색기에서 표시
+				case "renameFile": Task.Run(() => { var el = doc.RootElement.Clone(); lock (_engineLock) RenameFile(win, el); }); break;   // mutates the DB entry
 				default: Reply(win, "error", new { message = $"unknown cmd '{cmd}'" }); break;
 			}
 		}
@@ -915,6 +919,59 @@ static class Program {
 		catch (Exception ex) { Reply(win, "error", new { message = ex.Message }); }
 	}
 
+	// CSV 내보내기 — JS sends the visible result rows (incl. check state); target picked via the
+	// native save dialog; UTF-8 BOM so Excel reads Korean/Japanese paths. Real paths land in the
+	// file BY the user's explicit save action.
+	static void ExportCsv(PhotinoWindow win, JsonElement root) {
+		try {
+			if (!root.TryGetProperty("payload", out var pl) || !pl.TryGetProperty("rows", out var rs) || rs.GetArrayLength() == 0) {
+				Reply(win, "error", new { message = "내보낼 결과가 없다 — 먼저 ‘비교만 다시’를 실행해줘." }); return;
+			}
+			string? target = win.ShowSaveFile("CSV로 내보내기",
+				Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "vdf-results.csv"),
+				new (string, string[])[] { ("CSV", new[] { "csv" }) });
+			if (string.IsNullOrEmpty(target)) { Reply(win, "csvCancelled", new { }); return; }
+			static string Esc(string? s) => "\"" + (s ?? "").Replace("\"", "\"\"") + "\"";
+			var sb = new StringBuilder();
+			sb.AppendLine("group,similarity,keep,checked,path,resolution,size_bytes,duration");
+			foreach (var r in rs.EnumerateArray())
+				sb.AppendLine(string.Join(",",
+					r.GetProperty("g").GetInt32(),
+					Esc(r.GetProperty("sim").GetString()),
+					r.GetProperty("keep").GetInt32(),
+					r.GetProperty("cut").GetInt32(),
+					Esc(r.GetProperty("p").GetString()),
+					Esc(r.GetProperty("res").GetString()),
+					(long)r.GetProperty("bytes").GetDouble(),
+					Esc(r.GetProperty("t").GetString())));
+			File.WriteAllText(target, sb.ToString(), new UTF8Encoding(true));
+			Reply(win, "csvDone", new { rows = rs.GetArrayLength(), file = Path.GetFileName(target) });
+		}
+		catch (Exception ex) { Reply(win, "error", new { message = ex.Message }); }
+	}
+
+	// ---------- 트리아지 영속화 (검토 체크 상태 — 재시작·재비교 생존) ----------
+	// The fingerprint DB already persists the EXPENSIVE part; what a restart loses is the user's
+	// triage (cutState). Path-keyed, so one saved file re-applies cleanly after any re-compare.
+	// Lives beside the DB: each DB (copy/real) keeps its own triage.
+	static string TriageFile => Path.Combine(ActiveDbFolder, "photino-triage.json");
+
+	static void ReplyTriage(PhotinoWindow win) {
+		try {
+			if (File.Exists(TriageFile))
+				Reply(win, "triage", new { cut = JsonSerializer.Deserialize<Dictionary<string, bool>>(File.ReadAllText(TriageFile)) });
+		}
+		catch { }   // corrupt/absent triage is not an error — it's only check state
+	}
+
+	static void SaveTriage(JsonElement root) {
+		try {
+			if (root.TryGetProperty("payload", out var pl) && pl.TryGetProperty("cut", out var c) && c.ValueKind == JsonValueKind.Object)
+				File.WriteAllText(TriageFile, c.GetRawText());
+		}
+		catch { }
+	}
+
 	// ---------- DB 뷰어 (인덱스 열람 — 페이지드, 검색, 엔트리 제거, 미존재 정리) ----------
 	const int DbPageSize = 200;
 
@@ -1027,6 +1084,38 @@ static class Program {
 				lock (_sideLock) _keepByGroup.Remove(gid);
 			}
 			Reply(win, "notMatchDone", new { paths });
+		}
+		catch (Exception ex) { Reply(win, "error", new { message = ex.Message }); }
+	}
+
+	// 검토 ✏ — rename in place (same folder only). The DB entry keeps its fingerprints via
+	// UpdateFilePathInDatabase; _lastDupes/_keepByGroup follow so thumbs/reclaim/keeper protection
+	// stay coherent; the existing JS 'renamed' handler + migrateCut carry the row and check state.
+	static void RenameFile(PhotinoWindow win, JsonElement root) {
+		try {
+			string? p = null, newName = null;
+			if (root.TryGetProperty("payload", out var pl)) {
+				if (pl.TryGetProperty("path", out var pe)) p = pe.GetString();
+				if (pl.TryGetProperty("newName", out var ne)) newName = ne.GetString()?.Trim();
+			}
+			if (string.IsNullOrEmpty(p) || string.IsNullOrEmpty(newName)) return;
+			if (newName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) { Reply(win, "error", new { message = "파일명에 쓸 수 없는 문자가 있다." }); return; }
+			if (!File.Exists(p)) { Reply(win, "error", new { message = "파일이 없다 — 이동/삭제된 듯. ‘비교만 다시’로 갱신해줘." }); return; }
+			string np = Path.Combine(Path.GetDirectoryName(p)!, newName);
+			if (string.Equals(np, p, StringComparison.Ordinal)) return;
+			// case-only rename of the SAME file is allowed; anything else colliding is refused
+			if (File.Exists(np) && !string.Equals(np, p, StringComparison.OrdinalIgnoreCase)) { Reply(win, "error", new { message = "같은 이름의 파일이 이미 있다." }); return; }
+			File.Move(p, np);
+			try {
+				if (DatabaseUtils.Database.TryGetValue(new FileEntry { Path = p }, out var fe) && fe != null)
+					ScanEngine.UpdateFilePathInDatabase(np, fe);   // fingerprints survive the rename
+			}
+			catch { }
+			foreach (var it in _lastDupes.Where(d => d.Path.Equals(p, StringComparison.OrdinalIgnoreCase)).ToList()) it.Path = np;
+			lock (_sideLock)
+				foreach (var k in _keepByGroup.Where(kv => kv.Value.Equals(p, StringComparison.OrdinalIgnoreCase)).Select(kv => kv.Key).ToList())
+					_keepByGroup[k] = np;   // a renamed KEEPER must stay protected
+			Reply(win, "renamed", new { oldPath = p, newPath = np });
 		}
 		catch (Exception ex) { Reply(win, "error", new { message = ex.Message }); }
 	}
