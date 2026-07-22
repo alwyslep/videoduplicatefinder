@@ -49,6 +49,7 @@ static class Program {
 		if (args.Length > 1 && args[0] == "scantest") { ScanTest(args[1]); return; }
 		if (args.Length > 1 && args[0] == "trashtest") { TrashTest(args[1]); return; }
 		if (args.Length > 1 && args[0] == "stoptest") { StopTest(args[1]); return; }
+		if (args.Length > 0 && args[0] == "blacklisttest") { BlacklistTest(); return; }
 		if (args.Length > 1 && args[0] == "recyclecheck") { Console.WriteLine($"[recyclecheck] canRecycle={CanRecycle(args[1])}  {args[1]}"); return; }
 		if (args.Length > 1 && args[0] == "thumbtest") {
 			var b = FfmpegEngine.ExtractThumbnailJpeg(args[1], TimeSpan.FromSeconds(1), 160, false);
@@ -114,6 +115,7 @@ static class Program {
 					break;
 				}
 				case "reclaim": Reclaim(win, doc.RootElement); break;   // sync: native confirm dialog on the message thread
+				case "notMatch": MarkNotMatch(win, doc.RootElement); break;   // sync: native confirm on the message thread
 				case "getSources": ReplySources(win); break;
 				case "listDir": Task.Run(() => ListDir(win, doc.RootElement.Clone())); break;   // read-only folder enumeration for the source tree
 				case "setSources": SetSources(win, doc.RootElement); break;   // tree replaces the whole include list
@@ -194,6 +196,7 @@ static class Program {
 			if (aborted || _stopReqFor == engine) { Reply(win, "scanAborted", new { }); return; }
 
 			var dupes = engine.Duplicates;
+			ApplyGroupBlacklist(dupes);
 			_lastDupes = dupes;   // for on-demand thumbnails
 			var groups = BuildGroups(dupes, out int totalGroups);
 			string why = string.Join(" › ", _cfg.priority.Take(3).Select(LabelFor));
@@ -301,6 +304,7 @@ static class Program {
 
 			if (aborted || _stopReqFor == engine) { Reply(win, "scanAborted", new { }); return; }
 
+			ApplyGroupBlacklist(engine.Duplicates);
 			_lastDupes = engine.Duplicates;   // for on-demand thumbnails
 			var groups = BuildGroups(engine.Duplicates, out int totalGroups);
 			string why = string.Join(" › ", _cfg.priority.Take(3).Select(LabelFor));
@@ -908,6 +912,61 @@ static class Program {
 		catch (Exception ex) { Reply(win, "error", new { message = ex.Message }); }
 	}
 
+	// ---------- 중복 아님 (group blacklist — GUI 호환: DB 폴더의 BlacklistedGroups.json 공유) ----------
+	static string BlacklistFile => Path.Combine(ActiveDbFolder, "BlacklistedGroups.json");
+
+	// GUI parity: groups the user marked '중복 아님' are removed after every compare. Subset semantics
+	// (GroupBlacklistFilter): a marked {A,B,C} also suppresses a later {A,B}. Oshash tokens make the
+	// mark survive moves/renames. GetOsHash is a DB lookup — no file I/O here.
+	static void ApplyGroupBlacklist(HashSet<DuplicateItem> dupes) {
+		try {
+			var list = BlacklistStore.Load(BlacklistFile);
+			if (list.Count == 0) return;
+			var gids = GroupBlacklistFilter.ComputeBlacklistedGroupIds(
+				dupes.Select(d => (d.GroupId, d.Path, ScanEngine.GetOsHash(d.Path))), list);
+			if (gids.Count == 0) return;
+			int removed = dupes.RemoveWhere(d => gids.Contains(d.GroupId));
+			Console.WriteLine($"[blacklist] suppressed {gids.Count} group(s), {removed} item(s)");
+		}
+		catch { }   // a broken blacklist must never block results (Load already quarantines corrupt files)
+	}
+
+	static void MarkNotMatch(PhotinoWindow win, JsonElement root) {
+		try {
+			var paths = new List<string>();
+			if (root.TryGetProperty("payload", out var pl) && pl.TryGetProperty("paths", out var ps))
+				foreach (var p in ps.EnumerateArray()) { var s = p.GetString(); if (!string.IsNullOrEmpty(s)) paths.Add(s); }
+			if (paths.Count < 2) { Reply(win, "error", new { message = "그룹 정보가 비었다." }); return; }
+			var choice = win.ShowMessage("중복 아님 표시",
+				$"이 그룹({paths.Count}개 파일)을 ‘중복 아님’으로 기록할까?\n\n다음 비교부터 이 조합은 결과에서 빠진다. 기록은 DB 폴더의 BlacklistedGroups.json — 지우면 되돌릴 수 있다.",
+				PhotinoDialogButtons.YesNo, PhotinoDialogIcon.Question);
+			if (choice != PhotinoDialogResult.Yes) { Reply(win, "notMatchCancelled", new { }); return; }
+
+			var entry = new HashSet<string>(PathComparer.ForCurrentPlatform);
+			foreach (var p in paths) {
+				entry.Add(p);
+				if (ScanEngine.GetOsHash(p) is { Length: > 0 } oshash)   // survives a later move/rename
+					entry.Add(GroupBlacklistFilter.OsHashToken(oshash));
+			}
+			var list = BlacklistStore.Load(BlacklistFile);
+			list.Add(entry);
+			BlacklistStore.SaveAsync(BlacklistFile, list).GetAwaiter().GetResult();
+
+			// prune the live result set so thumbs/reclaim/keeper-map agree with the UI removal —
+			// only groups FULLY covered by the payload (a shared path must not nuke an unrelated group)
+			var pset = new HashSet<string>(paths, StringComparer.OrdinalIgnoreCase);
+			var gids = _lastDupes.GroupBy(d => d.GroupId)
+								 .Where(g => g.All(i => pset.Contains(i.Path)))
+								 .Select(g => g.Key).ToList();
+			foreach (var gid in gids) {
+				_lastDupes.RemoveWhere(d => d.GroupId == gid);
+				lock (_sideLock) _keepByGroup.Remove(gid);
+			}
+			Reply(win, "notMatchDone", new { paths });
+		}
+		catch (Exception ex) { Reply(win, "error", new { message = ex.Message }); }
+	}
+
 	// 검토 카드의 ▶/📂 — the user's own click on their own file; paths never leave the machine.
 	static void OpenPath(PhotinoWindow win, JsonElement root, bool reveal) {
 		try {
@@ -1035,6 +1094,45 @@ static class Program {
 		Thread.Sleep(100);   // BuildingHashesDone fires before ScanAborted on abort — let the second event land
 		Console.WriteLine($"[stoptest] done={done} aborted={aborted} firstStopSafe={safe} => "
 			+ (done && aborted ? "PASS" : done ? "COMPLETED-BEFORE-STOP (inconclusive — bigger dir)" : "FAIL timeout"));
+	}
+
+	// Headless 중복 아님 check: compare on the copy DB → blacklist the first group (same entry shape
+	// MarkNotMatch writes, incl. oshash tokens) → ApplyGroupBlacklist → that group must be gone.
+	// Prints counts only. Restores the blacklist file afterwards.
+	static void BlacklistTest() {
+		EnsureDb();
+		var engine = new ScanEngine();
+		engine.Settings.CustomDatabaseFolder = ActiveDbFolder;
+		ApplyRules(engine.Settings);
+		var tcs = new TaskCompletionSource();
+		void done(object? s, EventArgs e) => tcs.TrySetResult();
+		engine.ScanDone += done; engine.ScanAborted += done;
+		engine.StartCompare();
+		tcs.Task.Wait();
+		var dupes = engine.Duplicates;
+		int before = dupes.GroupBy(d => d.GroupId).Count(g => g.Count() >= 2);
+		var first = dupes.GroupBy(d => d.GroupId).First(g => g.Count() >= 2).ToList();
+		Guid gid = first[0].GroupId;
+
+		string bak = BlacklistFile + ".test-bak";
+		if (File.Exists(BlacklistFile)) File.Move(BlacklistFile, bak, true);
+		try {
+			var entry = new HashSet<string>(PathComparer.ForCurrentPlatform);
+			foreach (var it in first) {
+				entry.Add(it.Path);
+				if (ScanEngine.GetOsHash(it.Path) is { Length: > 0 } oh) entry.Add(GroupBlacklistFilter.OsHashToken(oh));
+			}
+			BlacklistStore.SaveAsync(BlacklistFile, new List<HashSet<string>> { entry }).GetAwaiter().GetResult();
+			ApplyGroupBlacklist(dupes);
+			int after = dupes.GroupBy(d => d.GroupId).Count(g => g.Count() >= 2);
+			bool gone = !dupes.Any(d => d.GroupId == gid);
+			Console.WriteLine($"[blacklisttest] groups {before} -> {after}, markedGroupGone={gone} => "
+				+ (gone && after < before ? "PASS" : "FAIL"));
+		}
+		finally {
+			File.Delete(BlacklistFile);
+			if (File.Exists(bak)) File.Move(bak, BlacklistFile);
+		}
 	}
 
 	static void Reply(PhotinoWindow win, string cmd, object data) =>

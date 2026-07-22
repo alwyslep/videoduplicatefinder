@@ -520,10 +520,11 @@
     var html=""; __files=[]; window.__thumbByPath={}; window.__pathByIdx={};
     var why=window.__why||"HDR › 해상도 › 비트레이트";
     var table = window.__view==="table";
-    GROUPS.forEach(function(g){
+    GROUPS.forEach(function(g,gi){
       var fs=g.files.filter(function(f){return fmatch(f,q);});
       if(!fs.length)return;
-      html+='<div class="ghead">중복 그룹 · <span class="mono">'+g.files.length+'</span> 파일 · 유사도 <span class="mono">'+g.sim+'</span><span class="why">선정 근거: <b>'+why+'</b></span></div>';
+      html+='<div class="ghead">중복 그룹 · <span class="mono">'+g.files.length+'</span> 파일 · 유사도 <span class="mono">'+g.sim+'</span><span class="why">선정 근거: <b>'+why+'</b></span>'
+        +'<span class="fop" title="이 그룹은 실제 중복이 아님 — 다음 비교부터 제외" onclick="notMatch('+gi+')" style="float:right">✕ 중복 아님</span></div>';
       if(table){
         html+='<table class="rtable"><thead><tr><th></th><th>경로</th><th>해상도</th><th>크기</th><th>비트레이트</th><th>fps</th><th>HDR</th><th>유사도</th></tr></thead><tbody>';
         fs.forEach(function(f){
@@ -562,6 +563,13 @@
   // ▶/📂 — plays/reveals the user's own file via the OS default handler (C# side).
   function fileOp(ev,op,i){ ev.stopPropagation(); var f=__files[i]; if(!f)return; window.vdf.send(op==="open"?"openFile":"revealFile",{path:f.p}); }
   window.fileOp=fileOp;
+  // ✕ 중복 아님 — C# confirms natively, records to BlacklistedGroups.json, replies notMatchDone.
+  function notMatch(gi){
+    var g=window.GROUPS[gi]; if(!g)return;
+    if(window.__busy&&window.__busy()){ toast("작업 진행 중… 끝나면 다시"); return; }
+    window.vdf.send("notMatch",{paths:g.files.map(function(f){return f.p;})});
+  }
+  window.notMatch=notMatch;
   // 선택 도구 — 원본 GUI의 ClearChecked/InvertChecked/CheckLowestQuality 대응.
   // 의도적 차이: 키퍼는 절대 체크되지 않는다(삭제 안전 불변식) · '자동선택'은 규칙 화면의 우선순위가
   // 기준이라 다이얼로그 없이 기본 선택 복원(cutState 리셋)과 동일하다.
@@ -1150,6 +1158,16 @@
     if (window.toast) toast(msg);
   });
   window.vdf.on("reclaimCancelled", function () { _busy = false; clog("정리 취소"); if (window.toast) toast("정리 취소됨"); });
+  window.vdf.on("notMatchDone", function (d) {
+    var set = {}; (d.paths || []).forEach(function (p) { set[p.toLowerCase()] = 1; });
+    window.GROUPS = (window.GROUPS || []).filter(function (g) {
+      return !g.files.every(function (f) { return set[f.p.toLowerCase()]; });   // fully-covered groups only
+    });
+    if (window.renderGroups) renderGroups();
+    clog("중복 아님 기록 — " + (d.paths || []).length + "개 파일 조합, 다음 비교부터 제외", "ok");
+    if (window.toast) toast("중복 아님으로 기록됨");
+  });
+  window.vdf.on("notMatchCancelled", function () { if (window.toast) toast("취소됨"); });
 
   // ---- 썸네일 (lazy: extract a frame only when a card scrolls into view) ----
   var _thumbObs = null, _thumbQ = {}, _thumbTimer = null, _thumbDone = {};
