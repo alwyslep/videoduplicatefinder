@@ -1,0 +1,148 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- ===== Skin v2: "Deep Space" (Gemini / Claude dense-minimalism) =====
+         Deep-gray surfaces + hairline white-alpha borders + generous radius,
+         indigo accent, and a blue→violet→coral glow gradient on active/hero elements. -->
+
+    <!-- Tabs: muted → indigo text + gradient underline when selected -->
+    <Style Selector="TabItem">
+        <Setter Property="Padding" Value="14,7" />
+        <Setter Property="Foreground" Value="{DynamicResource SkinMuted}" />
+    </Style>
+    <Style Selector="TabItem:selected">
+        <Setter Property="Foreground" Value="{DynamicResource SkinAccent}" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="BorderBrush" Value="{DynamicResource SweepGlow}" />
+        <Setter Property="BorderThickness" Value="0,0,0,2" />
+    </Style>
+    <Style Selector="TabItem:selected /template/ TextBlock">
+        <Setter Property="Foreground" Value="{DynamicResource SkinAccent}" />
+    </Style>
+
+    <!-- Softer radius on interactive chrome -->
+    <Style Selector="Button"><Setter Property="CornerRadius" Value="10" /></Style>
+    <Style Selector="TextBox"><Setter Property="CornerRadius" Value="10" /></Style>
+    <Style Selector="ComboBox"><Setter Property="CornerRadius" Value="10" /></Style>
+    <Style Selector="ToggleButton"><Setter Property="CornerRadius" Value="10" /></Style>
+
+    <!-- Primary CTA: Gemini glow gradient fill. Opt-in via Classes="primary". -->
+    <Style Selector="Button.primary">
+        <Setter Property="Background" Value="{DynamicResource SweepGlow}" />
+        <Setter Property="Foreground" Value="#FFFFFF" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="CornerRadius" Value="10" />
+    </Style>
+    <Style Selector="Button.primary /template/ ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource SweepGlow}" />
+    </Style>
+    <Style Selector="Button.primary:pointerover /template/ ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource SweepGlow}" />
+        <Setter Property="Opacity" Value="0.88" />
+    </Style>
+
+    <!-- Card: raised surface + hairline white-alpha border + rounded-xl (layered depth).
+         Opt-in via Classes="card". -->
+    <Style Selector="Border.card">
+        <Setter Property="Background" Value="{DynamicResource SkinSurface1}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource SkinBorderSubtle}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="12" />
+    </Style>
+
+    <!-- Mono data readout (amber instrument warmth). Opt-in via Classes="data". -->
+    <Style Selector="TextBlock.data">
+        <Setter Property="FontFamily" Value="Cascadia Mono, Consolas, monospace" />
+        <Setter Property="Foreground" Value="{DynamicResource SkinData}" />
+    </Style>
+
+    <!-- ===== SWEEP shell ===== -->
+    <Style Selector="TabControl.headerless /template/ ItemsPresenter">
+        <Setter Property="IsVisible" Value="False" />
+    </Style>
+    <!-- Stage nav = capsule chips; muted → glow gradient when active. -->
+    <Style Selector="Button.stage">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="CornerRadius" Value="20" />
+        <Setter Property="Padding" Value="15,7" />
+        <Setter Property="Foreground" Value="{DynamicResource SkinMuted}" />
+        <Setter Property="FontSize" Value="14" />
+    </Style>
+    <Style Selector="Button.stage:pointerover /template/ ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource SkinBorderSubtle}" />
+        <Setter Property="CornerRadius" Value="20" />
+    </Style>
+    <Style Selector="Button.stage.active">
+        <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="Button.stage.active TextBlock">
+        <Setter Property="Foreground" Value="{DynamicResource SweepGlow}" />
+    </Style>
+    <Style Selector="Button.stage.active /template/ ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource SweepGlowSoft}" />
+        <Setter Property="CornerRadius" Value="20" />
+    </Style>
+    <Style Selector="Button.stage TextBlock.num">
+        <Setter Property="FontFamily" Value="Cascadia Mono, Consolas, monospace" />
+        <Setter Property="Opacity" Value="0.85" />
+    </Style>
+
+    <!-- ===== Deep restyle of the old Fluent/Actipro surfaces (the "예전 잔재") ===== -->
+
+    <!-- Results DataGrid: dark flat headers, hairline gridlines, indigo-soft selection (kills the blue) -->
+    <Style Selector="DataGridColumnHeader">
+        <Setter Property="Background" Value="{DynamicResource SkinSurface1}" />
+        <Setter Property="Foreground" Value="{DynamicResource SkinMuted}" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="SeparatorBrush" Value="{DynamicResource SkinBorderSubtle}" />
+    </Style>
+    <Style Selector="DataGrid">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="HorizontalGridLinesBrush" Value="{DynamicResource SkinBorderFaint}" />
+        <Setter Property="VerticalGridLinesBrush" Value="{DynamicResource SkinBorderFaint}" />
+    </Style>
+    <Style Selector="DataGridRow:selected">
+        <Setter Property="Background" Value="{DynamicResource RowSelectedBackground}" />
+        <Setter Property="Foreground" Value="{DynamicResource SkinTextPrimary}" />
+    </Style>
+    <Style Selector="DataGridRow:selected /template/ Rectangle#BackgroundRectangle">
+        <Setter Property="Fill" Value="{DynamicResource RowSelectedBackground}" />
+    </Style>
+    <Style Selector="DataGridRow:selected /template/ Border">
+        <Setter Property="Background" Value="{DynamicResource RowSelectedBackground}" />
+    </Style>
+    <Style Selector="DataGridCell:selected">
+        <Setter Property="Background" Value="Transparent" />
+    </Style>
+
+    <!-- Inputs: rounded + hairline, deep-gray surface -->
+    <Style Selector="NumericUpDown">
+        <Setter Property="CornerRadius" Value="8" />
+    </Style>
+    <Style Selector="ComboBox">
+        <Setter Property="CornerRadius" Value="8" />
+    </Style>
+    <Style Selector="ListBox">
+        <Setter Property="CornerRadius" Value="8" />
+        <Setter Property="Background" Value="{DynamicResource SkinSurface1}" />
+    </Style>
+
+    <!-- Menus / toolbars: deep-gray, no heavy chrome -->
+    <Style Selector="Menu">
+        <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style Selector="MenuItem">
+        <Setter Property="CornerRadius" Value="8" />
+    </Style>
+    <Style Selector="MenuItem:pointerover /template/ Border#PART_LayoutRoot">
+        <Setter Property="Background" Value="{DynamicResource SkinSurface2}" />
+    </Style>
+
+    <!-- TreeView / TreeViewItem: rounded selection, indigo-soft -->
+    <Style Selector="TreeViewItem:selected /template/ Border#PART_LayoutRoot">
+        <Setter Property="Background" Value="{DynamicResource RowSelectedBackground}" />
+        <Setter Property="CornerRadius" Value="6" />
+    </Style>
+</Styles>

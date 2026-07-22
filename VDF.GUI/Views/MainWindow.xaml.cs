@@ -119,6 +119,10 @@ namespace VDF.GUI.Views {
 		}
 
 		private void MainWindow_Opened(object? sender, EventArgs e) {
+			// Constrain maximize to the monitor work area (don't cover the taskbar). Register
+			// before ApplySavedWindowPlacement so an app that opens maximized is constrained too.
+			if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+				HookMaximizeToWorkArea();
 			if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) {
 				/*
 				 * Due to Avalonia bug, window is bigger than screen size.
@@ -468,6 +472,128 @@ namespace VDF.GUI.Views {
 				vm.CheckedByGroupChanged += SyncGroupBoxes;
 				SyncGroupBoxes();
 			};
+		}
+
+		// ── SWEEP track (slice 1): map the 5 stages onto today's tab bodies ──
+		// Sources→Directories(0), Rules→Rules tab(5), Scan→Scanner table(1),
+		// Review→card-review tab(4), Reclaim→Reclaim tab(6).
+		static readonly int[] StageToTab = { 0, 5, 1, 4, 6 };
+		void OnStageClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e) {
+			if (sender is Button b && int.TryParse(b.Tag?.ToString(), out int stage))
+				SetStage(stage);
+		}
+		void SetStage(int stage) {
+			if (stage < 0 || stage >= StageToTab.Length) return;
+			var tabs = this.FindControl<TabControl>("TabControl");
+			if (tabs != null) tabs.SelectedIndex = StageToTab[stage];
+			var track = this.FindControl<StackPanel>("StageTrack");
+			if (track != null)
+				foreach (var child in track.Children)
+					if (child is Button btn) {
+						if (btn.Tag?.ToString() == stage.ToString()) {
+							if (!btn.Classes.Contains("active")) btn.Classes.Add("active");
+						}
+						else btn.Classes.Remove("active");
+					}
+		}
+
+		// Drawer links (환경설정→Settings tab, 콘솔→Log tab): Tag is a direct tab index.
+		// These aren't SWEEP stages, so clear the stage highlight when one is opened.
+		void OnGoTab(object? sender, Avalonia.Interactivity.RoutedEventArgs e) {
+			if (sender is not Button b || !int.TryParse(b.Tag?.ToString(), out int tab)) return;
+			var tabs = this.FindControl<TabControl>("TabControl");
+			if (tabs != null) tabs.SelectedIndex = tab;
+			var track = this.FindControl<StackPanel>("StageTrack");
+			if (track != null)
+				foreach (var child in track.Children)
+					if (child is Button btn) btn.Classes.Remove("active");
+		}
+
+		// ── Keep a MAXIMIZED extended-client-area window inside the monitor work area so it
+		//    never covers the taskbar (Avalonia 12 removed Win32Properties.AddWndProcHookCallback,
+		//    so we subclass the HWND ourselves and chain to the original proc). Windows-only.
+		//    The delegate is held in a field so the thunk isn't garbage-collected. ──
+		const int WM_GETMINMAXINFO = 0x0024;
+		const int GWLP_WNDPROC = -4;
+		const int MONITOR_DEFAULTTONEAREST = 0x00000002;
+		[StructLayout(LayoutKind.Sequential)] struct NativePoint { public int X; public int Y; }
+		[StructLayout(LayoutKind.Sequential)] struct NativeRect { public int Left, Top, Right, Bottom; }
+		[StructLayout(LayoutKind.Sequential)] struct MinMaxInfo { public NativePoint Reserved, MaxSize, MaxPosition, MinTrackSize, MaxTrackSize; }
+		[StructLayout(LayoutKind.Sequential)] struct MonitorInfo { public int CbSize; public NativeRect Monitor; public NativeRect Work; public int Flags; }
+		[DllImport("user32.dll")] static extern IntPtr MonitorFromWindow(IntPtr hwnd, int flags);
+		[DllImport("user32.dll")] static extern bool GetMonitorInfo(IntPtr hMonitor, ref MonitorInfo lpmi);
+		[DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
+		[DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")] static extern IntPtr SetWindowLongPtr(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
+		[DllImport("user32.dll")] static extern IntPtr CallWindowProc(IntPtr lpPrevWndFunc, IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+		[DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
+		const uint SWP_NOMOVE = 0x2, SWP_NOSIZE = 0x1, SWP_NOZORDER = 0x4, SWP_FRAMECHANGED = 0x20;
+		const uint ABM_GETSTATE = 0x4, ABM_GETTASKBARPOS = 0x5, ABS_AUTOHIDE = 0x1;
+		const int WM_WINDOWPOSCHANGING = 0x0046;
+		[StructLayout(LayoutKind.Sequential)] struct WINDOWPOS { public IntPtr hwnd; public IntPtr hwndInsertAfter; public int x, y, cx, cy; public uint flags; }
+		[StructLayout(LayoutKind.Sequential)] struct APPBARDATA { public int cbSize; public IntPtr hWnd; public uint uCallbackMessage; public uint uEdge; public NativeRect rc; public IntPtr lParam; }
+		[DllImport("shell32.dll")] static extern uint SHAppBarMessage(uint dwMessage, ref APPBARDATA pData);
+
+		delegate IntPtr WndProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+		WndProc? _subclassProc;   // keep alive
+		IntPtr _origWndProc;
+
+		void HookMaximizeToWorkArea() {
+			var h = TryGetPlatformHandle();
+			if (h == null || h.Handle == IntPtr.Zero) return;
+			_subclassProc = SubclassWndProc;
+			_origWndProc = GetWindowLongPtr(h.Handle, GWLP_WNDPROC);
+			SetWindowLongPtr(h.Handle, GWLP_WNDPROC, Marshal.GetFunctionPointerForDelegate(_subclassProc));
+		}
+
+		IntPtr SubclassWndProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam) {
+			// Run Avalonia's proc first, then override. Avalonia 12 sets the maximized bounds itself
+			// (ignores WM_GETMINMAXINFO), so the authoritative fix is to clamp the actual placement in
+			// WM_WINDOWPOSCHANGING; the MINMAXINFO override is kept as a belt-and-suspenders.
+			IntPtr result = CallWindowProc(_origWndProc, hWnd, msg, wParam, lParam);
+			// While maximized, pin BOTH position and size to the work area (Avalonia otherwise
+			// offsets the maximized window off-screen and oversizes it, covering the taskbar).
+			if (msg == WM_WINDOWPOSCHANGING && WindowState == WindowState.Maximized
+					&& ComputeMaxBounds(hWnd, out int x, out int y, out int w, out int h, out _)) {
+				var wp = Marshal.PtrToStructure<WINDOWPOS>(lParam);
+				if (wp.x != x || wp.y != y || wp.cx != w || wp.cy != h || (wp.flags & (SWP_NOSIZE | SWP_NOMOVE)) != 0) {
+					wp.x = x; wp.y = y; wp.cx = w; wp.cy = h;
+					wp.flags &= ~(SWP_NOSIZE | SWP_NOMOVE);
+					Marshal.StructureToPtr(wp, lParam, true);
+				}
+			}
+			else if (msg == WM_GETMINMAXINFO && ComputeMaxBounds(hWnd, out int mx, out int my, out int mw, out int mh, out var mi2)) {
+				var mmi = Marshal.PtrToStructure<MinMaxInfo>(lParam);
+				mmi.MaxPosition.X = mx - mi2.Monitor.Left; mmi.MaxPosition.Y = my - mi2.Monitor.Top;
+				mmi.MaxSize.X = mw; mmi.MaxSize.Y = mh;
+				Marshal.StructureToPtr(mmi, lParam, true);
+			}
+			return result;
+		}
+
+		// Work area of the window's monitor in absolute screen coords, minus 1px on an auto-hide
+		// taskbar's edge so the bar can still reveal (Windows suppresses it under a full-monitor window).
+		bool ComputeMaxBounds(IntPtr hWnd, out int x, out int y, out int w, out int h, out MonitorInfo mi) {
+			x = y = w = h = 0; mi = default;
+			IntPtr mon = MonitorFromWindow(hWnd, MONITOR_DEFAULTTONEAREST);
+			if (mon == IntPtr.Zero) return false;
+			mi = new MonitorInfo { CbSize = Marshal.SizeOf<MonitorInfo>() };
+			if (!GetMonitorInfo(mon, ref mi)) return false;
+			x = mi.Work.Left; y = mi.Work.Top; w = mi.Work.Right - mi.Work.Left; h = mi.Work.Bottom - mi.Work.Top;
+			bool full = mi.Work.Left == mi.Monitor.Left && mi.Work.Top == mi.Monitor.Top &&
+						mi.Work.Right == mi.Monitor.Right && mi.Work.Bottom == mi.Monitor.Bottom;
+			if (full) {
+				var abd = new APPBARDATA { cbSize = Marshal.SizeOf<APPBARDATA>() };
+				if ((SHAppBarMessage(ABM_GETSTATE, ref abd) & ABS_AUTOHIDE) != 0) {
+					var pb = new APPBARDATA { cbSize = Marshal.SizeOf<APPBARDATA>() };
+					SHAppBarMessage(ABM_GETTASKBARPOS, ref pb);
+					switch (pb.uEdge) { case 0: x += 1; w -= 1; break; case 1: y += 1; h -= 1; break; case 2: w -= 1; break; default: h -= 1; break; }
+				}
+			}
+			return true;
+		}
+
+		void OnConsoleToggle(object? sender, Avalonia.Interactivity.RoutedEventArgs e) {
+			if (DataContext is ViewModels.MainWindowVM vm) vm.ConsoleOpen = !vm.ConsoleOpen;
 		}
 
 		void InitializeComponent() => AvaloniaXamlLoader.Load(this);

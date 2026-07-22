@@ -7,6 +7,7 @@
     xmlns:controls="clr-namespace:Avalonia.Controls;assembly=Avalonia.Controls"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:datagrid="clr-namespace:Avalonia.Controls;assembly=Avalonia.Controls.DataGrid"
+    xmlns:acol="clr-namespace:Avalonia.Collections;assembly=Avalonia.Controls.DataGrid"
     xmlns:i="clr-namespace:Avalonia.Xaml.Interactivity;assembly=Xaml.Behaviors.Interactivity"
     xmlns:ic="clr-namespace:Avalonia.Xaml.Interactions.Custom;assembly=Xaml.Behaviors.Interactions.Custom"
     xmlns:local="clr-namespace:VDF.GUI;assembly=VDF.GUI"
@@ -43,11 +44,16 @@
         <mvvm:ShowSkeletonConverter x:Key="ShowSkeletonConverter" />
     </Window.Resources>
     <Window.Styles>
+        <!-- Hide the managed full-screen toggle. Avalonia 12's extended-client-area chrome
+             adds a full-screen button Windows never had; entering full-screen covers the
+             taskbar and reads as always-on-top, which the user does not want. Maximize is
+             the ceiling now. (Minor: the remaining caption buttons sit one slot in from the
+             edge — acceptable versus a taskbar-blocking full-screen a click away.) -->
+        <Style Selector="Button#PART_FullScreenButton">
+            <Setter Property="IsVisible" Value="False" />
+        </Style>
         <!-- Avalonia 12 draws managed caption buttons when the client area is extended
-             (ExtendClientAreaChromeHints/PreferSystemChrome no longer exists). Its button
-             set includes a full-screen toggle Windows chrome never had. Hiding it via
-             Button#PART_FullScreenButton works but leaves the remaining buttons offset
-             from the window edge, which looks worse — so the button stays for now. -->
+             (ExtendClientAreaChromeHints/PreferSystemChrome no longer exists). -->
         <Style Selector="Button.hyperlink">
             <Setter Property="Template">
                 <ControlTemplate>
@@ -88,8 +94,51 @@
                 HorizontalAlignment="Center"
                 IsHitTestVisible="false"
                 Text="{Binding #MainWindow.Title}" />
-            <Grid x:Name="MainContentGrid" Margin="2,30,2,2">
-                <TabControl x:Name="TabControl">
+            <Grid x:Name="MainContentGrid" Margin="2,30,2,2" RowDefinitions="Auto,Auto,*">
+                <!-- ═══════ SWEEP instrument bar: mono library/results status, visible from every stage ═══════ -->
+                <Border Grid.Row="0" Padding="12,3,12,3" BorderThickness="0,0,0,1" BorderBrush="{DynamicResource SkinPanelBorder}">
+                    <TextBlock Classes="data" FontSize="12" VerticalAlignment="Center" Foreground="{DynamicResource SkinMuted}">
+                        <Run Text="VDF" FontWeight="Bold" Foreground="{DynamicResource SkinAccent}" />
+                        <Run Text="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Bar.Duplicates]}" /><Run Text="{Binding TotalDuplicates}" Foreground="{DynamicResource SkinData}" /><Run Text="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Bar.CountSep]}" /><Run Text="{Binding TotalDuplicatesSize}" Foreground="{DynamicResource SkinData}" />
+                        <Run Text="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Bar.CleanupTarget]}" /><Run Text="{Binding DuplicatesCheckedCounter}" Foreground="{DynamicResource SkinAccent}" /><Run Text="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Bar.CountSep]}" /><Run Text="{Binding DuplicatesCheckedSize}" Foreground="{DynamicResource SkinAccent}" />
+                    </TextBlock>
+                </Border>
+                <!-- ═══════ SWEEP track (slice 1): the new 5-stage navigation, drives the header-hidden TabControl ═══════ -->
+                <Border Grid.Row="1" Padding="6,4,6,8" BorderThickness="0,0,0,1"
+                        BorderBrush="{DynamicResource SkinPanelBorder}">
+                    <StackPanel x:Name="StageTrack" Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
+                        <Button Classes="stage active" Tag="0" Click="OnStageClick">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <TextBlock Classes="num" Text="①" /><TextBlock Text="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Stage.Sources]}" />
+                            </StackPanel>
+                        </Button>
+                        <Button Classes="stage" Tag="1" Click="OnStageClick">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <TextBlock Classes="num" Text="②" /><TextBlock Text="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Stage.Rules]}" />
+                            </StackPanel>
+                        </Button>
+                        <Button Classes="stage" Tag="2" Click="OnStageClick">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <TextBlock Classes="num" Text="③" /><TextBlock Text="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Stage.Scan]}" />
+                            </StackPanel>
+                        </Button>
+                        <Button Classes="stage" Tag="3" Click="OnStageClick">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <TextBlock Classes="num" Text="④" /><TextBlock Text="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Stage.Review]}" />
+                            </StackPanel>
+                        </Button>
+                        <Button Classes="stage" Tag="4" Click="OnStageClick">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <TextBlock Classes="num" Text="⑤" /><TextBlock Text="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Stage.Reclaim]}" />
+                            </StackPanel>
+                        </Button>
+                        <!-- Drawer links: reach the (track-orphaned) Settings & Log tabs. Not stages. -->
+                        <Border Width="1" Height="18" Margin="10,0" VerticalAlignment="Center" Background="{DynamicResource SkinPanelBorder}" />
+                        <Button Classes="stage" Tag="2" Click="OnGoTab" Content="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Drawer.Settings]}" FontSize="13" />
+                        <Button Classes="stage" Click="OnConsoleToggle" Content="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Drawer.Console]}" FontSize="13" />
+                    </StackPanel>
+                </Border>
+                <TabControl x:Name="TabControl" Grid.Row="2" Classes="headerless">
                     <TabItem Name="TabItemDirectories">
                         <TabItem.Header>
                             <TextBlock
@@ -125,8 +174,8 @@
                                 <TextBlock Opacity="0.6" FontSize="11" TextWrapping="Wrap" VerticalAlignment="Center"
                                            Text="{Binding Source={x:Static local:App.Lang}, Path=[MainWindow.Settings.DirectorySelectionHint]}" />
                             </DockPanel>
-                            <Border Grid.Row="1" Grid.Column="0" BorderThickness="1" CornerRadius="4"
-                                    BorderBrush="{actipro:ThemeResource Container1BorderBrush}">
+                            <Border Grid.Row="1" Grid.Column="0" BorderThickness="1" CornerRadius="8"
+                                    BorderBrush="{DynamicResource SkinPanelBorder}">
                                 <TreeView Name="DirectoryTree" ItemsSource="{Binding DirectoryTreeRoots}">
                                     <TreeView.Styles>
                                         <Style Selector="TreeViewItem" x:DataType="vm:DirectoryTreeNodeVM">
@@ -153,7 +202,7 @@
                                                 <TextBlock Text="{Binding Name}" VerticalAlignment="Center"
                                                            Foreground="{Binding NameBrush}" FontWeight="{Binding NameWeight}" />
                                                 <TextBlock Text="{Binding SizeText}" VerticalAlignment="Center" FontSize="11"
-                                                           Foreground="#7FD1E0" Opacity="0.85" />
+                                                           Classes="data" Foreground="#7FD1E0" Opacity="0.85" />
                                                 <Border IsVisible="{Binding HasMissing}" VerticalAlignment="Center" CornerRadius="3"
                                                         Background="#33FF9800" Padding="5,1" Margin="2,0,0,0">
                                                     <TextBlock Text="{Binding MissingText}" FontSize="11" FontWeight="SemiBold" Foreground="#FFB74D" />
@@ -225,7 +274,8 @@
                                         </MenuItem.Header>
                                     </MenuItem>
                                 </Menu>
-                                <ListBox Name="ListboxBlacklist" Grid.Row="1" BorderThickness="1"
+                                <ListBox Name="ListboxBlacklist" Grid.Row="1" BorderThickness="1" CornerRadius="8"
+                                         BorderBrush="{DynamicResource SkinPanelBorder}"
                                          DragDrop.AllowDrop="True"
                                          ItemsSource="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=Blacklists}" />
                                 <TextBlock Grid.Row="2" Margin="5" TextWrapping="Wrap" Foreground="{actipro:ThemeResource ControlBackgroundBrushSolidWarning}"
@@ -2287,9 +2337,324 @@
                                 ScrollViewer.HorizontalScrollBarVisibility="Visible" />
                         </Grid>
                     </TabItem>
+                    <!-- ═══════ SWEEP · ④ 검토 (Review) — card review over the same Duplicates, keep/cut + reclaim ═══════ -->
+                    <TabItem Name="TabItemReview">
+                        <Grid Margin="8" RowDefinitions="Auto,*" ColumnDefinitions="*,Auto">
+                            <!-- Query / filter line -->
+                            <Border Grid.Row="0" Grid.ColumnSpan="2" Classes="card" Padding="11,8" Margin="0,0,0,8">
+                                <StackPanel Orientation="Horizontal" Spacing="9">
+                                    <TextBlock Text="&gt;" Classes="data" FontSize="15" VerticalAlignment="Center"
+                                               Foreground="{DynamicResource SkinAccent}" />
+                                    <TextBox Width="420" VerticalAlignment="Center" Classes="data"
+                                             PlaceholderText="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Review.QueryPlaceholder]}"
+                                             Text="{Binding QuickFilter}" />
+                                    <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource SkinMuted}"
+                                               Text="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Review.Hint]}" />
+                                    <ToggleButton VerticalAlignment="Center" Content="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Review.TableToggle]}" IsChecked="{Binding ReviewTableMode}"
+                                                  ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Review.TableToggleTip]}" />
+                                </StackPanel>
+                            </Border>
+                            <!-- Card list over the live Duplicates collection -->
+                            <Border Grid.Row="1" Grid.Column="0" Classes="card" Padding="3">
+                                <Grid>
+                                    <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center" TextAlignment="Center"
+                                               Foreground="{DynamicResource SkinMuted}"
+                                               IsVisible="{Binding !Duplicates.Count}"
+                                               Text="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Review.EmptyState]}" />
+                                    <ScrollViewer IsVisible="{Binding !ReviewTableMode}">
+                                        <!-- Grouped by GroupId via the shared view; the query line filters these cards. -->
+                                        <ItemsControl ItemsSource="{Binding ResultsView.Groups}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate x:DataType="acol:DataGridCollectionViewGroup">
+                                                    <StackPanel Margin="0,0,0,14">
+                                                        <!-- group header -->
+                                                        <Border CornerRadius="6" Padding="12,6" Margin="4,6,4,3"
+                                                                Background="{DynamicResource SkinAccentSoft}"
+                                                                BorderThickness="0,0,0,0">
+                                                            <TextBlock FontWeight="SemiBold" FontSize="13" Foreground="{DynamicResource SkinAccent}">
+                                                                <Run Text="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Review.GroupHeaderPrefix]}" /><Run Classes="num" FontFamily="Cascadia Mono, Consolas" Text="{Binding ItemCount}" /><Run Text="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Review.GroupHeaderSuffix]}" />
+                                                            </TextBlock>
+                                                        </Border>
+                                                        <!-- group members -->
+                                                        <ItemsControl ItemsSource="{Binding Items}">
+                                                            <ItemsControl.ItemTemplate>
+                                                                <DataTemplate x:DataType="vm:DuplicateItemVM">
+                                                                    <Border Margin="4" Padding="10" CornerRadius="8" BorderThickness="1" Cursor="Hand"
+                                                            ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Review.CardTip]}"
+                                                            BorderBrush="{DynamicResource SkinPanelBorder}"
+                                                            Background="{actipro:ThemeResource Container2BackgroundBrush}">
+                                                        <i:Interaction.Behaviors>
+                                                            <ic:ExecuteCommandOnDoubleTappedBehavior Command="{Binding $parent[Window].((vm:MainWindowVM)DataContext).OpenItemDirectCommand}" CommandParameter="{Binding}" />
+                                                        </i:Interaction.Behaviors>
+                                                        <Border.ContextMenu>
+                                                            <ContextMenu>
+                                                                <MenuItem Header="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Review.CtxOpen]}" Command="{Binding $parent[Window].((vm:MainWindowVM)DataContext).OpenItemDirectCommand}" CommandParameter="{Binding}" />
+                                                                <MenuItem Header="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Review.CtxOpenFolder]}" Command="{Binding $parent[Window].((vm:MainWindowVM)DataContext).OpenFolderDirectCommand}" CommandParameter="{Binding}" />
+                                                            </ContextMenu>
+                                                        </Border.ContextMenu>
+                                                        <Grid ColumnDefinitions="Auto,Auto,*,Auto">
+                                                            <CheckBox Grid.Column="0" VerticalAlignment="Center" Margin="2,0,12,0"
+                                                                      IsChecked="{Binding Checked}"
+                                                                      ToolTip.Tip="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Review.CheckTip]}" />
+                                                            <Image Grid.Column="1" Height="54" Margin="0,0,12,0"
+                                                                   Source="{Binding Thumbnail}" Stretch="Uniform" StretchDirection="DownOnly" />
+                                                            <StackPanel Grid.Column="2" VerticalAlignment="Center" Spacing="4">
+                                                                <TextBlock Text="{Binding ItemInfo.Path}" TextTrimming="CharacterEllipsis" />
+                                                                <!-- Delta-metric strip: the group's best keeps its value (green), others show
+                                                                     just the difference; identical specs fold to "=". Reuses the DataGrid converters. -->
+                                                                <StackPanel Orientation="Horizontal" Spacing="16">
+                                                                    <TextBlock Classes="data metric-diff" FontSize="12" ToolTip.Tip="{Binding ItemInfo.FrameSize}">
+                                                                        <TextBlock.Text><MultiBinding Converter="{StaticResource MetricDisplayConverter}"><Binding Path="ItemInfo.FrameSize" /><Binding Path="FrameSizeDiff" /></MultiBinding></TextBlock.Text>
+                                                                        <TextBlock.Foreground><MultiBinding Converter="{StaticResource MetricDiffForegroundConverter}"><Binding Path="ItemInfo.IsBestFrameSize" /><Binding Path="FrameSizeDiff" /></MultiBinding></TextBlock.Foreground>
+                                                                    </TextBlock>
+                                                                    <TextBlock Classes="data metric-diff" FontSize="12" ToolTip.Tip="{Binding ItemInfo.Size}">
+                                                                        <TextBlock.Text><MultiBinding Converter="{StaticResource MetricDisplayConverter}"><Binding Path="ItemInfo.Size" /><Binding Path="SizeDiff" /></MultiBinding></TextBlock.Text>
+                                                                        <TextBlock.Foreground><MultiBinding Converter="{StaticResource MetricDiffForegroundConverter}"><Binding Path="ItemInfo.IsBestSize" /><Binding Path="SizeDiff" /></MultiBinding></TextBlock.Foreground>
+                                                                    </TextBlock>
+                                                                    <TextBlock Classes="data metric-diff" FontSize="12" IsVisible="{Binding !ItemInfo.IsImage}" ToolTip.Tip="{Binding ItemInfo.BitRateKbs, StringFormat='{}{0} kbps'}">
+                                                                        <TextBlock.Text><MultiBinding Converter="{StaticResource MetricDisplayConverter}" ConverterParameter="{}{0} kbps"><Binding Path="ItemInfo.BitRateKbs" /><Binding Path="BitRateDiff" /></MultiBinding></TextBlock.Text>
+                                                                        <TextBlock.Foreground><MultiBinding Converter="{StaticResource MetricDiffForegroundConverter}"><Binding Path="ItemInfo.IsBestBitRateKbs" /><Binding Path="BitRateDiff" /></MultiBinding></TextBlock.Foreground>
+                                                                    </TextBlock>
+                                                                    <TextBlock Classes="data metric-diff" FontSize="12" IsVisible="{Binding !ItemInfo.IsImage}" ToolTip.Tip="{Binding ItemInfo.Fps}">
+                                                                        <TextBlock.Text><MultiBinding Converter="{StaticResource MetricDisplayConverter}" ConverterParameter="{}{0} fps"><Binding Path="ItemInfo.Fps" /><Binding Path="FpsDiff" /></MultiBinding></TextBlock.Text>
+                                                                        <TextBlock.Foreground><MultiBinding Converter="{StaticResource MetricDiffForegroundConverter}"><Binding Path="ItemInfo.IsBestFps" /><Binding Path="FpsDiff" /></MultiBinding></TextBlock.Foreground>
+                                                                    </TextBlock>
+                                                                    <TextBlock Classes="data metric-diff" FontSize="12" IsVisible="{Binding !ItemInfo.IsImage}" ToolTip.Tip="{Binding ItemInfo.Duration}">
+                                                                        <TextBlock.Text><MultiBinding Converter="{StaticResource MetricDisplayConverter}" ConverterParameter="{}{0:hh\:mm\:ss}"><Binding Path="ItemInfo.Duration" /><Binding Path="DurationDiff" /></MultiBinding></TextBlock.Text>
+                                                                        <TextBlock.Foreground><MultiBinding Converter="{StaticResource MetricDiffForegroundConverter}"><Binding Path="ItemInfo.IsBestDuration" /><Binding Path="DurationDiff" /></MultiBinding></TextBlock.Foreground>
+                                                                    </TextBlock>
+                                                                </StackPanel>
+                                                            </StackPanel>
+                                                            <Border Grid.Column="3" Classes="similarity-badge" VerticalAlignment="Center" Margin="8,0,4,0"
+                                                                    Background="{Binding ItemInfo.Similarity, Converter={StaticResource SimilarityToBadgeBackgroundConverter}}">
+                                                                <TextBlock Foreground="{Binding ItemInfo.Similarity, Converter={StaticResource SimilarityToBadgeForegroundConverter}}"
+                                                                           Text="{Binding ItemInfo.Similarity, Converter={StaticResource SimilarityToFormattedConverter}}" />
+                                                            </Border>
+                                                        </Grid>
+                                                    </Border>
+                                                                </DataTemplate>
+                                                            </ItemsControl.ItemTemplate>
+                                                        </ItemsControl>
+                                                    </StackPanel>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </ScrollViewer>
+                                    <!-- dense table view (flat, filtered/sorted; group members stay adjacent) -->
+                                    <ScrollViewer IsVisible="{Binding ReviewTableMode}">
+                                        <ItemsControl ItemsSource="{Binding ResultsView}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate x:DataType="vm:DuplicateItemVM">
+                                                    <Grid ColumnDefinitions="Auto,*,92,92,112,92,72" Margin="8,0" Height="30">
+                                                        <CheckBox Grid.Column="0" VerticalAlignment="Center" Margin="2,0,10,0" IsChecked="{Binding Checked}" />
+                                                        <TextBlock Grid.Column="1" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                                                                   Text="{Binding ItemInfo.Path}" ToolTip.Tip="{Binding ItemInfo.Path}" />
+                                                        <TextBlock Grid.Column="2" Classes="data" FontSize="12" VerticalAlignment="Center">
+                                                            <TextBlock.Text><MultiBinding Converter="{StaticResource MetricDisplayConverter}"><Binding Path="ItemInfo.FrameSize" /><Binding Path="FrameSizeDiff" /></MultiBinding></TextBlock.Text>
+                                                            <TextBlock.Foreground><MultiBinding Converter="{StaticResource MetricDiffForegroundConverter}"><Binding Path="ItemInfo.IsBestFrameSize" /><Binding Path="FrameSizeDiff" /></MultiBinding></TextBlock.Foreground>
+                                                        </TextBlock>
+                                                        <TextBlock Grid.Column="3" Classes="data" FontSize="12" VerticalAlignment="Center">
+                                                            <TextBlock.Text><MultiBinding Converter="{StaticResource MetricDisplayConverter}"><Binding Path="ItemInfo.Size" /><Binding Path="SizeDiff" /></MultiBinding></TextBlock.Text>
+                                                            <TextBlock.Foreground><MultiBinding Converter="{StaticResource MetricDiffForegroundConverter}"><Binding Path="ItemInfo.IsBestSize" /><Binding Path="SizeDiff" /></MultiBinding></TextBlock.Foreground>
+                                                        </TextBlock>
+                                                        <TextBlock Grid.Column="4" Classes="data" FontSize="12" VerticalAlignment="Center" IsVisible="{Binding !ItemInfo.IsImage}">
+                                                            <TextBlock.Text><MultiBinding Converter="{StaticResource MetricDisplayConverter}" ConverterParameter="{}{0} kbps"><Binding Path="ItemInfo.BitRateKbs" /><Binding Path="BitRateDiff" /></MultiBinding></TextBlock.Text>
+                                                            <TextBlock.Foreground><MultiBinding Converter="{StaticResource MetricDiffForegroundConverter}"><Binding Path="ItemInfo.IsBestBitRateKbs" /><Binding Path="BitRateDiff" /></MultiBinding></TextBlock.Foreground>
+                                                        </TextBlock>
+                                                        <TextBlock Grid.Column="5" Classes="data" FontSize="12" VerticalAlignment="Center" IsVisible="{Binding !ItemInfo.IsImage}">
+                                                            <TextBlock.Text><MultiBinding Converter="{StaticResource MetricDisplayConverter}" ConverterParameter="{}{0:hh\:mm\:ss}"><Binding Path="ItemInfo.Duration" /><Binding Path="DurationDiff" /></MultiBinding></TextBlock.Text>
+                                                            <TextBlock.Foreground><MultiBinding Converter="{StaticResource MetricDiffForegroundConverter}"><Binding Path="ItemInfo.IsBestDuration" /><Binding Path="DurationDiff" /></MultiBinding></TextBlock.Foreground>
+                                                        </TextBlock>
+                                                        <Border Grid.Column="6" Classes="similarity-badge" VerticalAlignment="Center" HorizontalAlignment="Left"
+                                                                Background="{Binding ItemInfo.Similarity, Converter={StaticResource SimilarityToBadgeBackgroundConverter}}">
+                                                            <TextBlock FontSize="11" Foreground="{Binding ItemInfo.Similarity, Converter={StaticResource SimilarityToBadgeForegroundConverter}}"
+                                                                       Text="{Binding ItemInfo.Similarity, Converter={StaticResource SimilarityToFormattedConverter}}" />
+                                                        </Border>
+                                                    </Grid>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </ScrollViewer>
+                                </Grid>
+                            </Border>
+                            <!-- Reclaim tray -->
+                            <Border Grid.Row="1" Grid.Column="1" Width="224" Margin="10,0,0,0" Padding="16,15" CornerRadius="10"
+                                    VerticalAlignment="Top" BorderThickness="1" BorderBrush="{DynamicResource SkinPanelBorder}"
+                                    Background="{actipro:ThemeResource Container2BackgroundBrush}">
+                                <StackPanel Spacing="6">
+                                    <TextBlock Text="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Reclaim.Tray]}" FontSize="12" Foreground="{DynamicResource SkinMuted}" />
+                                    <TextBlock Classes="data" FontSize="28" FontWeight="Bold"
+                                               Foreground="{DynamicResource SkinAccent}" Text="{Binding DuplicatesCheckedSize}" />
+                                    <TextBlock Classes="data" FontSize="12" Foreground="{DynamicResource SkinMuted}">
+                                        <Run Text="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Reclaim.Selected]}" /><Run Text="{Binding DuplicatesCheckedCounter}" /><Run Text="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Reclaim.FilesSuffix]}" />
+                                    </TextBlock>
+                                    <Border Height="1" Margin="0,5" Background="{DynamicResource SkinPanelBorder}" />
+                                    <TextBlock Classes="data" FontSize="12" Foreground="{DynamicResource SkinData}">
+                                        <Run Text="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Reclaim.TotalDup]}" /><Run Text="{Binding TotalDuplicates}" /><Run Text="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Reclaim.CountSuffix]}" />
+                                    </TextBlock>
+                                    <TextBlock Classes="data" FontSize="12" Foreground="{DynamicResource SkinData}" Text="{Binding TotalDuplicatesSize}" />
+                                    <Button Classes="primary" HorizontalAlignment="Stretch" Margin="0,10,0,0"
+                                            Command="{Binding DeleteCheckedItemsWithPromptCommand}"
+                                            Content="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Review.CommitButton]}" />
+                                </StackPanel>
+                            </Border>
+                        </Grid>
+                    </TabItem>
+                    <!-- ═══════ SWEEP · ② 규칙 (Rules) — match knobs split out; binds live to SettingsFile.Instance ═══════ -->
+                    <TabItem Name="TabItemRules">
+                        <Grid Margin="14" ColumnDefinitions="*,16,*" RowDefinitions="Auto,Auto,*">
+                            <TextBlock Grid.Row="0" Grid.ColumnSpan="3" Text="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Rules.Title]}"
+                                       FontSize="18" FontWeight="SemiBold" />
+                            <TextBlock Grid.Row="1" Grid.ColumnSpan="3" Margin="0,2,0,12" Foreground="{DynamicResource SkinMuted}"
+                                       Text="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Rules.Hint]}" />
+                            <!-- LEFT: visual match -->
+                            <Border Grid.Row="2" Grid.Column="0" Classes="card" Padding="18" VerticalAlignment="Top">
+                                <StackPanel Spacing="14">
+                                    <TextBlock Text="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Rules.VisualMatch]}" FontSize="12" Foreground="{DynamicResource SkinAccent}" />
+                                    <StackPanel Spacing="4">
+                                        <TextBlock Text="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Rules.SimilarityThreshold]}" />
+                                        <NumericUpDown Width="170" HorizontalAlignment="Left" FormatString="{}{0}%" Minimum="0" Maximum="100" Increment="1"
+                                                       Value="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=Percent}" />
+                                    </StackPanel>
+                                    <StackPanel Spacing="4">
+                                        <TextBlock Text="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Rules.PHashGrayVerify]}" />
+                                        <NumericUpDown Width="170" HorizontalAlignment="Left" FormatString="{}{0}%" Minimum="0" Maximum="100" Increment="1"
+                                                       IsEnabled="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=UsePHash}"
+                                                       Value="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=PHashGrayVerifyPercent}" />
+                                    </StackPanel>
+                                    <StackPanel Spacing="4">
+                                        <TextBlock Text="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Rules.DurationTolerance]}" />
+                                        <NumericUpDown Width="170" HorizontalAlignment="Left" FormatString="{}{0}%" Minimum="0" Maximum="100" Increment="1"
+                                                       Value="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=PercentDurationDifference}" />
+                                    </StackPanel>
+                                    <Border Height="1" Margin="0,2" Background="{DynamicResource SkinPanelBorder}" />
+                                    <CheckBox Content="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Rules.UsePHash]}" IsChecked="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=UsePHash}" />
+                                    <CheckBox Content="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Rules.CompareFlipped]}" IsChecked="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=CompareHorizontallyFlipped}" />
+                                    <CheckBox Content="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Rules.IgnoreBlack]}" IsChecked="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=IgnoreBlackPixels}" />
+                                    <CheckBox Content="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Rules.IgnoreWhite]}" IsChecked="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=IgnoreWhitePixels}" />
+                                </StackPanel>
+                            </Border>
+                            <!-- RIGHT: scope/filters + partial-clip -->
+                            <StackPanel Grid.Row="2" Grid.Column="2" Spacing="16" VerticalAlignment="Top">
+                                <Border Classes="card" Padding="18">
+                                    <StackPanel Spacing="11">
+                                        <TextBlock Text="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Rules.ScopeFilter]}" FontSize="12" Foreground="{DynamicResource SkinAccent}" />
+                                        <CheckBox Content="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Rules.IncludeSubfolders]}" IsChecked="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=IncludeSubDirectories}" />
+                                        <CheckBox Content="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Rules.IncludeImages]}" IsChecked="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=IncludeImages}" />
+                                        <CheckBox Content="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Rules.CompareEntireDb]}" IsChecked="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=ScanAgainstEntireDatabase}" />
+                                        <CheckBox x:Name="RuleFilterBySize" Content="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Rules.FilterBySize]}"
+                                                  IsChecked="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=FilterByFileSize}" />
+                                        <StackPanel Orientation="Horizontal" Spacing="8" IsEnabled="{Binding #RuleFilterBySize.IsChecked}">
+                                            <TextBlock Text="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Rules.Min]}" VerticalAlignment="Center" />
+                                            <NumericUpDown Width="150" Minimum="0"
+                                                           Value="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=MinimumFileSize}" />
+                                            <TextBlock Text="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Rules.Max]}" VerticalAlignment="Center" />
+                                            <NumericUpDown Width="150" Minimum="0"
+                                                           Value="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=MaximumFileSize}" />
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Border>
+                                <Border Classes="card" Padding="18">
+                                    <StackPanel Spacing="11">
+                                        <TextBlock Text="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Rules.PartialClipTitle]}" FontSize="12" Foreground="{DynamicResource SkinAccent}" />
+                                        <CheckBox x:Name="RulePartialClip" Content="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Rules.PartialClipEnable]}"
+                                                  IsChecked="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=EnablePartialClipDetection}" />
+                                        <StackPanel Orientation="Horizontal" Spacing="8" IsEnabled="{Binding #RulePartialClip.IsChecked}">
+                                            <TextBlock Text="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Rules.MinRatio]}" VerticalAlignment="Center" />
+                                            <NumericUpDown Width="130" FormatString="{}{0}%" Minimum="0" Maximum="100"
+                                                           Value="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=PartialClipMinRatioPercent}" />
+                                            <TextBlock Text="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Rules.Similarity]}" VerticalAlignment="Center" />
+                                            <NumericUpDown Width="130" FormatString="{}{0}%" Minimum="0" Maximum="100"
+                                                           Value="{Binding Source={x:Static Settings:SettingsFile.Instance}, Path=PartialClipSimilarityThresholdPercent}" />
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Border>
+                                <TextBlock Foreground="{DynamicResource SkinData}" Classes="data" FontSize="12"
+                                           Text="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Rules.Footer]}" />
+                            </StackPanel>
+                        </Grid>
+                    </TabItem>
+                    <!-- ═══════ SWEEP · ⑤ 정리 (Reclaim) — stage-then-commit over the checked items ═══════ -->
+                    <TabItem Name="TabItemReclaim">
+                        <Grid Margin="14" RowDefinitions="Auto,Auto,*">
+                            <TextBlock Grid.Row="0" Text="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Reclaim.Title]}" FontSize="18" FontWeight="SemiBold" />
+                            <TextBlock Grid.Row="1" Margin="0,2,0,14" Foreground="{DynamicResource SkinMuted}"
+                                       Text="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Reclaim.Note]}" />
+                            <Grid Grid.Row="2" ColumnDefinitions="380,20,*">
+                                <!-- Plan summary + primary commit -->
+                                <Border Grid.Column="0" Classes="card" Padding="22" VerticalAlignment="Top">
+                                    <StackPanel Spacing="8">
+                                        <TextBlock Text="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Reclaim.Tray]}" FontSize="12" Foreground="{DynamicResource SkinMuted}" />
+                                        <TextBlock Classes="data" FontSize="38" FontWeight="Bold"
+                                                   Foreground="{DynamicResource SkinAccent}" Text="{Binding DuplicatesCheckedSize}" />
+                                        <TextBlock Classes="data" FontSize="13" Foreground="{DynamicResource SkinMuted}">
+                                            <Run Text="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Reclaim.Selected]}" /><Run Text="{Binding DuplicatesCheckedCounter}" /><Run Text="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Reclaim.FilesSuffix]}" />
+                                        </TextBlock>
+                                        <Border Height="1" Margin="0,6" Background="{DynamicResource SkinPanelBorder}" />
+                                        <TextBlock Classes="data" FontSize="12" Foreground="{DynamicResource SkinData}">
+                                            <Run Text="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Reclaim.TotalDup]}" /><Run Text="{Binding TotalDuplicates}" /><Run Text="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Bar.CountSep]}" /><Run Text="{Binding TotalDuplicatesSize}" />
+                                        </TextBlock>
+                                        <Button Classes="primary" HorizontalAlignment="Stretch" Height="42" Margin="0,12,0,0"
+                                                FontSize="15" Command="{Binding DeleteCheckedItemsWithPromptCommand}"
+                                                Content="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Reclaim.CommitButton]}" />
+                                        <TextBlock FontSize="11" Foreground="{DynamicResource SkinMuted}" TextWrapping="Wrap"
+                                                   Text="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Reclaim.CommitNote]}" />
+                                    </StackPanel>
+                                </Border>
+                                <!-- Selection helpers + alternative actions -->
+                                <StackPanel Grid.Column="2" Spacing="16" VerticalAlignment="Top">
+                                    <Border Classes="card" Padding="18">
+                                        <StackPanel Spacing="10">
+                                            <TextBlock Text="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Reclaim.HelperTitle]}" FontSize="12" Foreground="{DynamicResource SkinAccent}" />
+                                            <TextBlock FontSize="12" Foreground="{DynamicResource SkinMuted}"
+                                                       Text="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Reclaim.HelperNote]}" />
+                                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                                <Button Command="{Binding CheckLowestQualityCommand}" Content="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Reclaim.AutoPickLowest]}" />
+                                                <Button Command="{Binding InvertCheckedItemsCommand}" Content="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Reclaim.InvertSelection]}" />
+                                                <Button Command="{Binding ClearCheckedItemsCommand}" Content="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Reclaim.ClearSelection]}" />
+                                            </StackPanel>
+                                        </StackPanel>
+                                    </Border>
+                                    <Border Classes="card" Padding="18">
+                                        <StackPanel Spacing="10">
+                                            <TextBlock Text="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Reclaim.OtherWays]}" FontSize="12" Foreground="{DynamicResource SkinAccent}" />
+                                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                                <Button Command="{Binding MoveCheckedItemsCommand}" Content="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Reclaim.Move]}" />
+                                                <Button Command="{Binding CopyCheckedItemsCommand}" Content="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Reclaim.Copy]}" />
+                                                <Button Command="{Binding RemoveCheckedItemsFromListCommand}" Content="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Reclaim.RemoveFromListOnly]}" />
+                                            </StackPanel>
+                                            <TextBlock FontSize="11" Foreground="{DynamicResource SkinMuted}" TextWrapping="Wrap"
+                                                       Text="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Reclaim.RemoveNote]}" />
+                                        </StackPanel>
+                                    </Border>
+                                </StackPanel>
+                            </Grid>
+                        </Grid>
+                    </TabItem>
                 </TabControl>
-                <!-- Tools dropdown: utility actions not tied to the duplicate list; floats at the right of the tab bar -->
-                <Menu HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,2,8,0" Background="Transparent">
+                <!-- ═══════ SWEEP 콘솔: bottom log drawer, overlays the current stage (does not leave it) ═══════ -->
+                <Border Grid.Row="2" VerticalAlignment="Bottom" Height="270" ZIndex="50"
+                        IsVisible="{Binding ConsoleOpen}"
+                        Background="{actipro:ThemeResource Container1BackgroundBrush}"
+                        BorderThickness="0,1,0,0" BorderBrush="{DynamicResource SkinAccent}"
+                        BoxShadow="0 -6 24 0 #66000000">
+                    <Grid RowDefinitions="Auto,*" Margin="12,8,12,10">
+                        <Grid Grid.Row="0" ColumnDefinitions="*,Auto">
+                            <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" Foreground="{DynamicResource SkinAccent}" Text="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Console.Title]}" />
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
+                                <Button Content="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Console.Clear]}" Command="{Binding ClearLogCommand}" />
+                                <Button Content="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Console.Save]}" Command="{Binding SaveLogCommand}" />
+                                <Button Content="{Binding Source={x:Static local:App.Lang}, Path=[Sweep.Console.Close]}" Click="OnConsoleToggle" />
+                            </StackPanel>
+                        </Grid>
+                        <Border Grid.Row="1" Margin="0,8,0,0" CornerRadius="6" BorderThickness="1" BorderBrush="{DynamicResource SkinPanelBorder}">
+                            <ListBox ItemsSource="{Binding LogItems}" Background="Transparent"
+                                     FontFamily="Cascadia Mono, Consolas" FontSize="12" />
+                        </Border>
+                    </Grid>
+                </Border>
+                <!-- Tools dropdown: utility actions not tied to the duplicate list; floats at the right of the track row -->
+                <Menu Grid.Row="1" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,2,8,0" Background="Transparent">
                     <MenuItem
                         Command="{Binding StartScanCommand}"
                         CommandParameter="FullScan"
@@ -2298,7 +2663,7 @@
                             <StackPanel Orientation="Horizontal">
                                 <Viewbox Width="20" Height="20">
                                     <Canvas Width="24" Height="24">
-                                        <Path Data="M8,5.14V19.14L19,12.14L8,5.14Z" Fill="Green" />
+                                        <Path Data="M8,5.14V19.14L19,12.14L8,5.14Z" Fill="#E0A046" />
                                     </Canvas>
                                 </Viewbox>
                                 <TextBlock

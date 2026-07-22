@@ -6,6 +6,60 @@
     xmlns:local="clr-namespace:VDF.GUI"
     RequestedThemeVariant="Dark">
 
+    <!-- ===== Skin v2: "Deep Space" — Gemini/Claude dense-minimalism.
+         Deep-gray layered surfaces, hairline white-alpha borders, indigo accent,
+         a signature blue→violet→coral glow on active/hero elements. Amber survives
+         only on mono data readouts (the instrument warmth). Green/red stay semantic. ===== -->
+    <Application.Resources>
+        <!-- Fluent accent ramp (checkboxes, selection, focus, toggles) → AI indigo -->
+        <Color x:Key="SystemAccentColor">#6E86FF</Color>
+        <Color x:Key="SystemAccentColorDark1">#5E76F0</Color>
+        <Color x:Key="SystemAccentColorDark2">#4E66E0</Color>
+        <Color x:Key="SystemAccentColorDark3">#4056C8</Color>
+        <Color x:Key="SystemAccentColorLight1">#8398FF</Color>
+        <Color x:Key="SystemAccentColorLight2">#9DAEFF</Color>
+        <Color x:Key="SystemAccentColorLight3">#B8C4FF</Color>
+
+        <!-- Deep-gray layered surfaces -->
+        <SolidColorBrush x:Key="SkinBg" Color="#141517" />
+        <SolidColorBrush x:Key="SkinSurface1" Color="#1D1E21" />
+        <SolidColorBrush x:Key="SkinSurface2" Color="#26272B" />
+        <!-- Hairline white-alpha borders (border-white/5 .. /10) -->
+        <SolidColorBrush x:Key="SkinBorderSubtle" Color="#14FFFFFF" />
+        <SolidColorBrush x:Key="SkinBorderFaint" Color="#0AFFFFFF" />
+        <SolidColorBrush x:Key="SkinPanelBorder" Color="#14FFFFFF" />
+        <!-- Text hierarchy -->
+        <SolidColorBrush x:Key="SkinTextPrimary" Color="#F4F5F7" />
+        <SolidColorBrush x:Key="SkinMuted" Color="#A6ABB5" />
+        <SolidColorBrush x:Key="SkinDim" Color="#6E727C" />
+        <!-- Accent = indigo; data = amber (mono readouts) -->
+        <SolidColorBrush x:Key="SkinAccent" Color="#93A2FF" />
+        <SolidColorBrush x:Key="SkinAccentHover" Color="#AEB9FF" />
+        <SolidColorBrush x:Key="SkinAccentText" Color="#0B0D14" />
+        <SolidColorBrush x:Key="SkinAccentSoft" Color="#246E86FF" />
+        <SolidColorBrush x:Key="SkinData" Color="#E0A046" />
+        <!-- Signature Gemini glow (active stage / hero CTA) -->
+        <LinearGradientBrush x:Key="SweepGlow" StartPoint="0%,0%" EndPoint="100%,0%">
+            <GradientStop Offset="0" Color="#4A77FF" />
+            <GradientStop Offset="0.55" Color="#A374FF" />
+            <GradientStop Offset="1" Color="#FF8A75" />
+        </LinearGradientBrush>
+        <LinearGradientBrush x:Key="SweepGlowSoft" StartPoint="0%,0%" EndPoint="100%,0%">
+            <GradientStop Offset="0" Color="#294A77FF" />
+            <GradientStop Offset="0.55" Color="#29A374FF" />
+            <GradientStop Offset="1" Color="#29FF8A75" />
+        </LinearGradientBrush>
+
+        <!-- ===== Modernize the OLD (Actipro-themed) screens: repaint container surfaces to
+             the deep-gray palette + hairline borders. These keys back {actipro:ThemeResource …}. ===== -->
+        <SolidColorBrush x:Key="Container1BackgroundBrush" Color="#1D1E21" />
+        <SolidColorBrush x:Key="Container1BorderBrush" Color="#14FFFFFF" />
+        <SolidColorBrush x:Key="Container2BackgroundBrush" Color="#26272B" />
+        <SolidColorBrush x:Key="Container2BorderBrush" Color="#14FFFFFF" />
+        <SolidColorBrush x:Key="Container3BackgroundBrush" Color="#303136" />
+        <SolidColorBrush x:Key="Container3BorderBrush" Color="#1AFFFFFF" />
+    </Application.Resources>
+
     <Application.Styles>
         <FluentTheme />
         <actipro:ModernTheme />

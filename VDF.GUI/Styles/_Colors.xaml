@@ -21,8 +21,8 @@
         <!-- DataGrid row hover/selection: the tombstone red, translucent. Same hue for both so
              selection reads as "the hovered thing, held" rather than a different state; the
              overlay lets the striping and theme background show through in either theme. -->
-        <SolidColorBrush x:Key="RowHoverBackground" Color="#B33A2E" Opacity="0.18" />
-        <SolidColorBrush x:Key="RowSelectedBackground" Color="#B33A2E" Opacity="0.32" />
+        <SolidColorBrush x:Key="RowHoverBackground" Color="#FFFFFF" Opacity="0.04" />
+        <SolidColorBrush x:Key="RowSelectedBackground" Color="#6E86FF" Opacity="0.18" />
 
         <!-- Best quality badge -->
         <SolidColorBrush x:Key="BestBadgeBackground" Color="#2E7D32" Opacity="0.9" />

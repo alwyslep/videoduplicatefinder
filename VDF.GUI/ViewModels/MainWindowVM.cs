@@ -1015,6 +1015,7 @@ namespace VDF.GUI.ViewModels {
 				view.SortDescriptions.Add(_SortOrder.Sort);
 			view.Filter += DuplicatesFilter;
 			GetDataGrid.ItemsSource = view;
+			this.RaisePropertyChanged(nameof(ResultsView)); // rebind the 검토 card list to the new view
 			TotalSizeRemovedInternal = 0;
 		}
 
@@ -1420,6 +1421,25 @@ namespace VDF.GUI.ViewModels {
 
 		public ReactiveCommand<DuplicateItemVM, Unit> OpenItemCommand => ReactiveCommand.Create<DuplicateItemVM>(currentItem => {
 			OpenItems();
+		});
+
+		// Parameter-driven open (the SWEEP ④ 검토 cards have no DataGrid selection, so open the
+		// double-clicked / right-clicked item directly rather than the selected row).
+		public ReactiveCommand<DuplicateItemVM, Unit> OpenItemDirectCommand => ReactiveCommand.Create<DuplicateItemVM>(item => {
+			if (item?.ItemInfo?.Path is not string path || path.Length == 0) return;
+			try { Process.Start(new ProcessStartInfo { FileName = path, UseShellExecute = true, Verb = CoreUtils.IsWindows ? null! : "open" }); }
+			catch (Exception ex) { Logger.Instance.Info($"Open failed: {ex.Message}"); }
+		});
+
+		public ReactiveCommand<DuplicateItemVM, Unit> OpenFolderDirectCommand => ReactiveCommand.Create<DuplicateItemVM>(item => {
+			if (item?.ItemInfo?.Path is not string path || path.Length == 0) return;
+			try {
+				if (OperatingSystem.IsWindows())
+					Utils.ShellUtils.ShowInExplorer(path);
+				else
+					Process.Start(new ProcessStartInfo { FileName = item.ItemInfo.Folder, UseShellExecute = true });
+			}
+			catch (Exception ex) { Logger.Instance.Info($"Open folder failed: {ex.Message}"); }
 		});
 
 		public ReactiveCommand<Unit, Unit> OpenItemsByColIdCommand => ReactiveCommand.Create(() => {

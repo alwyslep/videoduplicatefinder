@@ -25,6 +25,18 @@ namespace VDF.GUI.ViewModels {
 
 		DataGridCollectionView? view;
 
+		// The grouped + filtered + sorted results view (same instance the DataGrid uses). Exposed
+		// so the SWEEP ④ 검토 card list can bind to it and inherit the query-line filter for free.
+		public DataGridCollectionView? ResultsView => view;
+
+		// SWEEP ④ 검토 스트립↔테이블 toggle: false = grouped cards, true = dense table rows.
+		bool _ReviewTableMode;
+		public bool ReviewTableMode { get => _ReviewTableMode; set => this.RaiseAndSetIfChanged(ref _ReviewTableMode, value); }
+
+		// SWEEP 콘솔: bottom log drawer overlaying the current stage (vs. leaving to the Log tab).
+		bool _ConsoleOpen;
+		public bool ConsoleOpen { get => _ConsoleOpen; set => this.RaiseAndSetIfChanged(ref _ConsoleOpen, value); }
+
 		public SortOrderOption[] SortOrders { get; private set; }
 
 		public sealed class CheckedGroupsComparer : System.Collections.IComparer {
@@ -175,6 +187,20 @@ namespace VDF.GUI.ViewModels {
 				if (value == _FilterByPath) return;
 				_FilterByPath = value;
 				this.RaisePropertyChanged(nameof(FilterByPath));
+			}
+		}
+
+		// SWEEP ④ 검토 query line: one control that turns the path filter on/off by whether it has
+		// text, then refreshes the shared view so the cards (and the DataGrid) filter live.
+		public string QuickFilter {
+			get => _FilterByPath;
+			set {
+				_FilterByPath = value ?? string.Empty;
+				_IsFilterEnabled = !string.IsNullOrEmpty(_FilterByPath);
+				this.RaisePropertyChanged(nameof(FilterByPath));
+				this.RaisePropertyChanged(nameof(IsFilterEnabled));
+				this.RaisePropertyChanged(nameof(QuickFilter));
+				view?.Refresh();
 			}
 		}
 		int _FilterSimilarityFrom = 0;
