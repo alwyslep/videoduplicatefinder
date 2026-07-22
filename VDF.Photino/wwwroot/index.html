@@ -77,6 +77,9 @@
   .facet{font-size:12px;color:var(--muted);background:rgba(255,255,255,.035);border:1px solid var(--line);
     border-radius:999px;padding:5px 11px;cursor:pointer;transition:.12s}
   .facet:hover{border-color:var(--line2);color:var(--ink)}
+  .facet.on{border-color:var(--indigo);color:var(--ink)}
+  .fop{cursor:pointer;color:var(--dim);margin-left:7px;font-size:11.5px}
+  .fop:hover{color:var(--ink)}
   .facet .mono{color:var(--data);margin-left:5px}
   .facet.g{color:var(--dim);border:0;background:none;cursor:default}
 
@@ -345,15 +348,7 @@
       <button class="cta" style="padding:7px 15px;font-size:12.5px" onclick="doMpvCompare()">▶ 순회비교</button>
       <div class="toggle"><button id="viewStrip" class="on" onclick="setView('strip')">스트립</button><button id="viewTable" onclick="setView('table')">테이블</button></div>
     </div>
-    <div class="facets">
-      <span class="facet">4K <span class="mono">14</span></span>
-      <span class="facet">1080p <span class="mono">3650</span></span>
-      <span class="facet">&lt;720p <span class="mono">1740</span></span>
-      <span class="facet g">│ 드라이브</span>
-      <span class="facet">D <span class="mono">4</span></span><span class="facet">F <span class="mono">10</span></span><span class="facet">G <span class="mono">7</span></span>
-      <span class="facet g">│</span>
-      <span class="facet">처리 <span class="mono">796/812</span></span>
-    </div>
+    <div class="facets" id="facets"></div>
     <div class="review">
       <div id="groups"></div>
       <div class="tray">
@@ -362,8 +357,6 @@
         <div class="mono muted" style="font-size:12.5px">삭제 <span id="cutN">1,176</span> 파일</div>
         <hr>
         <div class="brk"><span>휴지통 <span class="dim">되돌림 · 기본</span></span><span class="mono" id="brkTrash">0</span></div>
-        <div class="brk"><span>심볼릭 링크</span><span class="mono dim">0</span></div>
-        <div class="brk"><span>영구 삭제</span><span class="mono dim">0</span></div>
         <div class="safe">✓ 유지본은 체크 해제 상태 · 실행 전엔 디스크 무접촉</div>
         <button class="reclaim-cta" onclick="go('reclaim')">정리 ▸</button>
       </div>
@@ -389,9 +382,7 @@
         </div>
         <div class="card pad">
           <div class="lbl">액션별 계획</div>
-          <div class="tally"><span>🗑 휴지통 <span class="dim">되돌림 · 기본</span></span><span class="mono" id="planTrash">0 파일 · —</span></div>
-          <div class="tally"><span>↳ 심볼릭 링크로 대체</span><span class="mono dim">0 · per-item, 곧</span></div>
-          <div class="tally"><span>⚠ 영구 삭제</span><span class="mono dim">0 · per-item, 곧</span></div>
+          <div class="tally"><span>🗑 휴지통 <span class="dim">되돌림 · 기본 · 유일한 삭제 경로</span></span><span class="mono" id="planTrash">0 파일 · —</span></div>
         </div>
       </div>
     </div>
@@ -500,13 +491,37 @@
     return v.toFixed(i>=4?2:(i>=3?1:0))+" "+u[i];
   }
   function mClass(f,x){ return f.keep?"m-best":(x==="="?"m-eq":((x.charAt(0)==="−"||x.slice(-1)==="!")?"m-bad":"m-eq")); }
+  // path substring, res substring, or "drive:f" prefix — the 3 things the placeholder promises
+  function fmatch(f,q){
+    if(!q) return true;
+    if(q.indexOf("drive:")===0) return q.length>6 && f.p.toLowerCase().indexOf(q.slice(6)+":")===0;
+    return f.p.toLowerCase().indexOf(q)>=0 || (f.res||"").toLowerCase().indexOf(q)>=0;
+  }
+  function setFacet(t){ var qi=document.getElementById("q"); if(!qi)return; qi.value = qi.value===t ? "" : t; renderGroups(); }
+  window.setFacet=setFacet;
+  // Facet chips computed from the REAL result set (res tiers + drives), click = toggle the filter box.
+  function renderFacets(){
+    var box=document.getElementById("facets"); if(!box)return;
+    var q=(document.getElementById("q")||{value:""}).value;
+    var res={}, drv={};
+    (window.GROUPS||[]).forEach(function(g){ g.files.forEach(function(f){
+      if(f.res&&f.res!=="?") res[f.res]=(res[f.res]||0)+1;
+      var d=(f.p||"").charAt(0).toUpperCase(); if(d&&(f.p||"").charAt(1)===":") drv[d]=(drv[d]||0)+1;
+    });});
+    function chip(lab,tok,n){ return '<span class="facet'+(q===tok?' on':'')+'" onclick="setFacet(\''+tok+'\')">'+lab+' <span class="mono">'+n+'</span></span>'; }
+    var h=Object.keys(res).sort(function(a,b){return parseInt(b)-parseInt(a);}).slice(0,4)
+      .map(function(r){return chip(r,r,res[r]);}).join("");
+    var dk=Object.keys(drv).sort();
+    if(dk.length>1) h+='<span class="facet g">│ 드라이브</span>'+dk.map(function(d){return chip(d,"drive:"+d.toLowerCase(),drv[d]);}).join("");
+    box.innerHTML=h;
+  }
   function renderGroups(){
     var qi=document.getElementById("q"), q=(qi?qi.value:"").toLowerCase();
     var html=""; __files=[]; window.__thumbByPath={}; window.__pathByIdx={};
     var why=window.__why||"HDR › 해상도 › 비트레이트";
     var table = window.__view==="table";
     GROUPS.forEach(function(g){
-      var fs=g.files.filter(function(f){return !q||f.p.toLowerCase().indexOf(q)>=0;});
+      var fs=g.files.filter(function(f){return fmatch(f,q);});
       if(!fs.length)return;
       html+='<div class="ghead">중복 그룹 · <span class="mono">'+g.files.length+'</span> 파일 · 유사도 <span class="mono">'+g.sim+'</span><span class="why">선정 근거: <b>'+why+'</b></span></div>';
       if(table){
@@ -515,7 +530,8 @@
           var idx=__files.length; __files.push(f); window.__thumbByPath[f.p]=idx; window.__pathByIdx[idx]=f.p;
           var cells=f.m.map(function(x){return '<td class="tmono '+mClass(f,x)+'">'+x+'</td>';}).join("");
           html+='<tr><td><span class="tcb '+(isCut(f)?'cut':'')+'" id="cb'+idx+'" onclick="tog('+idx+')"></span></td>'
-            +'<td class="tpath" title="'+f.p.replace(/"/g,"&quot;")+'">'+f.p+(f.keep?' <span class="keep-tag">유지</span>':'')+'</td>'
+            +'<td class="tpath" title="'+f.p.replace(/"/g,"&quot;")+'">'+f.p+(f.keep?' <span class="keep-tag">유지</span>':'')
+            +'<span class="fop" title="재생" onclick="fileOp(event,\'open\','+idx+')">▶</span><span class="fop" title="탐색기에서 표시" onclick="fileOp(event,\'reveal\','+idx+')">📂</span></td>'
             +cells+'<td class="tmono">'+g.sim+'</td></tr>';
         });
         html+='</tbody></table>';
@@ -525,12 +541,14 @@
           var mtxt=f.m.map(function(x){return '<span class="'+mClass(f,x)+'">'+x+'</span>';}).join("");
           html+='<div class="fcard"><span class="cb '+(isCut(f)?'cut':'')+'" id="cb'+idx+'" onclick="tog('+idx+')"></span>'
             +'<div class="thumb" id="thumb'+idx+'" data-i="'+idx+'" data-t="'+f.t+'"><span class="res">'+f.res+'</span></div>'
-            +'<div class="fmeta"><div class="fpath">'+f.p+(f.keep?' <span class="keep-tag">유지</span>':'')+'</div><div class="fmetrics">'+mtxt+'</div></div>'
+            +'<div class="fmeta"><div class="fpath">'+f.p+(f.keep?' <span class="keep-tag">유지</span>':'')
+            +'<span class="fop" title="재생" onclick="fileOp(event,\'open\','+idx+')">▶</span><span class="fop" title="탐색기에서 표시" onclick="fileOp(event,\'reveal\','+idx+')">📂</span></div><div class="fmetrics">'+mtxt+'</div></div>'
             +'<span class="sim">'+g.sim+'</span></div>';
         });
       }
     });
     document.getElementById("groups").innerHTML=html||'<div class="muted" style="padding:40px;text-align:center">필터에 걸리는 결과 없음. 상단 ‘비교만 다시’로 중복을 불러와.</div>';
+    renderFacets();
     recount();
     if(window.onGroupsRendered) window.onGroupsRendered();
   }
@@ -541,6 +559,9 @@
   }
   window.setView=setView;
   function tog(i){var f=__files[i]; if(!f||f.keep)return; selSnap(); cutState[f.p]=!isCut(f); var el=document.getElementById("cb"+i); if(el)el.classList.toggle("cut"); recount();}
+  // ▶/📂 — plays/reveals the user's own file via the OS default handler (C# side).
+  function fileOp(ev,op,i){ ev.stopPropagation(); var f=__files[i]; if(!f)return; window.vdf.send(op==="open"?"openFile":"revealFile",{path:f.p}); }
+  window.fileOp=fileOp;
   // 선택 도구 — 원본 GUI의 ClearChecked/InvertChecked/CheckLowestQuality 대응.
   // 의도적 차이: 키퍼는 절대 체크되지 않는다(삭제 안전 불변식) · '자동선택'은 규칙 화면의 우선순위가
   // 기준이라 다이얼로그 없이 기본 선택 복원(cutState 리셋)과 동일하다.
