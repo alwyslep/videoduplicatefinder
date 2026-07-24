@@ -880,6 +880,14 @@ namespace VDF.Core {
 					lst.Add(e);
 				}
 			int relinkedCount = 0;
+			// [REDECODE-MEASURE] Measurement-only counters (no behavior change). They quantify how much
+			// re-decoding is triggered by a same-path content change — the ONLY population an embed-stable
+			// content hash (mdat-relative) could ever spare. size-changed = the :915 branch (metadata embed
+			// grows the file); the mp4-grow subset (small positive delta on an MP4-family container) is the
+			// likely-embed slice specifically. oshash-mismatch = the same-size :928 branch. Detail logging
+			// is capped so a large legitimate rescan can't spam the log; the counters still count all.
+			int redecodeSizeChanged = 0, redecodeSizeChangedMp4Grow = 0, redecodeOsHashMismatch = 0, redecodeDetailLogged = 0;
+			const int RedecodeDetailCap = 500;
 
 			foreach (string path in Settings.IncludeList) {
 				if (cancellationToken.IsCancellationRequested)
@@ -914,6 +922,19 @@ namespace VDF.Core {
 					}
 					else if (fEntry.FileSize != dbEntry.FileSize) {
 						// Size changed -> content genuinely changed: drop stale analysis and re-decode.
+						// [REDECODE-MEASURE] Classify the potential embed-induced re-decode. fast_embed
+						// appends a small moov (cover+meta) at EOF, growing an MP4 by a few KiB..MiB while
+						// mdat stays byte-identical -> a small positive delta on an MP4-family container is
+						// the likely-embed signature. Genuine re-encodes/re-downloads change mdat massively
+						// (large or negative delta). Measurement only; the re-decode still happens.
+						redecodeSizeChanged++;
+						long delta = fEntry.FileSize - dbEntry.FileSize;
+						bool mp4Grow = delta > 0 && delta < (64L << 20) && IsMp4Family(fEntry.Path);
+						if (mp4Grow) redecodeSizeChangedMp4Grow++;
+						if (redecodeDetailLogged < RedecodeDetailCap) {
+							redecodeDetailLogged++;
+							Logger.Instance.Info($"[REDECODE-MEASURE] size-changed{(mp4Grow ? " mp4-grow(likely-embed)" : string.Empty)} delta={delta:N0} old={dbEntry.FileSize:N0} new={fEntry.FileSize:N0} '{fEntry.Path}'");
+						}
 						DatabaseUtils.Database.Remove(dbEntry);
 						DatabaseUtils.Database.Add(fEntry);
 					}
@@ -925,6 +946,14 @@ namespace VDF.Core {
 						string? os = OsHashUtils.TryCompute(fEntry.Path);
 						if (os != null && dbEntry.OsHash != null && os != dbEntry.OsHash) {
 							// Fingerprint differs -> different content at the same path -> re-analyze.
+							// [REDECODE-MEASURE] Same-size, different-oshash re-decode (rare same-size swap or
+							// a container-only rewrite that also moved the tail). Not the embed signature, but
+							// counted so the total re-analyze churn is visible. Measurement only.
+							redecodeOsHashMismatch++;
+							if (redecodeDetailLogged < RedecodeDetailCap) {
+								redecodeDetailLogged++;
+								Logger.Instance.Info($"[REDECODE-MEASURE] oshash-mismatch same-size old={dbEntry.OsHash} new={os} '{fEntry.Path}'");
+							}
 							DatabaseUtils.Database.Remove(dbEntry);
 							DatabaseUtils.Database.Add(fEntry);
 						}
@@ -945,7 +974,20 @@ namespace VDF.Core {
 			Logger.Instance.Info($"Files in database: {DatabaseUtils.Database.Count:N0} ({DatabaseUtils.Database.Count - oldFileCount:N0} files added)");
 			if (relinkedCount > 0)
 				Logger.Instance.Info($"Detected {relinkedCount:N0} moved/renamed file(s) — reused existing analysis (no re-decode)");
+			// [REDECODE-MEASURE] Per-scan verdict: how many re-analyses a same-path content change forced.
+			// mp4-grow(likely-embed) is the ONLY slice an embed-stable mdat-hash could have spared; if it is
+			// ~0 across normal scans, proposal #2 (mdat-relative hash) buys nothing and should not be built.
+			Logger.Instance.Info($"[REDECODE-MEASURE] re-analyze triggers this scan: size-changed={redecodeSizeChanged:N0} (mp4-grow/likely-embed={redecodeSizeChangedMp4Grow:N0}), oshash-mismatch={redecodeOsHashMismatch:N0}. An embed-stable mdat-hash could have spared at most the mp4-grow subset.");
 		});
+
+		// [REDECODE-MEASURE] MP4-family containers (mp4/m4v/mov) are the ones fast_embed grows in place by
+		// appending a trailing moov; only these can produce the "likely-embed" size-grow signature above.
+		static bool IsMp4Family(string path) {
+			string e = System.IO.Path.GetExtension(path);
+			return e.Equals(".mp4", StringComparison.OrdinalIgnoreCase)
+				|| e.Equals(".m4v", StringComparison.OrdinalIgnoreCase)
+				|| e.Equals(".mov", StringComparison.OrdinalIgnoreCase);
+		}
 
 		// Returns true if fEntry is a moved/renamed version of an existing analysed entry — same size
 		// and content fingerprint (oshash), and that entry's recorded path no longer exists — in which
