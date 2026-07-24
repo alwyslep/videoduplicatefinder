@@ -209,6 +209,23 @@
   .tcb{width:16px;height:16px;border-radius:5px;border:1.5px solid rgba(255,255,255,.28);cursor:pointer;display:inline-block;position:relative;vertical-align:middle}
   .tcb.cut{background:var(--red);border-color:var(--red)}
   .tcb.cut::after{content:"✕";position:absolute;inset:0;display:grid;place-items:center;color:#fff;font-size:9px}
+  /* 체크된 '유지본' — 빨강 대신 호박색으로 경고 (직접 클릭해서 삭제 후보로 만든 상태) */
+  .cb.kcb.cut,.tcb.kcb.cut{background:var(--amber);border-color:var(--amber)}
+  /* 드라이브 카드의 "지금 처리 중" 파일 행 */
+  .dact{font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  /* 스캔 실시간 상태줄 */
+  #scanNow{display:none;font-family:var(--mono);font-size:12px;color:var(--data);background:var(--surface);
+    border:1px solid var(--line);border-radius:10px;padding:8px 12px;margin-bottom:12px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  /* 드롭다운 메뉴 (체크 옵션 · 삭제 옵션) */
+  .dmenu{position:fixed;z-index:80;min-width:280px;background:var(--card);border:1px solid var(--line2);
+    border-radius:12px;box-shadow:0 18px 50px rgba(0,0,0,.55);padding:6px;display:none}
+  .dmenu.open{display:block}
+  .dmi{padding:9px 12px;border-radius:8px;font-size:13px;color:var(--ink);cursor:pointer;white-space:nowrap}
+  .dmi:hover{background:var(--raised)}
+  .dmi.warn{color:var(--red)}
+  .dsep{height:1px;background:var(--line);margin:5px 8px}
+  .cdform .k{font-size:12px;color:var(--muted);margin:10px 0 4px}
   /* console drawer */
   .console{position:fixed;left:0;right:0;bottom:0;z-index:55;height:230px;display:none;flex-direction:column;
     background:rgba(13,13,15,.95);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
@@ -330,6 +347,7 @@
       <button class="cta" onclick="doStartScan()">▶ 스캔 시작</button>
     </div>
     <div class="sub">드라이브별 완료 상태 (현재 DB 기준) · 스캔 시작하면 실시간 진행.</div>
+    <div id="scanNow"></div>
     <div class="row">
       <div class="card pad" style="flex:2.4" id="drives"></div>
       <div class="card pad" style="flex:1">
@@ -346,6 +364,7 @@
       <span class="gt">&gt;</span>
       <input id="q" placeholder="경로·이름 필터 (예: 2160p, drive:F)" oninput="filter()">
       <span class="qhint">유지할 1개만 남기고 나머지를 체크 = 삭제 후보</span>
+      <button class="cta ghost" style="padding:7px 13px;font-size:12.5px" onclick="openCheckMenu(event)">☑ 체크 옵션 ▾</button>
       <button class="cta" style="padding:7px 15px;font-size:12.5px" onclick="doMpvCompare()">▶ 순회비교</button>
       <div class="toggle"><button id="viewStrip" class="on" onclick="setView('strip')">스트립</button><button id="viewTable" onclick="setView('table')">테이블</button></div>
     </div>
@@ -358,7 +377,7 @@
         <div class="mono muted" style="font-size:12.5px">삭제 <span id="cutN">1,176</span> 파일</div>
         <hr>
         <div class="brk"><span>휴지통 <span class="dim">되돌림 · 기본</span></span><span class="mono" id="brkTrash">0</span></div>
-        <div class="safe">✓ 유지본은 체크 해제 상태 · 실행 전엔 디스크 무접촉</div>
+        <div class="safe">✓ 유지본은 기본 해제 — 직접 클릭하면 체크 가능(호박색·삭제 시 경고) · 실행 전엔 디스크 무접촉</div>
         <button class="reclaim-cta" onclick="go('reclaim')">정리 ▸</button>
       </div>
     </div>
@@ -373,17 +392,20 @@
         <div class="lab">정리 대기함</div>
         <div class="big" style="font-size:40px" id="reclaimSize5">—</div>
         <div class="mono muted" style="font-size:13px">체크 <span id="cutN5">0</span> 파일</div>
-        <button class="reclaim-cta" onclick="doReclaim()">🗑  휴지통으로 정리 ▸</button>
-        <div style="font-size:11.5px;color:var(--muted);margin-top:10px">체크된 파일을 휴지통으로. 유지본은 그대로.</div>
+        <div style="display:flex;gap:8px">
+          <button class="reclaim-cta" style="flex:1" onclick="doReclaim()">🗑  휴지통으로 정리 ▸</button>
+          <button class="reclaim-cta" style="width:54px;flex:none" title="삭제 옵션 — 영구 삭제 · 폴더로 복사 · 폴더로 이동" onclick="openDelMenu(event)">▾</button>
+        </div>
+        <div style="font-size:11.5px;color:var(--muted);margin-top:10px">기본: 휴지통(DB 포함) · ▾ 영구 삭제 / 폴더로 복사 / 폴더로 이동(DB 경로 갱신)</div>
       </div>
       <div style="flex:1.9;display:flex;flex-direction:column;gap:14px">
         <div class="card pad">
           <div class="lbl">선택 도우미</div>
-          <div style="display:flex;gap:8px"><button class="cta ghost" onclick="selBulk('auto')">우선순위 자동선택</button><button class="cta ghost" onclick="selBulk('invert')">선택 반전</button><button class="cta ghost" onclick="selBulk('clear')">선택 해제</button></div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="cta ghost" onclick="selBulk('auto')">우선순위 자동선택</button><button class="cta ghost" onclick="selBulk('invert')">선택 반전</button><button class="cta ghost" onclick="selBulk('clear')">선택 해제</button><button class="cta ghost" onclick="openCheckMenu(event)">☑ 체크 옵션 ▾</button></div>
         </div>
         <div class="card pad">
           <div class="lbl">액션별 계획</div>
-          <div class="tally"><span>🗑 휴지통 <span class="dim">되돌림 · 기본 · 유일한 삭제 경로</span></span><span class="mono" id="planTrash">0 파일 · —</span></div>
+          <div class="tally"><span>🗑 휴지통 <span class="dim">되돌림 · 기본 삭제 경로</span></span><span class="mono" id="planTrash">0 파일 · —</span></div>
           <div style="margin-top:12px"><button class="cta ghost" onclick="exportCsv()">📄 결과 CSV 내보내기</button>
             <span class="dim" style="font-size:11.5px;margin-left:8px">그룹·유지본·체크 상태 포함</span></div>
         </div>
@@ -391,6 +413,42 @@
     </div>
   </section>
 
+</div>
+
+<!-- 드롭다운 메뉴 (체크 옵션 · 삭제 옵션 — openMenu 가 내용을 채운다) -->
+<div class="dmenu" id="dmenu"></div>
+
+<!-- 사용자 지정 체크 (구버전 CustomSelection 이식 — 조건 필터 + 유지본 선정) -->
+<div class="cmdk" id="cdlg" onclick="if(event.target===this)closeCustomDlg()">
+  <div class="ckbox" style="padding:18px;width:min(540px,92vw)">
+    <div class="lbl" style="margin-bottom:4px">사용자 지정 체크</div>
+    <div class="dim" style="font-size:12px;margin-bottom:6px">조건에 맞는 그룹에서 유지 1개만 남기고 나머지를 체크한다.</div>
+    <div class="cdform">
+      <div style="display:flex;gap:18px;flex-wrap:wrap">
+        <div><div class="k">대상</div>
+          <select id="cdType" class="osel"><option value="0">전체</option><option value="1">영상만</option><option value="2">이미지만</option></select></div>
+        <div><div class="k">크기 (MB · 0=제한 없음)</div>
+          <input id="cdMin" class="onum" value="0" title="최소"> ~ <input id="cdMax" class="onum" value="0" title="최대"></div>
+        <div><div class="k">유사도 (%)</div>
+          <input id="cdSimMin" class="onum" value="0" title="최소"> ~ <input id="cdSimMax" class="onum" value="100" title="최대"></div>
+      </div>
+      <div class="k">경로 포함 (와일드카드 * ? · 세미콜론 구분 · 비우면 전체)</div>
+      <input id="cdInc" class="onum otxt" style="width:100%" spellcheck="false" placeholder="예: F:\arch\* ; *copy*">
+      <div class="k">경로 제외</div>
+      <input id="cdExc" class="onum otxt" style="width:100%" spellcheck="false">
+      <div style="display:flex;gap:18px;flex-wrap:wrap">
+        <div><div class="k">그룹 범위</div>
+          <select id="cdIdent" class="osel"><option value="0">그룹 전체</option><option value="1">완전 동일(메타 일치)만</option></select></div>
+        <div><div class="k">유지본 선정</div>
+          <select id="cdDate" class="osel"><option value="0">우선순위 기준 (규칙 화면)</option><option value="1">가장 오래된 것 유지</option><option value="2">가장 최신 유지</option></select></div>
+      </div>
+      <label class="chkrow" style="margin-top:12px" onclick="this.querySelector('.sw').classList.toggle('on')"><span class="sw" id="cdSkip"></span> 이미 체크된 항목이 있는 그룹 건너뛰기</label>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+      <button class="cta ghost" onclick="closeCustomDlg()">취소</button>
+      <button class="cta" onclick="applyCustomDlg()">적용</button>
+    </div>
+  </div>
 </div>
 
 <div class="console" id="console">
@@ -493,9 +551,22 @@
   ];
   var cutState={};    // path -> bool (checked = deletion candidate). Default: every non-keep member.
   var __files=[];     // flat render list so checkbox onclick can use a stable index (paths are unsafe in attrs)
-  // A KEEP file is NEVER a deletion candidate — the keep flag hard-overrides any stale cutState entry
-  // (a path-keyed cut can outlive a re-compare that promotes that path to keeper). Non-keepers default to cut.
-  function isCut(f){ if(f.keep) return false; return (f.p in cutState) ? cutState[f.p] : true; }
+  // 유지본(keep)도 직접 클릭하면 체크(삭제 후보)될 수 있다 — 구버전 GUI 와 동일. 다른 건 기본값뿐:
+  // cutState 에 명시 항목이 없으면 유지본=해제, 비유지=체크. 체크된 유지본은 호박색으로 표시되고,
+  // 삭제 시 overrides 로 전달돼 C# 확인 대화상자가 개수를 경고한다 (명시 승인 없인 C#이 거부).
+  function isCut(f){ return (f.p in cutState) ? cutState[f.p] : !f.keep; }
+  // lc(경로)->1 : 유지본에 대한 체크가 "일괄/서버 산출"임을 표시. 삭제 승인(override)은 직접 클릭만 —
+  // tog() 가 수동 토글 시 표식을 지워서, 화면의 호박색 체크박스를 본인이 누른 경우에만 승인이 된다.
+  var __autoCut={};
+  // 유지본으로 "승격"된 경로에 남은 낡은 체크(true)를 무효화 — 비유지 시절에 기록된 체크가
+  // 삭제 승인으로 둔갑하면 그룹의 전 사본이 지워질 수 있다(치명). 새 결과 도착·키퍼 재선출·
+  // 트리아지 병합 직후 호출. 명시 해제(false)는 안전하므로 남긴다.
+  function pruneKeeperChecks(){
+    var keep={};
+    (window.GROUPS||[]).forEach(function(g){ g.files.forEach(function(f){ if(f.keep) keep[f.p.toLowerCase()]=1; });});
+    Object.keys(cutState).forEach(function(k){ if(cutState[k]===true && keep[k.toLowerCase()]) delete cutState[k]; });
+  }
+  window.pruneKeeperChecks=pruneKeeperChecks;
   function migrateCut(oldP,newP){
     // Case-insensitive: the mpv sidecar's path casing can differ from the engine's (Windows paths) —
     // an exact-key miss would orphan the user's uncheck and flip the renamed file back to default-cut.
@@ -509,6 +580,7 @@
     }
     rekey(cutState);
     _undo.forEach(rekey);   // undo snapshots must follow renames too
+    if(__autoCut[lc]){ delete __autoCut[lc]; __autoCut[newP.toLowerCase()]=1; }   // 자동 체크 표식도 개명을 따라간다
   }
   function humanBytes(n){
     if(!n||n<=0) return "0 B";
@@ -557,7 +629,7 @@
         fs.forEach(function(f){
           var idx=__files.length; __files.push(f); window.__thumbByPath[f.p]=idx; window.__pathByIdx[idx]=f.p;
           var cells=f.m.map(function(x){return '<td class="tmono '+mClass(f,x)+'">'+x+'</td>';}).join("");
-          html+='<tr><td><span class="tcb '+(isCut(f)?'cut':'')+'" id="cb'+idx+'" onclick="tog('+idx+')"></span></td>'
+          html+='<tr><td><span class="tcb '+(f.keep?'kcb ':'')+(isCut(f)?'cut':'')+'" id="cb'+idx+'" onclick="tog('+idx+')"></span></td>'
             +'<td class="tpath" title="'+f.p.replace(/"/g,"&quot;")+'">'+f.p+(f.keep?' <span class="keep-tag">유지</span>':'')
             +'<span class="fop" title="재생" onclick="fileOp(event,\'open\','+idx+')">▶</span><span class="fop" title="탐색기에서 표시" onclick="fileOp(event,\'reveal\','+idx+')">📂</span><span class="fop" title="이름 변경" onclick="renameUi(event,'+idx+')">✏</span></td>'
             +cells+'<td class="tmono">'+g.sim+'</td></tr>';
@@ -567,7 +639,7 @@
         fs.forEach(function(f){
           var idx=__files.length; __files.push(f); window.__thumbByPath[f.p]=idx; window.__pathByIdx[idx]=f.p;
           var mtxt=f.m.map(function(x){return '<span class="'+mClass(f,x)+'">'+x+'</span>';}).join("");
-          html+='<div class="fcard"><span class="cb '+(isCut(f)?'cut':'')+'" id="cb'+idx+'" onclick="tog('+idx+')"></span>'
+          html+='<div class="fcard"><span class="cb '+(f.keep?'kcb ':'')+(isCut(f)?'cut':'')+'" id="cb'+idx+'" onclick="tog('+idx+')"></span>'
             +'<div class="thumb" id="thumb'+idx+'" data-i="'+idx+'" data-t="'+f.t+'"><span class="res">'+f.res+'</span></div>'
             +'<div class="fmeta"><div class="fpath">'+f.p+(f.keep?' <span class="keep-tag">유지</span>':'')
             +'<span class="fop" title="재생" onclick="fileOp(event,\'open\','+idx+')">▶</span><span class="fop" title="탐색기에서 표시" onclick="fileOp(event,\'reveal\','+idx+')">📂</span><span class="fop" title="이름 변경" onclick="renameUi(event,'+idx+')">✏</span></div><div class="fmetrics">'+mtxt+'</div></div>'
@@ -589,7 +661,7 @@
     renderGroups();
   }
   window.setView=setView;
-  function tog(i){var f=__files[i]; if(!f||f.keep)return; selSnap(); cutState[f.p]=!isCut(f); var el=document.getElementById("cb"+i); if(el)el.classList.toggle("cut"); recount();}
+  function tog(i){var f=__files[i]; if(!f)return; selSnap(); cutState[f.p]=!isCut(f); delete __autoCut[f.p.toLowerCase()]; var el=document.getElementById("cb"+i); if(el)el.classList.toggle("cut"); recount();}
   // ▶/📂 — plays/reveals the user's own file via the OS default handler (C# side).
   function fileOp(ev,op,i){ ev.stopPropagation(); var f=__files[i]; if(!f)return; window.vdf.send(op==="open"?"openFile":"revealFile",{path:f.p}); }
   window.fileOp=fileOp;
@@ -624,15 +696,29 @@
   }
   window.notMatch=notMatch;
   // 선택 도구 — 원본 GUI의 ClearChecked/InvertChecked/CheckLowestQuality 대응.
-  // 의도적 차이: 키퍼는 절대 체크되지 않는다(삭제 안전 불변식) · '자동선택'은 규칙 화면의 우선순위가
-  // 기준이라 다이얼로그 없이 기본 선택 복원(cutState 리셋)과 동일하다.
+  // 반전/해제는 구버전과 같이 유지본도 포함한다(직접 체크 가능해졌으므로) · '자동선택'은 규칙 화면의
+  // 우선순위가 기준이라 다이얼로그 없이 기본 선택 복원(cutState 리셋)과 동일하다.
   var _undo=[];
   function selSnap(){ _undo.push(Object.assign({},cutState)); if(_undo.length>50)_undo.shift(); }
   function selBulk(mode){
     if(window.__busy&&window.__busy()){ toast("작업 진행 중… 끝나면 다시"); return; }
     selSnap();
-    if(mode==="auto") cutState={};
-    else GROUPS.forEach(function(g){ g.files.forEach(function(f){ if(f.keep)return; cutState[f.p]= mode==="clear" ? false : !isCut(f); }); });
+    if(mode==="auto"){ cutState={}; __autoCut={}; }
+    else {
+      // 스냅샷 후 일괄 적용: 같은 경로가 두 그룹(일반+부분클립)에 있으면 순차 뒤집기가 두 번 적용돼
+      // 제자리로 돌아온다 — 경로당 한 번만 결정한다(첫 등장 기준).
+      var target={}, keepLc={};
+      GROUPS.forEach(function(g){ g.files.forEach(function(f){
+        if(f.keep) keepLc[f.p.toLowerCase()]=1;
+        if(!(f.p in target)) target[f.p]= mode==="clear" ? false : !isCut(f);
+      });});
+      Object.keys(target).forEach(function(k){
+        cutState[k]=target[k];
+        var lc=k.toLowerCase();
+        if(target[k]&&keepLc[lc]) __autoCut[lc]=1;   // 일괄로 체크된 유지본 = 직접 클릭 아님 → 삭제 승인 아님
+        else delete __autoCut[lc];
+      });
+    }
     renderGroups(); recount();
     toast(mode==="auto"?"우선순위 기준 자동 선택 복원":(mode==="clear"?"선택 모두 해제":"선택 반전"));
   }
@@ -668,10 +754,11 @@
   var _triReady=false;
   // DB target changed: the loaded triage is now the wrong DB's — drop it and disarm saving until the
   // new DB's getTriage answers. MUST run before the getTriage request.
-  window.__triReset=function(){ clearTimeout(window.__triTimer); _triReady=false; cutState={}; };
+  window.__triReset=function(){ clearTimeout(window.__triTimer); _triReady=false; cutState={}; __autoCut={}; };
   window.__mergeTriage=function(saved){   // startup/DB-switch: session state wins over the saved file
     Object.keys(saved||{}).forEach(function(k){ if(!(k in cutState)) cutState[k]=saved[k]; });
     _triReady=true;
+    pruneKeeperChecks();   // 저장 당시 비유지였던 경로가 지금은 유지본일 수 있다 — 낡은 체크 무효화
     renderGroups(); recount();
   };
   function filter(){renderGroups();}
@@ -716,6 +803,20 @@
   window.clearConsole = function () { var b = document.getElementById("clog"); if (b) b.innerHTML = ""; };
   var _lastStage = "";
   function stageLog(prefix, pct, stage) { if (stage && stage !== _lastStage) { _lastStage = stage; clog(prefix + " · " + stage + " (" + (pct || 0) + "%)"); } }
+  // ---- 진행 표시 헬퍼 ----
+  function escH(s) { return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;"); }
+  function fmtSec(s) {
+    if (s == null || s < 0 || !isFinite(s)) return "—";
+    s = Math.floor(s);
+    var h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), ss = s % 60, z = function (n) { return ("0" + n).slice(-2); };
+    return h ? h + ":" + z(m) + ":" + z(ss) : m + ":" + z(ss);
+  }
+  // ③ 스캔 화면의 실시간 상태줄 — "지금 무슨 단계에서 어떤 파일을 처리 중인지" 한 줄 요약
+  function setScanNow(html) {
+    var el = document.getElementById("scanNow"); if (!el) return;
+    if (html) { el.style.display = "block"; el.innerHTML = html; }
+    else { el.style.display = "none"; el.innerHTML = ""; }
+  }
   function dispatch(raw) {
     var m; try { m = JSON.parse(raw); } catch (e) { return; }
     var f = handlers[m.cmd]; if (f) f(m.data);
@@ -751,14 +852,20 @@
   window.vdf.on("progress", function (d) {
     scanCtl(true);   // compare-only runs are pausable/stoppable too — surface the controls on ③
     stageLog("비교", d.pct, d.stage);
-    if (window.toast) toast("비교 중… " + (d.pct || 0) + "%" + (d.stage ? " · " + d.stage : ""));
+    var parts = ["비교 " + (d.pct || 0) + "%"];
+    if (d.stage) parts.push(escH(d.stage));
+    if (d.file) parts.push(escH(d.file));
+    if (d.elapsed != null) parts.push("경과 " + fmtSec(d.elapsed) + (d.remain > 0 ? " · 남음 ~" + fmtSec(d.remain) : ""));
+    setScanNow(parts.join(" · "));
+    if (window.toast) toast("비교 중… " + (d.pct || 0) + "%" + (d.stage ? " · " + d.stage : "") + (d.file ? " · " + d.file : ""));
   });
 
   window.vdf.on("groups", function (d) {
-    _busy = false; scanCtl(false);
+    _busy = false; scanCtl(false); setScanNow("");
     if (!d || !d.groups) return;
     if (window.selReset) selReset();          // undo snapshots from the previous result set are stale
     window.GROUPS = d.groups;                 // replace the mock sample data
+    if (window.pruneKeeperChecks) pruneKeeperChecks();   // 새로 유지본이 된 경로의 낡은 체크(true)를 무효화
     if (d.why) window.__why = d.why;          // 선정 근거 from the priority order
     if (window.renderGroups) renderGroups();
     if (window.go) go("review");
@@ -1138,9 +1245,15 @@
     var box = document.getElementById("drives"); if (!box) return;
     box.innerHTML = '<div class="lbl">드라이브 — 라이브러리 스캔 상태</div>' + drives.map(function (d) {
       var fps = d.fps ? (' · ' + d.fps + ' f/s') : '';
+      var conc = d.conc ? (' · 동시 ' + d.conc) : '';
+      // 워커별 "지금 처리 중" 파일 + 세부 단계 (probing / 프레임 샘플링 n/m / 오디오 지문 …)
+      var act = (d.active || []).map(function (a) {
+        return '<div class="dact">🎞 ' + escH(a.file) +
+          (a.stage ? ' <span class="dim">· ' + escH(a.stage) + (a.max > 0 ? ' ' + a.cur + '/' + a.max : '') + '</span>' : '') + '</div>';
+      }).join("");
       return '<div class="drive"><div class="dinfo"><span><b style="color:var(--ink)">' + d.root + '</b></span>' +
-        '<span>done ' + d.doneFiles.toLocaleString() + '/' + d.totalFiles.toLocaleString() + fps + '</span></div>' +
-        '<div class="dbar"><i style="width:' + d.pct + '%"></i></div></div>';
+        '<span>done ' + d.doneFiles.toLocaleString() + '/' + d.totalFiles.toLocaleString() + fps + conc + '</span></div>' +
+        '<div class="dbar"><i style="width:' + d.pct + '%"></i></div>' + act + '</div>';
     }).join("");
   }
   function renderTallies(tallies) {
@@ -1157,6 +1270,12 @@
       _paused = false; var pb = document.getElementById("btnPause"); if (pb) pb.textContent = "⏸ 일시정지";
     }
     stageLog("스캔", d.pct, d.stage);
+    var parts = ["스캔 " + (d.pct || 0) + "%"];
+    if (d.stage) parts.push(escH(d.stage));
+    if (d.file) parts.push(escH(d.file) + (d.sMax > 0 ? " (" + d.sCur + "/" + d.sMax + ")" : ""));
+    if (d.max) parts.push((d.pos || 0).toLocaleString() + "/" + d.max.toLocaleString() + " 파일");
+    if (d.elapsed != null) parts.push("경과 " + fmtSec(d.elapsed) + (d.remain > 0 ? " · 남음 ~" + fmtSec(d.remain) : ""));
+    setScanNow(parts.join(" · "));
     if (window.toast) toast("스캔 중… " + (d.pct || 0) + "%" + (d.stage ? " · " + d.stage : ""));
   });
 
@@ -1199,11 +1318,11 @@
     } else { clog("강제 중단 요청", "warn"); if (window.toast) toast("강제 중단…"); }
   });
   window.vdf.on("scanAborted", function () {
-    _busy = false; scanCtl(false);
+    _busy = false; scanCtl(false); setScanNow("");
     clog("스캔 중단됨 — 지금까지 완료된 지문은 DB에 남는다", "warn");
     if (window.toast) toast("스캔 중단됨");
   });
-  window.vdf.on("scanBlocked", function (d) { _busy = false; clog(d.message, "warn"); if (window.toast) toast(d.message); if (window.go) go("sources"); });
+  window.vdf.on("scanBlocked", function (d) { _busy = false; setScanNow(""); clog(d.message, "warn"); if (window.toast) toast(d.message); if (window.go) go("sources"); });
   window.startFullScan = function () { if (window.go) go("scan"); };   // go("scan") already pulls driveInfo
   window.doStartScan = function () {
     if (_busy) { if (window.toast) toast("작업 진행 중… 끝나면 다시"); return; }
@@ -1213,34 +1332,73 @@
     _busy = send("startScan");   // see doCompare
   };
 
-  // ---- ⑤ 정리 실행 (recycle the checked duplicates) ----
-  window.doReclaim = function () {
+  // ---- ⑤ 정리 실행 (체크 항목 삭제 — 휴지통 기본 · permanent=true 면 영구 삭제) ----
+  window.doReclaim = function (permanent) {
     if (_busy) { if (window.toast) toast("작업 진행 중… 끝나면 다시"); return; }
     var cut = window.isCut || function (f) { return !f.keep; };
-    var paths = [], keepers = [];
+    // cutState 는 경로 단위라 같은 경로는 어느 그룹에서든 체크 상태가 같다:
+    //  체크됨       → paths (직접 클릭으로 체크된 유지본이면 overrides 에도 — 사용자의 명시 승인)
+    //  미체크 유지본 → keepers (C#이 어떤 경로로도 삭제 거부)
+    // __autoCut 표식이 있는 유지본 체크(일괄/서버 산출)는 승인이 아니다 — C#의 keeper 가드가 걸러내고
+    // 확인 대화상자가 "보호되어 건너뜀"으로 알려준다. 직접 클릭(tog)이 표식을 지워야만 승인이 된다.
+    var seen = {}, paths = [], protectMap = {}, overMap = {};
     (window.GROUPS || []).forEach(function (g) {
       g.files.forEach(function (f) {
-        if (f.keep) keepers.push(f.p);       // never delete a keeper …
-        else if (cut(f)) paths.push(f.p);    // … only checked non-keepers
+        var lc = f.p.toLowerCase();
+        if (cut(f)) { if (!seen[lc]) { seen[lc] = 1; paths.push(f.p); } if (f.keep && !(window.__autoCut && window.__autoCut[lc])) overMap[lc] = f.p; }
+        else if (f.keep) protectMap[lc] = f.p;
       });
     });
-    // A path can sit in two groups (regular + partial-clip) as keeper in one and member in the other —
-    // anything that is a keeper ANYWHERE never goes in the delete list. (C# refuses them too.)
-    var ks = {}; keepers.forEach(function (p) { ks[p.toLowerCase()] = 1; });
-    paths = paths.filter(function (p) { return !ks[p.toLowerCase()]; });
-    if (!paths.length) { if (window.toast) toast("정리할 체크 항목이 없다 — 유지본은 삭제 대상이 아냐"); return; }
+    if (!paths.length) { if (window.toast) toast("정리할 체크 항목이 없다"); return; }
+    var keepers = Object.keys(protectMap).filter(function (k) { return !seen[k]; }).map(function (k) { return protectMap[k]; });
+    var overrides = Object.keys(overMap).map(function (k) { return overMap[k]; });
     // latch until reclaimDone/reclaimCancelled/fatal error — a second 정리 click mid-deletion would
     // re-collect the same paths. Bridge-less send (browser QA) can never unlatch → don't latch.
-    _busy = send("reclaim", { paths: paths, keepers: keepers });   // C# ALSO refuses any keeper path (defense in depth)
+    _busy = send("reclaim", { paths: paths, keepers: keepers, overrides: overrides, permanent: !!permanent });
   };
   window.vdf.on("reclaimDone", function (d) {
     _busy = false;
-    var msg = "정리 완료 · " + d.deleted + "개 휴지통으로 · " + d.freed + " 확보" +
+    var msg = "정리 완료 · " + d.deleted + "개 " + (d.permanent ? "영구 삭제" : "휴지통으로") + " · " + d.freed + " 확보" +
+      (d.entryOnly ? (" · DB 엔트리만 제거 " + d.entryOnly) : "") +
       (d.skipped ? (" · 건너뜀 " + d.skipped) : "") + (d.failed ? (" · 실패 " + d.failed) : "");
     clog(msg, d.failed ? "warn" : "ok");
     if (window.toast) toast(msg);
   });
+  window.vdf.on("reclaimProgress", function (d) { if (window.toast) toast("삭제 진행… " + d.done + "/" + d.total); });
   window.vdf.on("reclaimCancelled", function () { _busy = false; clog("정리 취소"); if (window.toast) toast("정리 취소됨"); });
+
+  // ---- 폴더로 복사 / 이동 (체크된 항목 — 이동은 DB 경로 자동 갱신) ----
+  function collectChecked() {
+    var cut = window.isCut || function (f) { return !f.keep; };
+    var seen = {}, out = [];
+    (window.GROUPS || []).forEach(function (g) {
+      g.files.forEach(function (f) {
+        if (cut(f)) { var lc = f.p.toLowerCase(); if (!seen[lc]) { seen[lc] = 1; out.push(f.p); } }
+      });
+    });
+    return out;
+  }
+  function startFileOp(move) {
+    if (_busy) { if (window.toast) toast("작업 진행 중… 끝나면 다시"); return; }
+    var ps = collectChecked();
+    if (!ps.length) { if (window.toast) toast("체크된 항목이 없다"); return; }
+    _busy = send(move ? "moveTo" : "copyTo", { paths: ps });
+  }
+  window.doCopyTo = function () { startFileOp(false); };
+  window.doMoveTo = function () { startFileOp(true); };
+  window.vdf.on("copyDone", function (d) {
+    _busy = false;
+    var msg = "복사 완료 · " + d.done + "개 → " + d.dest + (d.skipped ? (" · 건너뜀 " + d.skipped) : "") + (d.failed ? (" · 실패 " + d.failed) : "");
+    clog(msg, d.failed ? "warn" : "ok"); if (window.toast) toast(msg);
+  });
+  window.vdf.on("moveDone", function (d) {   // 행/체크 상태는 파일별 'renamed' 푸시가 이미 옮겨놨다
+    _busy = false;
+    var msg = "이동 완료 · " + d.done + "개 → " + d.dest + " (DB 경로 갱신됨)" + (d.skipped ? (" · 건너뜀 " + d.skipped) : "") + (d.failed ? (" · 실패 " + d.failed) : "");
+    clog(msg, d.failed ? "warn" : "ok"); if (window.toast) toast(msg);
+  });
+  window.vdf.on("copyCancelled", function () { _busy = false; if (window.toast) toast("복사 취소됨"); });
+  window.vdf.on("moveCancelled", function () { _busy = false; if (window.toast) toast("이동 취소됨"); });
+  window.vdf.on("fileOpProgress", function (d) { if (window.toast) toast(d.op + " 중… " + d.done + "/" + d.total); });
   window.vdf.on("notMatchDone", function (d) {
     var set = {}; (d.paths || []).forEach(function (p) { set[p.toLowerCase()] = 1; });
     window.GROUPS = (window.GROUPS || []).filter(function (g) {
@@ -1268,6 +1426,131 @@
   };
   window.vdf.on("csvDone", function (d) { clog("CSV 내보내기 · " + d.rows + "행 · " + d.file, "ok"); if (window.toast) toast("CSV 저장됨 · " + d.rows + "행"); });
   window.vdf.on("csvCancelled", function () { if (window.toast) toast("취소됨"); });
+
+  // ---- 자동 체크 (구버전 '선택' 메뉴 — 계산은 C#, 결과 cut 맵을 cutState 에 병합) ----
+  function visiblePaths(alsoChecked) {
+    var qi = document.getElementById("q"), q = (qi ? qi.value : "").toLowerCase();
+    var match = window.fmatch || function () { return true; };
+    var out = { visible: [], checkedPaths: [] };
+    (window.GROUPS || []).forEach(function (g) {
+      g.files.forEach(function (f) {
+        if (!match(f, q)) return;
+        out.visible.push(f.p);
+        // '이미 체크된 그룹 건너뛰기'용: 명시 체크(cutState true)만 — 기본값(비유지=체크)까지 세면
+        // 모든 그룹에 체크가 있어서 전부 건너뛰는 무동작이 된다 (구버전도 명시 Checked 기준).
+        if (alsoChecked && cutState[f.p] === true) out.checkedPaths.push(f.p);
+      });
+    });
+    return out;
+  }
+  function autoCheck(mode, opts) {
+    if (_busy) { if (window.toast) toast("작업 진행 중… 끝나면 다시"); return; }
+    var v = visiblePaths(!!(opts && opts.skipChecked));
+    if (!v.visible.length) { if (window.toast) toast("대상 결과가 없다 — 먼저 ‘비교만 다시’"); return; }
+    send("autoCheck", { mode: mode, visible: v.visible, opts: opts || null, checkedPaths: v.checkedPaths });
+  }
+  window.autoCheck = autoCheck;
+  window.vdf.on("autoChecked", function (d) {
+    if (window.selSnap) selSnap();   // 스냅샷 → Ctrl+Z 1회로 되돌림
+    var cut = d.cut || {};
+    var keepLc = {};
+    (window.GROUPS || []).forEach(function (g) { g.files.forEach(function (f) { if (f.keep) keepLc[f.p.toLowerCase()] = 1; }); });
+    Object.keys(cut).forEach(function (k) {
+      cutState[k] = cut[k];
+      var lc = k.toLowerCase();
+      if (cut[k] && keepLc[lc]) window.__autoCut[lc] = 1;   // 서버 산출 체크가 유지본에 닿음 — 직접 클릭이 아니므로 삭제 승인 아님
+      else delete window.__autoCut[lc];
+    });
+    if (window.renderGroups) renderGroups();
+    var msg = (d.label || "자동 체크") + " · " + (d.checked || 0) + "개 체크" +
+      (d.unchecked ? (" · " + d.unchecked + "개 해제") : "") + (d.note ? (" · " + d.note) : "");
+    clog(msg, "ok"); if (window.toast) toast(msg);
+  });
+
+  // ---- 체크된 항목 정리 시뮬레이션 보고서 (dry-run JSON — 아무것도 안 지운다) ----
+  function exportDryRun() {
+    if (_busy) { if (window.toast) toast("작업 진행 중… 끝나면 다시"); return; }
+    // 정리(doReclaim)와 완전히 같은 수집: 필터로 숨겨진 체크 항목도 포함 — 보고서가 실제 삭제
+    // 집합보다 적게 나오면 "미리보기"라는 존재 이유가 무너진다.
+    var paths = collectChecked();
+    if (!paths.length) { if (window.toast) toast("체크된 항목이 없다"); return; }
+    send("dryRun", { paths: paths });
+  }
+  window.exportDryRun = exportDryRun;
+  window.vdf.on("dryRunDone", function (d) {
+    clog("시뮬레이션 보고서 저장 · " + d.groups + "그룹 " + d.rows + "파일 · " + d.bytes + " · " + d.file, "ok");
+    if (window.toast) toast("보고서 저장됨 · " + d.file + " (" + d.bytes + ")");
+  });
+  window.vdf.on("dryRunCancelled", function () { if (window.toast) toast("취소됨"); });
+
+  // ---- 드롭다운 메뉴 인프라 (체크 옵션 · 삭제 옵션) ----
+  var _menuActs = [];
+  function closeMenu() { var m = document.getElementById("dmenu"); if (m) m.classList.remove("open"); }
+  window.__menuRun = function (i) { closeMenu(); var f = _menuActs[i]; if (f) f(); };
+  function openMenu(ev, items) {
+    if (ev) ev.stopPropagation();   // 이 클릭이 document 의 닫기 리스너로 흘러가면 열리자마자 닫힌다
+    var m = document.getElementById("dmenu"); if (!m) return;
+    _menuActs = [];
+    m.innerHTML = items.map(function (it) {
+      if (it.sep) return '<div class="dsep"></div>';
+      var i = _menuActs.push(it.run) - 1;
+      return '<div class="dmi' + (it.warn ? ' warn' : '') + '" onclick="__menuRun(' + i + ')">' + it.t + '</div>';
+    }).join("");
+    m.style.left = "0px"; m.style.top = "0px";   // 먼저 크기를 재고
+    m.classList.add("open");
+    var x = 20, y = 20, r = ev && ev.currentTarget && ev.currentTarget.getBoundingClientRect ? ev.currentTarget.getBoundingClientRect() : null;
+    if (r) { x = r.left; y = r.bottom + 6; } else if (ev) { x = ev.clientX; y = ev.clientY; }
+    x = Math.max(10, Math.min(x, window.innerWidth - m.offsetWidth - 10));
+    y = Math.max(10, Math.min(y, window.innerHeight - m.offsetHeight - 10));
+    m.style.left = x + "px"; m.style.top = y + "px";
+  }
+  document.addEventListener("click", function (e) {
+    var m = document.getElementById("dmenu");
+    if (m && m.classList.contains("open") && !m.contains(e.target)) closeMenu();
+  });
+  window.openCheckMenu = function (ev) {
+    openMenu(ev, [
+      { t: "100% 동일 체크 (첫 번째 유지)", run: function () { autoCheck("identical"); } },
+      { t: "크기 빼고 100% 동일 체크 (가장 작은 것 유지)", run: function () { autoCheck("identicalButSize"); } },
+      { t: "최저 품질 체크 (우선순위 기준)", run: function () { autoCheck("lowest"); } },
+      { t: "사라진 파일 체크 (디스크에 없음)", run: function () { autoCheck("missing"); } },
+      { t: "가장 오래된 것 체크 (최신 유지)", run: function () { autoCheck("oldest"); } },
+      { t: "가장 최신 체크 (오래된 것 유지)", run: function () { autoCheck("newest"); } },
+      { t: "사용자 지정 체크…", run: function () { openCustomDlg(); } },
+      { sep: 1 },
+      { t: "체크 해제", run: function () { selBulk("clear"); } },
+      { t: "체크 반전", run: function () { selBulk("invert"); } },
+      { sep: 1 },
+      { t: "📄 체크된 항목 정리 시뮬레이션 보고서 내보내기", run: function () { exportDryRun(); } },
+    ]);
+  };
+  window.openDelMenu = function (ev) {
+    openMenu(ev, [
+      { t: "🗑 휴지통으로 삭제 (DB 포함)", run: function () { doReclaim(); } },
+      { t: "⚠ 영구 삭제 (DB 포함) — 복구 불가", warn: 1, run: function () { doReclaim(true); } },
+      { sep: 1 },
+      { t: "폴더로 복사…", run: function () { doCopyTo(); } },
+      { t: "폴더로 이동 (DB 경로 자동 갱신)…", run: function () { doMoveTo(); } },
+    ]);
+  };
+
+  // ---- 사용자 지정 체크 대화상자 ----
+  window.openCustomDlg = function () { var d = document.getElementById("cdlg"); if (d) d.classList.add("open"); };
+  window.closeCustomDlg = function () { var d = document.getElementById("cdlg"); if (d) d.classList.remove("open"); };
+  window.applyCustomDlg = function () {
+    var g = function (id) { var e = document.getElementById(id); return e ? e.value : ""; };
+    var pats = function (s) { return s.split(";").map(function (x) { return x.trim(); }).filter(Boolean); };
+    var opts = {
+      ftype: parseInt(g("cdType"), 10) || 0,
+      minMB: parseFloat(g("cdMin")) || 0, maxMB: parseFloat(g("cdMax")) || 0,
+      inc: pats(g("cdInc")), exc: pats(g("cdExc")),
+      simMin: parseFloat(g("cdSimMin")) || 0, simMax: parseFloat(g("cdSimMax")) || 100,
+      ident: parseInt(g("cdIdent"), 10) || 0, dateSel: parseInt(g("cdDate"), 10) || 0,
+      skipChecked: !!(document.getElementById("cdSkip") && document.getElementById("cdSkip").classList.contains("on")),
+    };
+    closeCustomDlg();
+    autoCheck("custom", opts);
+  };
 
   // ---- DB 뷰어 (paged index browser) ----
   var _dbOff = 0, _dbTimer = null, _dbState = { matched: 0, page: 200 };
@@ -1354,6 +1637,8 @@
       var nk = nkP.toLowerCase();
       (window.GROUPS || []).forEach(function (g) { g.files.forEach(function (f) { if (f.p.toLowerCase() === nk) f.keep = 1; }); });
     });
+    // 승격된 키퍼에 남은 낡은 체크는 삭제 승인이 아니다 — 즉시 무효화 (비유지 시절의 체크였다)
+    if (d.newKeeps && d.newKeeps.length && window.pruneKeeperChecks) pruneKeeperChecks();
     if (window.renderGroups) renderGroups();
     if (window.toast) toast("삭제 반영: " + baseName(d.path));
   });
@@ -1363,11 +1648,21 @@
     if (window.migrateCut) window.migrateCut(d.oldPath, d.newPath);   // keep the user's check state with the renamed file
     if (window.renderGroups) renderGroups();
   });
+  // 폴더로 이동 완료 행 — renamed 처럼 경로를 따라가되, 이동 = 이미 처분된 파일이므로 체크를 푼다.
+  // 명시 false 가 필요하다: 키를 지우면 기본값(비유지=체크)으로 돌아가 방금 옮긴 사본이 곧바로
+  // 다음 정리의 삭제 후보가 된다.
+  window.vdf.on("moved", function (d) {
+    var lc = d.oldPath.toLowerCase();
+    (window.GROUPS || []).forEach(function (g) { g.files.forEach(function (f) { if (f.p.toLowerCase() === lc) f.p = d.newPath; }); });
+    if (window.migrateCut) window.migrateCut(d.oldPath, d.newPath);
+    cutState[d.newPath] = false;
+    if (window.renderGroups) renderGroups();
+  });
 
   // Only a FATAL error (C# marks the ones that end the long op) may clear the single-flight gate —
   // an unrelated thumbs/listDir/mpv error mid-scan must not re-enable 스캔/정리 or hide the stop controls.
   window.vdf.on("error", function (d) {
-    if (d && d.fatal) { _busy = false; scanCtl(false); }
+    if (d && d.fatal) { _busy = false; scanCtl(false); setScanNow(""); }   // 죽은 스캔의 상태줄이 "진행 중"으로 남으면 안 된다
     clog("오류: " + (d && d.message), "err"); if (window.toast) toast("오류: " + (d && d.message));
   });
   window.__busy = function () { return _busy; };   // prototype-side bulk ops check this before touching GROUPS

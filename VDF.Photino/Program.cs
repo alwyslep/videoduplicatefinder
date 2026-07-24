@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.IO.Enumeration;
 using System.Text;
 using System.Text.Json;
 using Photino.NET;
@@ -158,6 +159,10 @@ static class Program {
 					break;
 				}
 				case "reclaim": Reclaim(win, doc.RootElement); break;   // sync: native confirm dialog on the message thread
+				case "autoCheck": { var a = doc.RootElement.Clone(); Task.Run(() => AutoCheck(win, a)); break; }   // reads the _lastDupes snapshot only — no engine lock needed
+				case "dryRun": DryRunReport(win, doc.RootElement); break;      // sync: native save dialog on the message thread
+				case "copyTo": CopyMoveTo(win, doc.RootElement, move: false); break;   // sync picker/confirm on the message thread, worker on the pool
+				case "moveTo": CopyMoveTo(win, doc.RootElement, move: true); break;
 				case "notMatch": MarkNotMatch(win, doc.RootElement); break;   // sync: native confirm on the message thread
 				case "exportCsv": ExportCsv(win, doc.RootElement); break;     // sync: native save dialog on the message thread
 				// Clone BEFORE Task.Run: `doc` is disposed when OnMessage returns, which can happen
@@ -224,7 +229,12 @@ static class Program {
 				int pct = e.MaxPosition > 0 ? (int)(100L * e.CurrentPosition / e.MaxPosition) : 0;
 				if (pct == lastPct) return;                    // whole-percent throttle
 				lastPct = pct;
-				Reply(win, "progress", new { pct, stage = e.CurrentStage ?? "" });   // no paths
+				Reply(win, "progress", new {
+					pct, stage = e.CurrentStage ?? "",
+					file = string.IsNullOrEmpty(e.CurrentFile) ? "" : Path.GetFileName(e.CurrentFile),   // 파일명만 — 지금 뭘 비교 중인지 보여달라는 요청
+					elapsed = (long)e.Elapsed.TotalSeconds,
+					remain = e.Remaining > TimeSpan.Zero ? (long)e.Remaining.TotalSeconds : -1,
+				});
 			}
 			engine.Progress += prog;
 			// Multicast delegates run in subscription order: the flag setter MUST precede `done`, or the
@@ -316,9 +326,20 @@ static class Program {
 					root = d.Root, doneFiles = d.DoneFiles, totalFiles = d.TotalFiles,
 					fps = Math.Round(d.FilesPerSec), conc = d.Concurrency,
 					pct = d.TotalBytes > 0 ? (int)(100.0 * d.DoneBytes / d.TotalBytes) : 0,
+					// 워커별 "지금 처리 중" 파일 — 어느 드라이브의 어떤 파일에 무슨 작업 중인지 보여달라는 요청.
+					// 파일명만 (전체 경로는 카드 폭을 넘친다 — 드라이브는 카드 제목이 이미 말해준다).
+					active = d.ActiveFiles?.Where(a => !string.IsNullOrEmpty(a.File))
+						.Select(a => new { file = Path.GetFileName(a.File), stage = a.Stage ?? "", cur = a.StageCurrent, max = a.StageMax }).ToArray(),
 				}).ToArray();
 				int pctAll = e.MaxPosition > 0 ? (int)(100L * e.CurrentPosition / e.MaxPosition) : 0;
-				Reply(win, "scanProgress", new { pct = pctAll, pos = e.CurrentPosition, max = e.MaxPosition, stage = e.CurrentStage ?? "", drives });   // no file paths
+				Reply(win, "scanProgress", new {
+					pct = pctAll, pos = e.CurrentPosition, max = e.MaxPosition, stage = e.CurrentStage ?? "",
+					file = string.IsNullOrEmpty(e.CurrentFile) ? "" : Path.GetFileName(e.CurrentFile),
+					sCur = e.StageCurrent, sMax = e.StageMax,
+					elapsed = (long)e.Elapsed.TotalSeconds,
+					remain = e.Remaining > TimeSpan.Zero ? (long)e.Remaining.TotalSeconds : -1,
+					drives,
+				});
 			}
 			engine.Progress += prog;
 			bool aborted = false;
@@ -326,12 +347,18 @@ static class Program {
 			engine.ScanAborted += onAbort;
 			_activeScan = engine;   // from here 중지/일시정지 can reach it
 
+			// BuildFileList(열거) 단계는 Progress 이벤트를 전혀 내지 않는다 — 단계 전환을 직접 알려서
+			// "지금 앱이 뭘 하는지 안 보인다"는 공백을 없앤다. drives 없는 페이로드는 JS 가 그냥 무시한다.
+			void enumDone(object? s, EventArgs e) => Reply(win, "scanProgress", new { pct = 0, stage = "파일 목록 완료 — 메타데이터·지문 생성 시작" });
+			engine.FilesEnumerated += enumDone;
 			var s1 = new TaskCompletionSource();
 			void searchDone(object? s, EventArgs e) => s1.TrySetResult();
 			engine.BuildingHashesDone += searchDone; engine.ScanAborted += searchDone;
+			Reply(win, "scanProgress", new { pct = 0, stage = "파일 목록 작성 중… (폴더 열거 · 이동/개명 감지)" });
 			engine.StartSearch(searchAndCompare: false);
 			s1.Task.Wait();
 			engine.BuildingHashesDone -= searchDone; engine.ScanAborted -= searchDone;
+			engine.FilesEnumerated -= enumDone;
 
 			// _stopReqFor (not just the event): abort fires BuildingHashesDone first, so `aborted`
 			// may still be false here even though the user stopped — see the field comment.
@@ -344,6 +371,7 @@ static class Program {
 			var s2 = new TaskCompletionSource();
 			void cmpDone(object? s, EventArgs e) => s2.TrySetResult();
 			engine.ScanDone += cmpDone; engine.ScanAborted += cmpDone;
+			Reply(win, "scanProgress", new { pct = 0, stage = "지문 생성 완료 — 중복 비교 시작" });
 			engine.StartCompare();
 			// A stop landing in the search→compare handoff no-ops engine-side (isScanning briefly false;
 			// PrepareCompare wipes its own flags — ScanEngine.cs:853-859), so a plain Wait would sit out
@@ -815,15 +843,21 @@ static class Program {
 		ReplySources(win);
 	}
 
-	// ---------- ⑤ 정리 실행 (recycle the checked duplicates) ----------
-	// v1 is Recycle-Bin ONLY (recoverable) — no permanent-delete path exposed. A native confirm
-	// gates it, and the keeper is never in `paths` (the JS sends only checked/cut items).
+	// ---------- ⑤ 정리 실행 (체크 항목 삭제 — 휴지통 기본 · 영구 삭제는 ▾ 메뉴의 명시 선택) ----------
+	// 휴지통(복구 가능)이 기본. 영구 삭제는 별도 경고 문구로만. 유지본은 사용자가 화면에서 "직접
+	// 체크"한 경우(overrides)에만 삭제 가능 — 구버전 GUI 에는 잠금 개념이 없어 유지본도 지울 수
+	// 있었고, 그 능력을 명시 체크 + 확인 대화상자의 경고로만 되돌려준다.
 	static void Reclaim(PhotinoWindow win, JsonElement root) {
 		try {
 			if (!root.TryGetProperty("payload", out var pl) || pl.ValueKind != JsonValueKind.Object) {
 				Reply(win, "error", new { message = "정리 요청이 비어있다.", fatal = true }); return;
 			}
-			// Defense in depth: even if the JS sends a keeper path (stale cutState bug), we NEVER delete it.
+			bool permanent = pl.TryGetProperty("permanent", out var pm) && pm.ValueKind == JsonValueKind.True;
+			var overrides = new HashSet<string>(StringComparer.OrdinalIgnoreCase);   // 체크된 유지본 = 사용자의 명시 승인
+			if (pl.TryGetProperty("overrides", out var ov) && ov.ValueKind == JsonValueKind.Array)
+				foreach (var k in ov.EnumerateArray()) { var s = k.GetString(); if (!string.IsNullOrEmpty(s)) overrides.Add(s); }
+			// Defense in depth: even if the JS sends a keeper path (stale cutState bug), we never delete it
+			// without an explicit override.
 			var keepers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 			if (pl.TryGetProperty("keepers", out var ks))
 				foreach (var k in ks.EnumerateArray()) { var s = k.GetString(); if (!string.IsNullOrEmpty(s)) keepers.Add(s); }
@@ -838,45 +872,87 @@ static class Program {
 			lock (_sideLock) keepers.UnionWith(_keepByGroup.Values);
 
 			var toDelete = new List<string>();
-			int keeperSkips = 0, unsafeSkips = 0;
+			var entryOnly = new List<string>();   // 디스크에 없는데 볼륨은 온라인 = 진짜 사라진 파일: DB 엔트리만 제거 (구버전 동작)
+			int keeperSkips = 0, unsafeSkips = 0, offlineSkips = 0;
+			var rootReady = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);   // 루트당 1회 — 죽은 UNC/외장에 경로마다 수 초씩 대기하는 폭풍 방지
+			var dirOk = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
 			if (pl.TryGetProperty("paths", out var ps))
 				foreach (var p in ps.EnumerateArray()) {
 					var s = p.GetString();
-					if (string.IsNullOrEmpty(s) || !File.Exists(s)) continue;
-					if (keepers.Contains(s)) { keeperSkips++; continue; }     // NEVER a keeper
-					if (!CanRecycle(s)) { unsafeSkips++; continue; }          // no Recycle Bin → refuse (never permanent-delete)
+					if (string.IsNullOrEmpty(s)) continue;
+					if (keepers.Contains(s) && !overrides.Contains(s)) { keeperSkips++; continue; }   // NEVER an unapproved keeper
+					string rt = Path.GetPathRoot(s) ?? "";
+					if (!rootReady.TryGetValue(rt, out bool rdy)) rootReady[rt] = rdy = DriveReady(rt);
+					if (!rdy) { offlineSkips++; continue; }   // 오프라인 루트는 File.Exists 조차 부르지 않는다
+					if (!File.Exists(s)) {
+						// 마운트 포인트 볼륨 분리 오인 방지: 루트가 살아있어도 부모 폴더까지 닿아야
+						// "진짜 사라짐"으로 본다 — 아니면 지문(톰스톤)을 통째로 날리는 오판이 된다.
+						string dir = Path.GetDirectoryName(s) ?? "";
+						if (!dirOk.TryGetValue(dir, out bool de)) dirOk[dir] = de = dir.Length > 0 && Directory.Exists(dir);
+						if (de) entryOnly.Add(s); else offlineSkips++;
+						continue;
+					}
+					if (!permanent && !CanRecycle(s)) { unsafeSkips++; continue; }   // no Recycle Bin → refuse (영구 삭제 메뉴로만 가능)
 					toDelete.Add(s);
 				}
-			if (toDelete.Count == 0) {
-				Reply(win, "error", new { message = $"휴지통으로 보낼 수 있는 파일이 없다 (유지본 제외 {keeperSkips} · 휴지통 미지원 드라이브 {unsafeSkips}).", fatal = true });
+			if (toDelete.Count == 0 && entryOnly.Count == 0) {
+				Reply(win, "error", new { message = $"처리할 수 있는 파일이 없다 (유지본 제외 {keeperSkips} · 휴지통 미지원 {unsafeSkips} · 오프라인 {offlineSkips}).", fatal = true });
 				return;
 			}
 
 			long bytes = toDelete.Sum(p => { try { return new FileInfo(p).Length; } catch { return 0L; } });
-			string extra = unsafeSkips > 0 ? $"\n\n※ 네트워크/이동식 드라이브의 {unsafeSkips}개는 휴지통이 없어 안전상 건너뜀." : "";
-			var choice = win.ShowMessage("정리 확인",
-				$"{toDelete.Count}개 파일 ({HumanBytes(bytes)})을 휴지통으로 보낼까?\n\n고정 드라이브 → Windows 휴지통(복구 가능). 유지본은 제외됨.{extra}",
+			int keeperDel = toDelete.Count(overrides.Contains);
+			var msg = new StringBuilder();
+			msg.Append(permanent
+				? $"⚠ {toDelete.Count}개 파일 ({HumanBytes(bytes)})을 영구 삭제할까?\n\n휴지통을 거치지 않는다 — 복구 불가!"
+				: $"{toDelete.Count}개 파일 ({HumanBytes(bytes)})을 휴지통으로 보낼까?\n\n고정 드라이브 → Windows 휴지통(복구 가능).");
+			if (keeperDel > 0) msg.Append($"\n\n⚠ 이 중 {keeperDel}개는 '유지' 표시 파일이 체크되어 있다 — 정말 함께 삭제할지 확인해줘!");
+			if (keeperSkips > 0) msg.Append($"\n\n※ 유지본으로 보호된 {keeperSkips}개는 건너뜀 — 삭제하려면 화면에서 해당 유지본을 직접 클릭해 체크(호박색)해야 한다.");
+			if (entryOnly.Count > 0) msg.Append($"\n\n※ 디스크에 없는 {entryOnly.Count}개는 DB 엔트리만 제거된다.");
+			if (unsafeSkips > 0) msg.Append($"\n\n※ 네트워크/이동식 드라이브의 {unsafeSkips}개는 휴지통이 없어 건너뜀 (영구 삭제 메뉴로는 가능).");
+			if (offlineSkips > 0) msg.Append($"\n\n※ 오프라인 드라이브의 {offlineSkips}개는 건너뜀.");
+			var choice = win.ShowMessage(permanent ? "영구 삭제 확인" : "정리 확인", msg.ToString(),
 				PhotinoDialogButtons.YesNo, PhotinoDialogIcon.Warning);
 			if (choice != PhotinoDialogResult.Yes) { Reply(win, "reclaimCancelled", new { }); return; }
 
 			Task.Run(() => {
-				int deleted = 0, failed = 0; long freed = 0;
+				int deleted = 0, failed = 0, prog = 0, total = toDelete.Count + entryOnly.Count; long freed = 0;
 				lock (_engineLock) {
+					foreach (var p in entryOnly) {
+						try { _dbEngine.RemoveFromDatabase(new FileEntry { Path = p }); } catch { }
+						Reply(win, "removed", new { path = p, newKeeps = ReElectKeeps(p) });
+						Reply(win, "reclaimProgress", new { done = ++prog, total });
+					}
 					foreach (var p in toDelete) {
 						long len = 0; try { len = new FileInfo(p).Length; } catch { }
 						try {
-							MoveToTrash(p);
-							try { _dbEngine.RemoveFromDatabase(new FileEntry { Path = p }); } catch { }   // copy DB, in-memory
+							if (permanent) File.Delete(p); else MoveToTrash(p);
+							try { _dbEngine.RemoveFromDatabase(new FileEntry { Path = p }); } catch { }   // (DB 포함)
 							freed += len; deleted++;
-							Reply(win, "removed", new { path = p });   // drop the row live
+							// 체크된 유지본이 지워졌을 수 있다 — 그룹의 키퍼를 재선출해 UI 태그를 갱신 (sidecar 삭제와 동일 기계).
+							Reply(win, "removed", new { path = p, newKeeps = ReElectKeeps(p) });
 						}
 						catch (Exception) { failed++; }   // never echo the path
+						Reply(win, "reclaimProgress", new { done = ++prog, total });
 					}
+					// (DB 포함)을 재시작 후에도 보장 — 구버전 DeleteInternal 도 끝에 SaveDatabase 를 불렀다.
+					if (deleted > 0 || entryOnly.Count > 0) try { ScanEngine.SaveDatabase(); } catch { }
 				}
-				Reply(win, "reclaimDone", new { deleted, failed, skipped = keeperSkips + unsafeSkips, freed = HumanBytes(freed) });
+				Reply(win, "reclaimDone", new { deleted, failed, skipped = keeperSkips + unsafeSkips + offlineSkips, entryOnly = entryOnly.Count, freed = HumanBytes(freed), permanent });
 			});
 		}
 		catch (Exception ex) { Reply(win, "error", new { message = ex.Message, fatal = true }); }
+	}
+
+	// 드라이브 루트가 온라인인지 (오프라인 외장/언마운트 구분용). UNC 는 DriveInfo 가 못 다루므로
+	// 디렉터리 존재로 판정 (접근 불가 = 오프라인 취급 — 죽은 공유에선 수 초 걸릴 수 있지만 드물다).
+	static bool DriveReady(string root) {
+		if (string.IsNullOrEmpty(root)) return false;
+		try {
+			if (root.StartsWith(@"\\", StringComparison.Ordinal)) return Directory.Exists(root);
+			return new DriveInfo(root).IsReady;
+		}
+		catch { return false; }
 	}
 
 	// The Recycle Bin exists only on FIXED local drives. On UNC/network + removable media there is none,
@@ -1005,6 +1081,289 @@ static class Program {
 			Reply(win, "csvDone", new { rows = rs.GetArrayLength(), file = Path.GetFileName(target) });
 		}
 		catch (Exception ex) { Reply(win, "error", new { message = ex.Message }); }
+	}
+
+	// ---------- 자동 체크 (구버전 GUI '선택' 메뉴 이식 — 메타데이터 전부는 C# 쪽에만 있어 서버측 계산) ----------
+	// visible = 화면 필터를 통과한 경로들 (구버전 IsVisibleInFilter 게이팅과 같은 범위 제한).
+	// 응답 cut 맵은 "명시적으로 바뀌는 항목"만 담고 JS 가 cutState 에 병합한다 (Ctrl+Z 1회로 되돌림).
+	static void AutoCheck(PhotinoWindow win, JsonElement root) {
+		try {
+			if (!root.TryGetProperty("payload", out var pl) || pl.ValueKind != JsonValueKind.Object) return;
+			string mode = pl.TryGetProperty("mode", out var md) ? md.GetString() ?? "" : "";
+			static HashSet<string> PathSet(JsonElement obj, string prop) {
+				var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+				if (obj.TryGetProperty(prop, out var arr) && arr.ValueKind == JsonValueKind.Array)
+					foreach (var v in arr.EnumerateArray()) { var s = v.GetString(); if (!string.IsNullOrEmpty(s)) set.Add(s); }
+				return set;
+			}
+			var visible = PathSet(pl, "visible");
+			var checkedSet = PathSet(pl, "checkedPaths");
+			var snap = _lastDupes;
+			var groups = snap.Where(d => visible.Contains(d.Path))
+							 .GroupBy(d => d.GroupId).Select(g => g.ToList()).Where(g => g.Count >= 2).ToList();
+
+			var cut = new Dictionary<string, bool>(StringComparer.Ordinal);
+			// Keep(false)가 Check(true)를 이긴다: 한 경로가 두 그룹(일반+부분클립)에 걸릴 때 어느 한쪽의
+			// 유지 판정이 다른 쪽의 체크를 무효화한다 — 충돌은 삭제 반대쪽으로 기우는 안전 규칙.
+			void Check(DuplicateItem it) { if (!(cut.TryGetValue(it.Path, out var v) && !v)) cut[it.Path] = true; }
+			void Keep(DuplicateItem it) => cut[it.Path] = false;
+			void KeepRestCheck(List<DuplicateItem> members, DuplicateItem keep) {
+				Keep(keep);
+				foreach (var it in members) if (it != keep) Check(it);
+			}
+			// 유지본 선출은 반드시 "디스크에 실존하는" 멤버 중에서 — 외부 삭제된/톰스톤 파일이 유지본으로
+			// 뽑히면 실존 사본 전부가 체크되는 재앙이 된다 (identicalButSize 의 SizeLong 가드를 전 모드로 확장).
+			// 루트 준비 상태를 먼저 캐시해 오프라인 드라이브에 경로마다 stat 타임아웃이 쌓이는 것을 막는다.
+			var rootReady = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+			var onDiskCache = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+			bool OnDisk(DuplicateItem i) {
+				if (onDiskCache.TryGetValue(i.Path, out var ok)) return ok;
+				string rt = Path.GetPathRoot(i.Path) ?? "";
+				if (!rootReady.TryGetValue(rt, out var rr)) rootReady[rt] = rr = DriveReady(rt);
+				return onDiskCache[i.Path] = rr && File.Exists(i.Path);
+			}
+			List<DuplicateItem> Live(List<DuplicateItem> g) => g.Where(OnDisk).ToList();
+
+			string label; string note = "";
+			switch (mode) {
+				case "identical": {   // 100% 동일 체크 — 메타 완전 일치(EqualsFull 상당)만, 유지본(UI 첫 번째) 유지
+					label = "100% 동일 체크";
+					foreach (var g in groups) {
+						var live = Live(g);
+						if (live.Count == 0) continue;
+						var keep = PickKeep(live);   // UI 정렬상 첫 번째 = 유지본 ("첫 번째 유지"와 동일)
+						var same = g.Where(i => i != keep && MetaEqual(i, keep)).ToList();
+						if (same.Count == 0) continue;
+						Keep(keep);
+						foreach (var it in same) Check(it);
+					}
+					break;
+				}
+				case "identicalButSize": {   // 그룹 전체에서 가장 작은 것 유지 (구버전도 실제로는 그룹 단위였다)
+					label = "크기 빼고 100% 동일 체크";
+					foreach (var g in groups) {
+						var keep = g.Where(i => i.SizeLong >= 0 && OnDisk(i)).OrderBy(i => i.SizeLong).FirstOrDefault();
+						if (keep == null) continue;
+						KeepRestCheck(g, keep);
+					}
+					break;
+				}
+				case "lowest": {   // 최저 품질 체크 — 우선순위(규칙 화면) 기준 최고 품질만 남긴다
+					label = "최저 품질 체크";
+					foreach (var g in groups) {
+						var live = Live(g);
+						if (live.Count == 0) continue;
+						KeepRestCheck(g, PickKeep(live));
+					}
+					break;
+				}
+				case "missing": {   // 사라진 파일 체크 — 온라인 볼륨에서 실제로 없어진 것만 (오프라인/마운트 분리는 오인 방지 제외)
+					label = "사라진 파일 체크";
+					int offline = 0;
+					var dirOk = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+					foreach (var it in groups.SelectMany(g => g)) {
+						string rt = Path.GetPathRoot(it.Path) ?? "";
+						if (!rootReady.TryGetValue(rt, out bool ok)) rootReady[rt] = ok = DriveReady(rt);
+						if (!ok) { offline++; continue; }
+						if (File.Exists(it.Path)) continue;
+						// 루트는 살아있어도 마운트 포인트 볼륨이 분리됐을 수 있다 — 부모 폴더까지 닿아야 "진짜 사라짐"
+						string dir = Path.GetDirectoryName(it.Path) ?? "";
+						if (!dirOk.TryGetValue(dir, out bool de)) dirOk[dir] = de = dir.Length > 0 && Directory.Exists(dir);
+						if (de) Check(it); else offline++;
+					}
+					if (offline > 0) note = $"오프라인/접근 불가 {offline}개 파일 제외";
+					break;
+				}
+				case "oldest": {   // 가장 오래된 것 체크 (최신 유지)
+					label = "가장 오래된 것 체크 (최신 유지)";
+					foreach (var g in groups) {
+						var live = Live(g);
+						if (live.Count == 0) continue;
+						KeepRestCheck(g, live.OrderByDescending(i => i.DateCreated).First());
+					}
+					break;
+				}
+				case "newest": {   // 가장 최신 체크 (가장 오래된 것 유지)
+					label = "가장 최신 체크 (오래된 것 유지)";
+					foreach (var g in groups) {
+						var live = Live(g);
+						if (live.Count == 0) continue;
+						KeepRestCheck(g, live.OrderBy(i => i.DateCreated).First());
+					}
+					break;
+				}
+				case "custom": {   // 사용자 지정 체크 — 구버전 CustomSelection 의 핵심 필터 이식
+					label = "사용자 지정 체크";
+					JsonElement o = pl.TryGetProperty("opts", out var oe) && oe.ValueKind == JsonValueKind.Object ? oe : default;
+					static double Num(JsonElement obj, string k, double dflt) =>
+						obj.ValueKind == JsonValueKind.Object && obj.TryGetProperty(k, out var v) && v.TryGetDouble(out var d) ? d : dflt;
+					static bool Flag(JsonElement obj, string k) =>
+						obj.ValueKind == JsonValueKind.Object && obj.TryGetProperty(k, out var v) && v.ValueKind == JsonValueKind.True;
+					static string[] Pats(JsonElement obj, string k) {
+						if (obj.ValueKind != JsonValueKind.Object || !obj.TryGetProperty(k, out var v) || v.ValueKind != JsonValueKind.Array) return Array.Empty<string>();
+						return v.EnumerateArray().Select(x => x.GetString() ?? "").Where(s => s.Length > 0)
+							.Select(s => s.IndexOfAny(new[] { '*', '?' }) < 0 ? "*" + s + "*" : s)   // 와일드카드 없으면 부분일치로
+							.ToArray();
+					}
+					int ftype = (int)Num(o, "ftype", 0), ident = (int)Num(o, "ident", 0), dateSel = (int)Num(o, "dateSel", 0);
+					double minMB = Num(o, "minMB", 0), maxMB = Num(o, "maxMB", 0);
+					double simMin = Num(o, "simMin", 0), simMax = Num(o, "simMax", 100);
+					string[] inc = Pats(o, "inc"), exc = Pats(o, "exc");
+					bool skipChecked = Flag(o, "skipChecked");
+					bool Pass(DuplicateItem i) {
+						if (ftype == 1 && i.IsImage) return false;
+						if (ftype == 2 && !i.IsImage) return false;
+						double mb = i.SizeLong / (1024.0 * 1024.0);
+						if (minMB > 0 && mb < minMB) return false;
+						if (maxMB > 0 && mb > maxMB) return false;
+						if (i.Similarity < simMin - 0.001 || i.Similarity > simMax + 0.001) return false;
+						if (inc.Length > 0 && !inc.Any(w => FileSystemName.MatchesSimpleExpression(w, i.Path, true))) return false;
+						if (exc.Any(w => FileSystemName.MatchesSimpleExpression(w, i.Path, true))) return false;
+						return true;
+					}
+					foreach (var g in groups) {
+						if (skipChecked && g.Any(i => checkedSet.Contains(i.Path))) continue;
+						var members = g.Where(Pass).ToList();
+						if (ident == 1 && members.Count >= 2) {   // "완전 동일만": 유지본과 메타가 같은 부분집합으로 좁힌다
+							var rf = PickKeep(members);
+							members = members.Where(i => i == rf || MetaEqual(i, rf)).ToList();
+						}
+						if (members.Count < 2) continue;
+						var liveM = Live(members);
+						if (liveM.Count == 0) continue;   // 실존 멤버가 없으면 유지본을 못 뽑는다 — 그룹 스킵
+						var keep = dateSel == 1 ? liveM.OrderBy(i => i.DateCreated).First()      // 가장 오래된 것 유지
+								 : dateSel == 2 ? liveM.OrderByDescending(i => i.DateCreated).First()   // 가장 최신 유지
+								 : PickKeep(liveM);                                              // 우선순위 기준
+						KeepRestCheck(members, keep);
+					}
+					break;
+				}
+				default: Reply(win, "error", new { message = $"알 수 없는 자동 체크 모드 '{mode}'" }); return;
+			}
+			Reply(win, "autoChecked", new {
+				cut,
+				@checked = cut.Count(kv => kv.Value),
+				@unchecked = cut.Count(kv => !kv.Value),
+				label, note,
+			});
+		}
+		catch (Exception ex) { Reply(win, "error", new { message = ex.Message }); }
+	}
+
+	// EqualsFull 상당 (구버전 DuplicateItemVM.EqualsFull): 크기 포함 모든 스트림 메타가 같아야 100% 동일.
+	static bool MetaEqual(DuplicateItem a, DuplicateItem b) =>
+		a.SizeLong == b.SizeLong && a.Duration == b.Duration && a.FrameSizeInt == b.FrameSizeInt &&
+		a.Format == b.Format && a.AudioFormat == b.AudioFormat && a.AudioChannel == b.AudioChannel &&
+		a.AudioSampleRate == b.AudioSampleRate && a.BitRateKbs == b.BitRateKbs && a.Fps == b.Fps;
+
+	// ---------- 체크된 항목 정리 시뮬레이션 보고서 (dry-run JSON — 구버전 스키마 그대로) ----------
+	// 아무것도 삭제/변경하지 않는다. 구버전 CleanupDryRunReport 와 같은 필드 구성(CreatedAt/
+	// EstimatedTotalSavingsBytes/Groups[GroupId·EstimatedSavingsBytes·Reason·RemoveItems·KeepItems]).
+	static void DryRunReport(PhotinoWindow win, JsonElement root) {
+		try {
+			var want = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+			if (root.TryGetProperty("payload", out var pl) && pl.TryGetProperty("paths", out var ps) && ps.ValueKind == JsonValueKind.Array)
+				foreach (var p in ps.EnumerateArray()) { var s = p.GetString(); if (!string.IsNullOrEmpty(s)) want.Add(s); }
+			if (want.Count == 0) { Reply(win, "error", new { message = "체크된 항목이 없다 — 먼저 체크해줘." }); return; }
+			var snap = _lastDupes;
+			static object Dto(DuplicateItem i) => new { i.Path, SizeBytes = i.SizeLong, Resolution = i.FrameSize ?? "", i.DateCreated };
+			long totalBytes = 0;
+			var glist = new List<object>();
+			foreach (var g in snap.GroupBy(d => d.GroupId)) {
+				var rm = g.Where(i => want.Contains(i.Path)).ToList();
+				if (rm.Count == 0) continue;
+				long sv = rm.Sum(i => Math.Max(0, i.SizeLong));
+				totalBytes += sv;
+				glist.Add(new {
+					GroupId = g.Key, EstimatedSavingsBytes = sv, Reason = "수동 선택",
+					RemoveItems = rm.Select(Dto).ToList(),
+					KeepItems = g.Where(i => !want.Contains(i.Path)).Select(Dto).ToList(),
+				});
+			}
+			string? target = win.ShowSaveFile("정리 시뮬레이션 보고서 저장",
+				Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "vdf-cleanup-dryrun.json"),
+				new (string, string[])[] { ("JSON", new[] { "json" }) });
+			if (string.IsNullOrEmpty(target)) { Reply(win, "dryRunCancelled", new { }); return; }
+			var report = new { CreatedAt = DateTime.UtcNow, EstimatedTotalSavingsBytes = totalBytes, Groups = glist };
+			File.WriteAllText(target, JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
+			Reply(win, "dryRunDone", new { groups = glist.Count, rows = want.Count, bytes = HumanBytes(totalBytes), file = Path.GetFileName(target) });
+		}
+		catch (Exception ex) { Reply(win, "error", new { message = ex.Message }); }
+	}
+
+	// ---------- 폴더로 복사 / 이동 (구버전 Copy/MoveCheckedItems 이식) ----------
+	// 이동은 DB 경로를 자동 갱신해 지문을 보존한다 (UpdateFilePathInDatabase — 리네임과 같은 경로).
+	// 복사는 DB/결과를 건드리지 않는다 (구버전은 행을 사본 쪽으로 돌려세웠지만, 원본이 남아 있는데
+	// 행이 사본을 가리키면 이후 삭제가 사본을 지우는 함정이라 여기선 의도적으로 두지 않는다).
+	static void CopyMoveTo(PhotinoWindow win, JsonElement root, bool move) {
+		string act = move ? "이동" : "복사";
+		string cancelCmd = move ? "moveCancelled" : "copyCancelled";
+		try {
+			var paths = new List<string>();
+			var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+			int missing = 0;
+			if (root.TryGetProperty("payload", out var pl) && pl.TryGetProperty("paths", out var ps) && ps.ValueKind == JsonValueKind.Array)
+				foreach (var p in ps.EnumerateArray()) {
+					var s = p.GetString();
+					if (string.IsNullOrEmpty(s) || !seen.Add(s)) continue;
+					if (File.Exists(s)) paths.Add(s); else missing++;
+				}
+			if (paths.Count == 0) { Reply(win, "error", new { message = $"{act}할 파일이 없다 (디스크에 없는 파일 {missing}개 제외).", fatal = true }); return; }
+			var picked = win.ShowOpenFolder($"{act}할 대상 폴더 선택", null, false);
+			if (picked is not { Length: > 0 }) { Reply(win, cancelCmd, new { }); return; }
+			string dest = picked[0];
+			long bytes = paths.Sum(p => { try { return new FileInfo(p).Length; } catch { return 0L; } });
+			var choice = win.ShowMessage($"{act} 확인",
+				$"체크된 {paths.Count}개 파일 ({HumanBytes(bytes)})을\n{dest}\n(으)로 {act}할까?" +
+				(move ? "\n\n이동 후 DB 경로가 자동 갱신된다 (지문 유지)." : "\n\n원본은 그대로 두고 사본을 만든다.") +
+				"\n이름 충돌은 _0, _1… 을 붙여 해결." +
+				(missing > 0 ? $"\n\n※ 디스크에 없는 {missing}개는 제외됨." : ""),
+				PhotinoDialogButtons.YesNo, PhotinoDialogIcon.Question);
+			if (choice != PhotinoDialogResult.Yes) { Reply(win, cancelCmd, new { }); return; }
+
+			Task.Run(() => {
+				int done = 0, failed = 0, skipped = 0, prog = 0;
+				lock (_engineLock) {   // move 는 DB 를 만진다; copy 도 스캔과의 파일 경합을 피해 직렬화
+					foreach (var p in paths) {
+						prog++;
+						try {
+							string dir = Path.GetDirectoryName(p) ?? "";
+							if (string.Equals(dir.TrimEnd('\\', '/'), dest.TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase)) { skipped++; continue; }   // 이미 대상 폴더에 있음
+							string target = UniqueTarget(dest, Path.GetFileName(p));
+							if (move) {
+								FileEntry? fe = null;
+								try { ScanEngine.GetFromDatabase(p, out fe); } catch { }
+								File.Move(p, target);
+								if (fe != null) try { ScanEngine.UpdateFilePathInDatabase(target, fe); } catch { }
+								foreach (var it in _lastDupes.Where(d => d.Path.Equals(p, StringComparison.OrdinalIgnoreCase)).ToList()) it.Path = target;
+								lock (_sideLock)
+									foreach (var k in _keepByGroup.Where(kv => kv.Value.Equals(p, StringComparison.OrdinalIgnoreCase)).Select(kv => kv.Key).ToList())
+										_keepByGroup[k] = target;   // 이동된 유지본도 계속 보호
+								// 'renamed' 가 아니라 'moved': JS 가 행/체크 상태를 새 경로로 옮긴 뒤 체크를 해제한다 —
+								// 이동 = 이미 처분된 파일인데 체크가 남으면 다음 정리가 방금 옮긴 사본을 지워버린다.
+								Reply(win, "moved", new { oldPath = p, newPath = target });
+							}
+							else File.Copy(p, target);
+							done++;
+						}
+						catch { failed++; }
+						finally { Reply(win, "fileOpProgress", new { op = act, done = prog, total = paths.Count }); }   // continue(스킵)에도 진행은 간다
+					}
+					if (move && done > 0) try { ScanEngine.SaveDatabase(); } catch { }   // 경로 갱신을 재시작 후에도 보존
+				}
+				Reply(win, move ? "moveDone" : "copyDone", new { done, failed, skipped, dest });
+			});
+		}
+		catch (Exception ex) { Reply(win, "error", new { message = ex.Message, fatal = true }); }
+	}
+
+	// 대상 폴더 내 이름 충돌 → name_0.ext, name_1.ext … (구버전 FileUtils.CopyFile 과 같은 규칙)
+	static string UniqueTarget(string destDir, string fileName) {
+		string name = Path.GetFileNameWithoutExtension(fileName), ext = Path.GetExtension(fileName);
+		string t = Path.Combine(destDir, fileName);
+		int c = 0;
+		while (File.Exists(t)) t = Path.Combine(destDir, name + "_" + c++ + ext);
+		return t;
 	}
 
 	// ---------- 트리아지 영속화 (검토 체크 상태 — 재시작·재비교 생존) ----------
