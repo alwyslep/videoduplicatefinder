@@ -447,12 +447,11 @@
 <!-- DB VIEWER (in-page screen — paged index browser) -->
 <section class="screen" id="s-dbview" style="max-width:1440px;margin:0 auto;padding:10px 20px 60px">
     <div class="h1">DB 뷰어</div>
-    <div class="sub">지문 인덱스 엔트리 열람. ✕ = 인덱스에서 잊기(파일은 그대로, 재스캔 시 다시 등록) · 정리 = 미존재 파일 엔트리 일괄 제거.</div>
+    <div class="sub">지문 인덱스 엔트리 열람. ✕ = 인덱스에서 잊기(파일은 그대로, 재스캔 시 다시 등록). 디스크에 없는 파일의 지문은 일부러 남긴다 — 같은 파일을 다시 받으면 바로 잡아내기 위해서.</div>
     <div class="query" style="margin-bottom:14px">
       <span class="gt">&gt;</span>
       <input id="dbq" placeholder="경로 검색" oninput="dbSearch()">
       <span class="qhint" id="dbCount">—</span>
-      <button class="cta ghost" style="padding:7px 15px;font-size:12.5px" onclick="window.vdf.send('dbCleanup')">🧹 미존재 정리</button>
       <button class="cta ghost" style="padding:7px 15px;font-size:12.5px" onclick="go('settings')">← 환경설정</button>
     </div>
     <div id="dbTable" class="card pad" style="overflow-x:auto"></div>
@@ -466,10 +465,14 @@
 <div class="proto-tag">PROTOTYPE · Deep Space (웹 UI · 실제 엔진 그대로)</div>
 
 <script>
-  const DR=[["D:\\","SSD",91,"8204/9010","62"],["F:\\","HDD",44,"4930/11200","14"],["G:\\","HDD",96,"10191/10510","31"],["H:\\","HDD",22,"640/2900","9"]];
-  document.getElementById("drives").innerHTML='<div class="lbl">드라이브 — 적응형 동시성</div>'+DR.map(d=>`<div class="drive"><div class="dinfo"><span><b style="color:var(--ink)">${d[0]}</b> · ${d[1]}</span><span>done ${d[3]} · ${d[4]} f/s</span></div><div class="dbar"><i style="width:${d[2]}%"></i></div></div>`).join("");
-  const TAL=[["분석","21,880"],["지문","20,914"],["그룹","643"],["절약","1.72 TB"],["누락","214"],["썸네일","71%"]];
-  document.getElementById("tallies").innerHTML=TAL.map(t=>`<div class="tally"><span>${t[0]}</span><span class="mono">${t[1]}</span></div>`).join("");
+  // Sample drive/tally data — QA-harness only. In the real app these are fabricated numbers next to
+  // ▶ 스캔 시작, so paint them only WITHOUT a bridge; go("scan") pulls the real driveInfo instead.
+  if(!(window.external&&window.external.sendMessage)){
+    const DR=[["D:\\","SSD",91,"8204/9010","62"],["F:\\","HDD",44,"4930/11200","14"],["G:\\","HDD",96,"10191/10510","31"],["H:\\","HDD",22,"640/2900","9"]];
+    document.getElementById("drives").innerHTML='<div class="lbl">드라이브 — 적응형 동시성</div>'+DR.map(d=>`<div class="drive"><div class="dinfo"><span><b style="color:var(--ink)">${d[0]}</b> · ${d[1]}</span><span>done ${d[3]} · ${d[4]} f/s</span></div><div class="dbar"><i style="width:${d[2]}%"></i></div></div>`).join("");
+    const TAL=[["분석","21,880"],["지문","20,914"],["그룹","643"],["절약","1.72 TB"],["누락","214"],["썸네일","71%"]];
+    document.getElementById("tallies").innerHTML=TAL.map(t=>`<div class="tally"><span>${t[0]}</span><span class="mono">${t[1]}</span></div>`).join("");
+  }
 
   // review groups (mock sample; replaced by real data from the bridge on 비교)
   var GB=1073741824;
@@ -572,7 +575,10 @@
         });
       }
     });
-    document.getElementById("groups").innerHTML=html||'<div class="muted" style="padding:40px;text-align:center">필터에 걸리는 결과 없음. 상단 ‘비교만 다시’로 중복을 불러와.</div>';
+    var emptyMsg=(window.GROUPS&&window.GROUPS.length)
+      ? '필터에 걸리는 결과 없음 — 상단 검색어를 지워봐.'      // groups exist, the filter hides them all
+      : '아직 결과 없음 — 상단 ‘비교만 다시’로 중복을 불러와.';  // no result set yet
+    document.getElementById("groups").innerHTML=html||'<div class="muted" style="padding:40px;text-align:center">'+emptyMsg+'</div>';
     renderFacets();
     recount();
     if(window.onGroupsRendered) window.onGroupsRendered();
@@ -590,6 +596,9 @@
   // ✏ 이름 변경 — inline input in the path cell; Enter=적용(C# renameFile → 'renamed' round-trip), Esc/blur=취소.
   function renameUi(ev,i){
     ev.stopPropagation();
+    // C# runs RenameFile under the same engine lock a scan/compare holds for its whole duration — a
+    // rename typed mid-scan would sit queued (no reply, no feedback) and then File.Move hours later.
+    if(window.__busy&&window.__busy()){ toast("작업 진행 중… 끝나면 다시"); return; }
     var f=__files[i]; if(!f)return;
     var box=ev.target.closest(".fpath")||ev.target.closest(".tpath"); if(!box)return;
     var base=f.p.split("\\").pop();
@@ -600,7 +609,8 @@
       e.stopPropagation();
       if(e.key==="Enter"){ var nn=inp.value.trim(); inp.onblur=null;
         if(nn&&nn!==base) window.vdf.send("renameFile",{path:f.p,newName:nn});
-        else renderGroups();
+        renderGroups();   // always: the 'renamed' reply repaints with the new name, and a refusal
+                          // (collision/bad chars) can no longer strand a dead input in the cell
       } else if(e.key==="Escape"){ inp.onblur=null; renderGroups(); }
     };
     inp.onblur=function(){ renderGroups(); };
@@ -648,11 +658,20 @@
     var pt=document.getElementById("planTrash"); if(pt)pt.textContent=cnt+" 파일 · "+human;
     // triage persistence: cutState is what a restart would lose — debounce-save it beside the DB.
     // recount() runs after every cutState mutation (and some pure re-renders; extra saves are cheap).
+    // Gated on _triReady: before the getTriage round-trip lands, cutState belongs to NO db (startup:
+    // still empty; DB switch: still the previous DB's) and C# resolves the target file from the
+    // CURRENT db folder — an early save would wipe or cross-contaminate the other DB's triage.
+    if(!_triReady) return;
     clearTimeout(window.__triTimer);
     window.__triTimer=setTimeout(function(){ if(window.vdf)window.vdf.send("saveTriage",{cut:cutState}); },600);
   }
+  var _triReady=false;
+  // DB target changed: the loaded triage is now the wrong DB's — drop it and disarm saving until the
+  // new DB's getTriage answers. MUST run before the getTriage request.
+  window.__triReset=function(){ clearTimeout(window.__triTimer); _triReady=false; cutState={}; };
   window.__mergeTriage=function(saved){   // startup/DB-switch: session state wins over the saved file
     Object.keys(saved||{}).forEach(function(k){ if(!(k in cutState)) cutState[k]=saved[k]; });
+    _triReady=true;
     renderGroups(); recount();
   };
   function filter(){renderGroups();}
@@ -662,7 +681,8 @@
 
   function go(s){document.querySelectorAll(".screen").forEach(e=>e.classList.remove("on"));document.getElementById("s-"+s).classList.add("on");
     const idx={sources:0,rules:1,scan:2,review:3,reclaim:4}[s];
-    document.querySelectorAll("#rail .chip").forEach((c,i)=>c.classList.toggle("on",i===idx));window.scrollTo({top:0,behavior:"smooth"});}
+    document.querySelectorAll("#rail .chip").forEach((c,i)=>c.classList.toggle("on",i===idx));window.scrollTo({top:0,behavior:"smooth"});
+    if(s==="scan"&&window.vdf&&window.vdf.send)window.vdf.send("driveInfo");}   // real per-drive state, not the sample
   // fix the sources chip onclick mapping
   document.querySelectorAll("#rail .chip").forEach((c,i)=>{c.onclick=()=>go(["sources","rules","scan","review","reclaim"][i]);});
   go('review'); // sync initial state (④ 검토 hero)
@@ -772,15 +792,21 @@
       dst.className = "mpvstat " + (d.activeReal || (d.realDbMode && !d.realDbHasDb) ? "bad" : "ok");
     }
   });
+  // Switching the DB target mid-scan wedges the message thread (C# refuses it too — this is just
+  // immediate feedback so the send never fires and the toggle doesn't visually flip).
+  function dbBusy() { if (_busy) { if (window.toast) toast("스캔/비교 중에는 DB 대상을 바꿀 수 없다"); return true; } return false; }
   window.toggleRealDb = function (sw) {
+    if (dbBusy()) return;
     var on = !sw.classList.contains("on");
     sw.classList.toggle("on", on);
     send("saveSetting", { key: "realDbMode", val: on });
   };
-  window.browseRealDb = function () { send("browseRealDb"); };
-  window.saveRealDbFolder = function (el) { send("saveSetting", { key: "realDbFolder", val: el ? el.value : "" }); };
+  window.browseRealDb = function () { if (dbBusy()) return; send("browseRealDb"); };
+  window.saveRealDbFolder = function (el) { if (dbBusy()) return; send("saveSetting", { key: "realDbFolder", val: el ? el.value : "" }); };
+  window.vdf.on("settingBlocked", function (d) { clog(d.message, "warn"); if (window.toast) toast(d.message); });
   window.vdf.on("dbModeChanged", function (d) {
     send("stats");
+    if (window.__triReset) window.__triReset();   // drop the OLD db's check state BEFORE asking for the new one
     send("getTriage");                       // each DB keeps its own saved triage
     window.GROUPS = [];                      // groups from the previous DB are now stale — re-compare
     if (window.selReset) selReset();         // undo snapshots point at the old result set
@@ -1009,9 +1035,12 @@
   function collectVisibleGroups() {
     var qi = document.getElementById("q");
     var q = (qi ? qi.value : "").toLowerCase();
+    // Reuse the SAME predicate renderGroups uses (drive:/res facets, not a raw substring) — a hand-rolled
+    // match sent "drive:f" as a literal and found nothing while the F: groups were on screen.
+    var match = window.fmatch || function (f, qq) { return !qq || f.p.toLowerCase().indexOf(qq) >= 0; };
     var out = [];
     (window.GROUPS || []).forEach(function (g) {
-      var ps = g.files.filter(function (f) { return !q || f.p.toLowerCase().indexOf(q) >= 0; }).map(function (f) { return f.p; });
+      var ps = g.files.filter(function (f) { return match(f, q); }).map(function (f) { return f.p; });
       if (ps.length >= 2) out.push(ps);
     });
     return out;
@@ -1175,7 +1204,7 @@
     if (window.toast) toast("스캔 중단됨");
   });
   window.vdf.on("scanBlocked", function (d) { _busy = false; clog(d.message, "warn"); if (window.toast) toast(d.message); if (window.go) go("sources"); });
-  window.startFullScan = function () { if (window.go) go("scan"); send("driveInfo"); };
+  window.startFullScan = function () { if (window.go) go("scan"); };   // go("scan") already pulls driveInfo
   window.doStartScan = function () {
     if (_busy) { if (window.toast) toast("작업 진행 중… 끝나면 다시"); return; }
     _lastStage = "";
@@ -1225,6 +1254,9 @@
 
   // ---- 결과 CSV 내보내기 ----
   window.exportCsv = function () {
+    // The native save dialog runs ON the message thread: opening it mid-scan queues every incoming
+    // message behind it — including 중지/일시정지, the only controls that matter during a long op.
+    if (_busy) { if (window.toast) toast("작업 진행 중… 끝나면 다시"); return; }
     var rows = [];
     (window.GROUPS || []).forEach(function (g, gi) {
       g.files.forEach(function (f) {
@@ -1256,6 +1288,7 @@
   };
   window.vdf.on("dbRows", function (d) {
     _dbState = { matched: d.matched, page: d.page };
+    _dbOff = d.offset;   // adopt the server-clamped offset, else ◀ 이전 recomputes the same page after a clamp
     _dbRows = d.rows.map(function (r) { return r.p; });
     var esc = function (s) { return s.replace(/&/g, "&amp;").replace(/</g, "&lt;"); };
     var h = '<table class="rtable"><thead><tr><th></th><th>경로</th><th>크기</th><th>길이</th><th>수정일</th><th>지문</th></tr></thead><tbody>';
@@ -1276,12 +1309,6 @@
   window.vdf.on("dbRemoved", function (d) {
     clog("DB에서 잊음 · 남은 엔트리 " + d.total.toLocaleString(), "warn");
     dbLoad();   // refresh the current page
-  });
-  window.vdf.on("dbCleanupDone", function (d) {
-    clog("DB 정리 완료 · " + d.removed.toLocaleString() + "개 제거 · " + d.total.toLocaleString() + "개 남음", "ok");
-    if (window.toast) toast("미존재 엔트리 " + d.removed.toLocaleString() + "개 제거");
-    _dbOff = 0; dbLoad();
-    send("stats");   // top-bar count changed
   });
 
   // ---- 썸네일 (lazy: extract a frame only when a card scrolls into view) ----
@@ -1346,7 +1373,13 @@
   window.__busy = function () { return _busy; };   // prototype-side bulk ops check this before touching GROUPS
 
   window.vdf.on("triage", function (d) { if (window.__mergeTriage) window.__mergeTriage(d.cut); });
-  window.addEventListener("load", function () { send("stats"); send("getRules"); send("getSources"); send("listDir", { path: "" }); send("getTriage"); });
+  window.addEventListener("load", function () {
+    // In the real app the prototype's sample rows must never be mistaken for results: CSV export,
+    // 중복 아님 and 정리 all read window.GROUPS. send() is false only in a plain browser (QA harness),
+    // where the sample data is exactly what the tests drive.
+    if (send("stats")) { window.GROUPS = []; if (window.renderGroups) renderGroups(); }
+    send("getRules"); send("getSources"); send("listDir", { path: "" }); send("getTriage");
+  });
 })();
 
 </script>

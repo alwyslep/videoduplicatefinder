@@ -18,7 +18,12 @@ namespace VDF.Photino;
 // already hits REAL files in BOTH modes (the DB paths are real) — the keeper-protection + recycle-only
 // guards are what protect files; the copy only protects the DB index from scan/compare writes.
 static class Program {
-	static readonly string CopyDbFolder = Path.Combine(Path.GetTempPath(), "vdf-devdb");
+	// The isolated copy lives under %LOCALAPPDATA% — NOT %TEMP%: Storage Sense / Disk Cleanup purge stale
+	// %TEMP% content, which would take the 700MB index AND the user's 중복 아님/검토 curation (both stored
+	// beside the active DB) with it. Migrated once from the old %TEMP% path on startup — see MigrateLegacyCopyDb.
+	static readonly string CopyDbFolder = Path.Combine(
+		Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VDF", "devdb");
+	static readonly string LegacyCopyDbFolder = Path.Combine(Path.GetTempPath(), "vdf-devdb");
 	// The DB folder VDF.Core actually reads/writes — real folder only when the opt-in is on AND it exists.
 	static string ActiveDbFolder => _cfg.realDbMode && !string.IsNullOrEmpty(_cfg.realDbFolder) && Directory.Exists(_cfg.realDbFolder)
 		? _cfg.realDbFolder : CopyDbFolder;
@@ -26,7 +31,13 @@ static class Program {
 	// RemoveFromDatabase) — VDF.Core keeps ONE static DatabaseUtils.Database, so overlapping ops
 	// on separate ScanEngine instances would race enumerate/mutate/save and tear the copy DB.
 	static readonly object _engineLock = new();
-	static HashSet<DuplicateItem> _lastDupes = new();   // last compare/scan results — source for on-demand thumbnails
+	// Last compare/scan results — source for on-demand thumbnails, reclaim keeper rebuild and keeper re-election.
+	// PUBLISH BY SWAP ONLY: readers enumerate it from the message thread (Reclaim/GetThumbs) AND from the
+	// sidecar watcher thread (ReElectKeeps). A structural mutation of the *published* set throws
+	// 'Collection was modified' in a reader — on the watcher thread that is an unhandled pool-thread
+	// exception, i.e. process death. Build a new set and assign the field instead (a single field read
+	// per reader then enumerates a set nobody mutates).
+	static volatile HashSet<DuplicateItem> _lastDupes = new();
 	// Engine of the in-flight scan/compare — Pause/Stop are called from the message thread WITHOUT _engineLock
 	// (the lock is held by the running scan task; ScanEngine.Pause/Stop are designed for cross-thread calls).
 	static volatile ScanEngine? _activeScan;
@@ -43,6 +54,7 @@ static class Program {
 		// Guarantee the isolated copy folder EXISTS: if it is missing (fresh box / %TEMP% cleaned),
 		// VDF.Core silently falls back to the exe dir for reads AND WRITES — breaking isolation. With
 		// the folder present, ResolveDatabaseFolder always returns it, so every write lands on the copy.
+		MigrateLegacyCopyDb();                      // one-time carry from the old %TEMP% location (no re-scan)
 		Directory.CreateDirectory(CopyDbFolder);   // always ensure the copy exists as the safe fallback
 
 		if (args.Length > 0 && args[0] == "selftest") { SelfTest(); return; }
@@ -50,6 +62,7 @@ static class Program {
 		if (args.Length > 1 && args[0] == "trashtest") { TrashTest(args[1]); return; }
 		if (args.Length > 1 && args[0] == "stoptest") { StopTest(args[1]); return; }
 		if (args.Length > 0 && args[0] == "blacklisttest") { BlacklistTest(); return; }
+		if (args.Length > 0 && args[0] == "renametest") { RenameTombstoneTest(); return; }
 		if (args.Length > 1 && args[0] == "recyclecheck") { Console.WriteLine($"[recyclecheck] canRecycle={CanRecycle(args[1])}  {args[1]}"); return; }
 		if (args.Length > 1 && args[0] == "thumbtest") {
 			var b = FfmpegEngine.ExtractThumbnailJpeg(args[1], TimeSpan.FromSeconds(1), 160, false);
@@ -79,6 +92,28 @@ static class Program {
 		try { win.SetMaximized(true); } catch { }
 		win.WaitForClose();
 		TryDeleteLog();   // wipe on normal exit — nothing with private paths persists after use (best-effort: a hard crash mid-session leaves it)
+	}
+
+	// One-time move of the isolated copy off %TEMP% to %LOCALAPPDATA% (see CopyDbFolder). Same-volume =
+	// instant rename that carries the existing index, so NO re-scan. Cross-volume Move throws before
+	// touching anything → fall back to copying the files (legacy left intact — the copy is the safety).
+	// Runs only until CopyDbFolder exists; idempotent thereafter. Best-effort: any failure just leaves the
+	// legacy folder in use for this run.
+	static void MigrateLegacyCopyDb() {
+		try {
+			if (Directory.Exists(CopyDbFolder)) return;         // already migrated, or a fresh install on the new path
+			if (!Directory.Exists(LegacyCopyDbFolder)) return;  // nothing to carry
+			Directory.CreateDirectory(Path.GetDirectoryName(CopyDbFolder)!);
+			Directory.Move(LegacyCopyDbFolder, CopyDbFolder);   // atomic rename on the same volume
+		}
+		catch {
+			try {   // cross-volume (or a transient lock): copy what we can, keep the legacy as-is
+				Directory.CreateDirectory(CopyDbFolder);
+				foreach (var f in Directory.EnumerateFiles(LegacyCopyDbFolder))
+					File.Copy(f, Path.Combine(CopyDbFolder, Path.GetFileName(f)), overwrite: false);
+			}
+			catch { }
+		}
 	}
 
 	// VDF.Core Logger appends full file paths to log.txt in the exe dir (unconditional AppendAllText; can't be
@@ -117,13 +152,14 @@ static class Program {
 				case "reclaim": Reclaim(win, doc.RootElement); break;   // sync: native confirm dialog on the message thread
 				case "notMatch": MarkNotMatch(win, doc.RootElement); break;   // sync: native confirm on the message thread
 				case "exportCsv": ExportCsv(win, doc.RootElement); break;     // sync: native save dialog on the message thread
-				case "dbQuery": Task.Run(() => { var el = doc.RootElement.Clone(); lock (_engineLock) DbQuery(win, el); }); break;
-				case "dbRemove": Task.Run(() => { var el = doc.RootElement.Clone(); lock (_engineLock) DbRemove(win, el); }); break;
-				case "dbCleanup": DbCleanup(win); break;   // sync confirm dialog, then locked Task.Run
+				// Clone BEFORE Task.Run: `doc` is disposed when OnMessage returns, which can happen
+				// before the pool thread runs the lambda (ObjectDisposedException → command silently dropped).
+				case "dbQuery": { var q = doc.RootElement.Clone(); Task.Run(() => { lock (_engineLock) DbQuery(win, q); }); break; }
+				case "dbRemove": { var r = doc.RootElement.Clone(); Task.Run(() => { lock (_engineLock) DbRemove(win, r); }); break; }
 				case "getTriage": ReplyTriage(win); break;
 				case "saveTriage": SaveTriage(doc.RootElement); break;
 				case "getSources": ReplySources(win); break;
-				case "listDir": Task.Run(() => ListDir(win, doc.RootElement.Clone())); break;   // read-only folder enumeration for the source tree
+				case "listDir": { var d = doc.RootElement.Clone(); Task.Run(() => ListDir(win, d)); break; }   // read-only folder enumeration for the source tree
 				case "setSources": SetSources(win, doc.RootElement); break;   // tree replaces the whole include list
 				case "addSource": AddSource(win); break;
 				case "addExclude": AddExclude(win); break;
@@ -138,7 +174,7 @@ static class Program {
 				case "compareInMpv": HandleMpvCompare(win, doc.RootElement); break;
 				case "openFile": OpenPath(win, doc.RootElement, reveal: false); break;    // 기본 플레이어로 재생
 				case "revealFile": OpenPath(win, doc.RootElement, reveal: true); break;   // 탐색기에서 표시
-				case "renameFile": Task.Run(() => { var el = doc.RootElement.Clone(); lock (_engineLock) RenameFile(win, el); }); break;   // mutates the DB entry
+				case "renameFile": { var n = doc.RootElement.Clone(); Task.Run(() => { lock (_engineLock) RenameFile(win, n); }); break; }   // mutates the DB entry
 				default: Reply(win, "error", new { message = $"unknown cmd '{cmd}'" }); break;
 			}
 		}
@@ -635,6 +671,16 @@ static class Program {
 		if (root.TryGetProperty("payload", out var p) && p.ValueKind == JsonValueKind.Object &&
 			p.TryGetProperty("key", out var k) && p.TryGetProperty("val", out var v)) {
 			string? key = k.GetString();
+			// Repointing the DB the engine reads/writes MID-SCAN is unsafe: ResetActiveDb blocks on
+			// _engineLock (held by the running scan for its whole duration) ON THE MESSAGE THREAD, so
+			// stopScan/pauseScan become undeliverable and the window wedges; and flipping _cfg first
+			// would move ActiveDbFolder under the live scan (blacklist/triage then resolve to the OTHER
+			// DB's folder). Refuse until it ends — authoritative guard; the JS _busy check is only UX.
+			if ((key == "realDbFolder" || key == "realDbMode") && _activeScan != null) {
+				Reply(win, "settingBlocked", new { message = "스캔/비교 중에는 DB 대상을 바꿀 수 없다. 끝난 뒤 다시 시도해줘." });
+				ReplySettings(win);   // snap the visual toggle/field back to the unchanged value
+				return;
+			}
 			bool dbChange = false;
 			switch (key) {
 				case "mpvGridPath": _cfg.mpvGridPath = v.GetString() ?? ""; break;
@@ -661,6 +707,9 @@ static class Program {
 	}
 
 	static void BrowseRealDb(PhotinoWindow win) {
+		// Same mid-scan wedge as SaveSetting's DB-target change (ShowOpenFolder is modal on the message
+		// thread and ResetActiveDb blocks on _engineLock) — refuse before opening the picker.
+		if (_activeScan != null) { Reply(win, "settingBlocked", new { message = "스캔/비교 중에는 DB 대상을 바꿀 수 없다. 끝난 뒤 다시 시도해줘." }); return; }
 		bool changed = false;
 		try {
 			var picked = win.ShowOpenFolder("실제 DB 폴더 선택 (ScannedFiles.db 가 있는 폴더)", null, false);
@@ -956,12 +1005,13 @@ static class Program {
 	// Lives beside the DB: each DB (copy/real) keeps its own triage.
 	static string TriageFile => Path.Combine(ActiveDbFolder, "photino-triage.json");
 
+	// ALWAYS replies — the JS gates its debounced saves on this round-trip, so a missing/corrupt file
+	// must still answer (silence would leave saving disabled for the whole session).
 	static void ReplyTriage(PhotinoWindow win) {
-		try {
-			if (File.Exists(TriageFile))
-				Reply(win, "triage", new { cut = JsonSerializer.Deserialize<Dictionary<string, bool>>(File.ReadAllText(TriageFile)) });
-		}
+		Dictionary<string, bool>? cut = null;
+		try { if (File.Exists(TriageFile)) cut = JsonSerializer.Deserialize<Dictionary<string, bool>>(File.ReadAllText(TriageFile)); }
 		catch { }   // corrupt/absent triage is not an error — it's only check state
+		Reply(win, "triage", new { cut = cut ?? new Dictionary<string, bool>() });
 	}
 
 	static void SaveTriage(JsonElement root) {
@@ -972,7 +1022,7 @@ static class Program {
 		catch { }
 	}
 
-	// ---------- DB 뷰어 (인덱스 열람 — 페이지드, 검색, 엔트리 제거, 미존재 정리) ----------
+	// ---------- DB 뷰어 (인덱스 열람 — 페이지드, 검색, 엔트리 제거) ----------
 	const int DbPageSize = 200;
 
 	static void DbQuery(PhotinoWindow win, JsonElement root) {
@@ -986,6 +1036,9 @@ static class Program {
 			IEnumerable<FileEntry> src = DatabaseUtils.Database;
 			if (q.Length > 0) src = src.Where(e => e.Path.Contains(q, StringComparison.OrdinalIgnoreCase));
 			var matched = src.OrderBy(e => e.Path, StringComparer.OrdinalIgnoreCase).ToList();
+			// Clamp to the last page: removing the tail entries (or a narrower search) would otherwise
+			// strand the viewer on an empty page past the end.
+			if (off >= matched.Count) off = Math.Max(0, (matched.Count - 1) / DbPageSize * DbPageSize);
 			var rows = matched.Skip(off).Take(DbPageSize).Select(e => new {
 				p = e.Path,
 				size = e.FileSize > 0 ? HumanBytes(e.FileSize) : "—",
@@ -1012,26 +1065,9 @@ static class Program {
 		catch (Exception ex) { Reply(win, "error", new { message = ex.Message }); }
 	}
 
-	static void DbCleanup(PhotinoWindow win) {
-		try {
-			var choice = win.ShowMessage("DB 정리",
-				"디스크에 더 이상 없는 파일의 엔트리를 인덱스에서 제거할까?\n\n지금 연결 안 된 드라이브의 파일은 건드리지 않는다. 인덱스 파일에 저장된다.",
-				PhotinoDialogButtons.YesNo, PhotinoDialogIcon.Question);
-			if (choice != PhotinoDialogResult.Yes) return;
-			Task.Run(() => {
-				try {
-					lock (_engineLock) {
-						EnsureDb();
-						int before = DatabaseUtils.Database.Count;
-						DatabaseUtils.CleanupDatabase();
-						Reply(win, "dbCleanupDone", new { removed = before - DatabaseUtils.Database.Count, total = DatabaseUtils.Database.Count });
-					}
-				}
-				catch (Exception ex) { Reply(win, "error", new { message = ex.Message }); }
-			});
-		}
-		catch (Exception ex) { Reply(win, "error", new { message = ex.Message }); }
-	}
+	// NO '미존재 정리': DatabaseUtils.CleanupDatabase is a deliberate no-op (tombstone policy — a
+	// missing file's fingerprint is kept so a re-download is caught; see TOMBSTONE-DESIGN.md), so the
+	// button could only ever promise a prune and report 0. Per-entry ✕ (dbRemove) is the real escape hatch.
 
 	// ---------- 중복 아님 (group blacklist — GUI 호환: DB 폴더의 BlacklistedGroups.json 공유) ----------
 	static string BlacklistFile => Path.Combine(ActiveDbFolder, "BlacklistedGroups.json");
@@ -1074,14 +1110,17 @@ static class Program {
 			BlacklistStore.SaveAsync(BlacklistFile, list).GetAwaiter().GetResult();
 
 			// prune the live result set so thumbs/reclaim/keeper-map agree with the UI removal —
-			// only groups FULLY covered by the payload (a shared path must not nuke an unrelated group)
+			// only groups FULLY covered by the payload (a shared path must not nuke an unrelated group).
+			// Swap in a pruned copy (see _lastDupes): RemoveWhere here would crash a concurrent
+			// ReElectKeeps on the watcher thread mid-enumeration.
 			var pset = new HashSet<string>(paths, StringComparer.OrdinalIgnoreCase);
-			var gids = _lastDupes.GroupBy(d => d.GroupId)
-								 .Where(g => g.All(i => pset.Contains(i.Path)))
-								 .Select(g => g.Key).ToList();
-			foreach (var gid in gids) {
-				_lastDupes.RemoveWhere(d => d.GroupId == gid);
-				lock (_sideLock) _keepByGroup.Remove(gid);
+			var snap = _lastDupes;
+			var gids = snap.GroupBy(d => d.GroupId)
+						   .Where(g => g.All(i => pset.Contains(i.Path)))
+						   .Select(g => g.Key).ToHashSet();
+			if (gids.Count > 0) {
+				_lastDupes = new HashSet<DuplicateItem>(snap.Where(d => !gids.Contains(d.GroupId)));
+				lock (_sideLock) foreach (var gid in gids) _keepByGroup.Remove(gid);
 			}
 			Reply(win, "notMatchDone", new { paths });
 		}
@@ -1286,6 +1325,28 @@ static class Program {
 			File.Delete(BlacklistFile);
 			if (File.Exists(bak)) File.Move(bak, BlacklistFile);
 		}
+	}
+
+	// Headless check for the tombstone-collision rename fix (DatabaseUtils.UpdateFilePath): renaming a
+	// real entry onto a path a DEAD entry already occupies must evict the dead one and keep the real
+	// fingerprints — not silently no-op and leave the moved file wearing foreign fingerprints. Operates
+	// on synthetic in-memory entries; never saves.
+	static void RenameTombstoneTest() {
+		var db = DatabaseUtils.Database;
+		string oldP = @"Z:\vdftest\real (1).mkv", newP = @"Z:\vdftest\real.mkv";
+		// Synthetic entries only — the FileEntry(string) ctor stats the file, so build via the disk-free
+		// Path setter (these paths don't exist).
+		db.Remove(new FileEntry { Path = oldP }); db.Remove(new FileEntry { Path = newP });   // clean slate
+		var real = new FileEntry { Path = oldP }; real.grayBytes[0.0] = new byte[] { 1, 2, 3 };   // the entry with the good fingerprint
+		var tomb = new FileEntry { Path = newP };                                                 // a dead tombstone squatting on the target name
+		db.Add(real); db.Add(tomb);
+		ScanEngine.UpdateFilePathInDatabase(newP, real);
+		bool hasNew = db.TryGetValue(new FileEntry { Path = newP }, out var at);
+		bool isReal = hasNew && ReferenceEquals(at, real) && at!.grayBytes.Count == 1;
+		bool oldGone = !db.Contains(new FileEntry { Path = oldP });
+		Console.WriteLine($"[renametest] newExists={hasNew} keepsRealFingerprint={isReal} oldGone={oldGone} => "
+			+ (hasNew && isReal && oldGone ? "PASS" : "FAIL"));
+		db.Remove(new FileEntry { Path = newP }); db.Remove(new FileEntry { Path = oldP });   // don't leave synthetic entries behind
 	}
 
 	static void Reply(PhotinoWindow win, string cmd, object data) =>

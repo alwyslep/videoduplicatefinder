@@ -274,6 +274,14 @@ namespace VDF.Core.Utils {
 		internal static void UpdateFilePath(string newPath, FileEntry dbEntry) {
 			Database.Remove(dbEntry);
 			dbEntry.Path = newPath;
+			// A rename/move can land on a path some OTHER entry already occupies — typically a tombstone
+			// (a deleted file's fingerprint kept on purpose). Database is a HashSet<FileEntry> keyed on
+			// Path, so Add() would silently no-op and leave that stale entry's FOREIGN fingerprints
+			// attached to the moved file — a wrong duplicate verdict on a file the user may later delete.
+			// Evict the occupant first (dbEntry is already out, so this only removes the intruder).
+			// Key only on Path via the setter — the FileEntry(string) ctor stats FileSize and would
+			// throw if the just-moved file were gone (TOCTOU); Remove needs nothing but the Path.
+			Database.Remove(new FileEntry { Path = newPath });
 			Database.Add(dbEntry);
 		}
 		// Typed JsonTypeInfo overloads only: the generic overloads carry
