@@ -49,8 +49,15 @@ static class Program {
 	const string U_MINUS = "−";   // − : the mock's metric-delta minus (JS colors on this char)
 	const int MaxGroupsShown = 150;    // cap cards sent to the webview; report the true total
 
+	// WinExe has no console — CLI test modes (selftest/scantest/…) attach the invoking terminal's
+	// console so their Console.WriteLine output still lands there. No-op when launched from Explorer.
+	[System.Runtime.InteropServices.DllImport("kernel32.dll")]
+	static extern bool AttachConsole(int dwProcessId);
+	const int ATTACH_PARENT_PROCESS = -1;
+
 	[STAThread]
 	static void Main(string[] args) {
+		if (args.Length > 0) AttachConsole(ATTACH_PARENT_PROCESS);
 		// Guarantee the isolated copy folder EXISTS: if it is missing (fresh box / %TEMP% cleaned),
 		// VDF.Core silently falls back to the exe dir for reads AND WRITES — breaking isolation. With
 		// the folder present, ResolveDatabaseFolder always returns it, so every write lands on the copy.
@@ -80,6 +87,7 @@ static class Program {
 		string index = Path.Combine(AppContext.BaseDirectory, "wwwroot", "index.html");
 		var win = new PhotinoWindow()
 			.SetTitle("VDF — Deep Space")
+			.SetIconFile(Path.Combine(AppContext.BaseDirectory, "app.ico"))
 			.SetUseOsDefaultSize(false)
 			.SetSize(1440, 920)   // the restore-down size
 			.Center()
@@ -87,9 +95,9 @@ static class Program {
 			.SetDevToolsEnabled(true)
 			.RegisterWebMessageReceivedHandler(OnMessage)
 			.Load(index);
-		// Open maximized — a data-dense app wants the space, and it sidesteps the DPI-scale SetSize
-		// ambiguity (fills the work area regardless of monitor scaling).
-		try { win.SetMaximized(true); } catch { }
+		// Opens at the 1440×920 centered size set above — the user prefers a normal window over
+		// maximized. The old intermittent 960×613 DPI-scale sizing bug is fixed by app.manifest
+		// (PerMonitorV2), so SetSize is reliable without maximizing.
 		win.WaitForClose();
 		TryDeleteLog();   // wipe on normal exit — nothing with private paths persists after use (best-effort: a hard crash mid-session leaves it)
 	}
