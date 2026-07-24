@@ -559,6 +559,12 @@ namespace VDF.Core {
 		public static bool FFmpegExists => !string.IsNullOrEmpty(FfmpegEngine.FFmpegPath);
 		public static bool FFprobeExists => !string.IsNullOrEmpty(FFProbeEngine.FFprobePath);
 		public static bool NativeFFmpegExists => FFTools.FFmpegNative.FFmpegHelper.DoFFmpegLibraryFilesExist;
+		/// <summary>
+		/// The FFmpeg shared-library filenames the bundled AutoGen binding expects (avcodec-62.dll, …).
+		/// Hosts pre-flighting a scan use it to name the missing files instead of a bare "not found" —
+		/// and it tracks the binding, so an AutoGen upgrade cannot leave a stale list in a UI message.
+		/// </summary>
+		public static string[] NativeFFmpegLibraryNames => FFTools.FFmpegNative.FFmpegHelper.GenerateLibraryFileNames();
 
 		/// <param name="searchAndCompare">
 		/// When true (GUI/Web default) the search chains straight into <see cref="StartCompare"/>.
@@ -568,6 +574,21 @@ namespace VDF.Core {
 		/// file (#803).
 		/// </param>
 		public async void StartSearch(bool searchAndCompare = true) {
+			// async void: an exception escaping here resurfaces on the thread pool as an UNHANDLED
+			// exception and TAKES THE PROCESS DOWN. PrepareSearch throws synchronously (the FFmpeg /
+			// FFprobe / native-library checks), so a host missing the FFmpeg shared libraries died the
+			// instant a scan started — with no console (WinExe: VDF.Photino) the window just vanished
+			// (2026-07-25). Fail as an abort instead — the same contract RunCompare already uses — so
+			// every subscriber (GUI, Web, CLI, Photino) restores its state and reports the reason.
+			try { await RunSearch(searchAndCompare); }
+			catch (Exception e) {
+				Logger.Instance.Info($"Scan aborted: {e.Message}");
+				isScanning = false;
+				ScanAborted?.Invoke(this, new EventArgs());
+			}
+		}
+
+		async Task RunSearch(bool searchAndCompare) {
 			PrepareSearch();
 			SearchTimer.Start();
 			ElapsedTimer.Start();
@@ -611,6 +632,18 @@ namespace VDF.Core {
 		/// running both phases in one go — so ①→②→③→④ reproduces a full scan.
 		/// </summary>
 		public async void StartStage(ScanStage stage) {
+			// async void — same hazard as StartSearch: the search-side stages call PrepareSearch, which
+			// throws synchronously when FFmpeg/FFprobe/the native libraries are missing. End the stage
+			// as an abort rather than letting the throw reach the thread pool and kill the process.
+			try { await RunStage(stage); }
+			catch (Exception e) {
+				Logger.Instance.Info($"Stage aborted: {e.Message}");
+				isScanning = false;
+				ScanAborted?.Invoke(this, new EventArgs());
+			}
+		}
+
+		async Task RunStage(ScanStage stage) {
 			switch (stage) {
 				case ScanStage.BuildFileList:
 					PrepareSearch();

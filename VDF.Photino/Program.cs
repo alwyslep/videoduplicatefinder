@@ -58,13 +58,18 @@ static class Program {
 
 	[STAThread]
 	static void Main(string[] args) {
-		if (args.Length > 0) AttachConsole(ATTACH_PARENT_PROCESS);
+		_cliMode = args.Length > 0;
+		if (_cliMode) AttachConsole(ATTACH_PARENT_PROCESS);
+		InstallCrashNet();          // 조용히 사라지는 죽음 금지 — 이유를 남기고 알린다
+		EnsureNativeFFmpegOnPath();   // 어느 출력 폴더에서 실행해도 FFmpeg 공유 라이브러리를 찾게 한다
 		// Guarantee the isolated copy folder EXISTS: if it is missing (fresh box / %TEMP% cleaned),
 		// VDF.Core silently falls back to the exe dir for reads AND WRITES — breaking isolation. With
 		// the folder present, ResolveDatabaseFolder always returns it, so every write lands on the copy.
 		MigrateLegacyCopyDb();                      // one-time carry from the old %TEMP% location (no re-scan)
 		Directory.CreateDirectory(CopyDbFolder);   // always ensure the copy exists as the safe fallback
 
+		if (args.Length > 0 && args[0] == "ffcheck") { FFCheck(); return; }        // 스캔 전 FFmpeg 준비 상태 진단
+		if (args.Length > 0 && args[0] == "crashtest") { CrashTest(); return; }   // 크래시 기록 경로 검증
 		if (args.Length > 0 && args[0] == "selftest") { SelfTest(); return; }
 		if (args.Length > 1 && args[0] == "scantest") { ScanTest(args[1]); return; }
 		if (args.Length > 1 && args[0] == "trashtest") { TrashTest(args[1]); return; }
@@ -123,6 +128,120 @@ static class Program {
 			}
 			catch { }
 		}
+	}
+
+	// ---------- 조용한 죽음 방지 (WinExe 는 콘솔이 없다) ----------
+	// 백그라운드/풀 스레드의 미처리 예외는 창을 아무 말 없이 사라지게 만든다 — 실제로 그렇게 죽었다
+	// (2026-07-25: FFmpeg 공유 라이브러리 부재 → async void StartSearch 의 동기 throw → 풀 스레드 미처리).
+	// .NET 에선 종료 자체를 막을 수 없지만, 이유를 남기고 알릴 수는 있다: 앱 폴더 밖(log.txt 는 종료 시
+	// 삭제된다)에 누적 기록 + 네이티브 MessageBox. 웹뷰를 거치지 않는다 — 죽어가는 프로세스에서 브리지를
+	// 부르면 그대로 멈춰 서서 아무것도 못 남긴다.
+	static readonly string CrashLogPath = Path.Combine(
+		Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VDF", "crash.log");
+
+	[System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+	static extern int MessageBoxW(IntPtr hWnd, string text, string caption, uint type);
+	const uint MB_ICONERROR = 0x10;
+
+	// CLI 테스트 모드(콘솔 연결됨)에서는 모달 대화상자를 띄우지 않는다 — 자동화에서 아무도 닫을 수
+	// 없는 창이 떠서 그대로 매달린다. 콘솔에 찍는 편이 그 자리에서 더 유용하다.
+	static bool _cliMode;
+
+	static void InstallCrashNet() {
+		AppDomain.CurrentDomain.UnhandledException += (_, e) => ReportCrash("UnhandledException", e.ExceptionObject as Exception, fatal: true);
+		// 아무도 await 하지 않은 실패 Task: .NET Core 에선 프로세스를 죽이지 않지만 "엔진 작업이 조용히
+		// 죽었다"는 신호다 — 기록해서 '스캔이 반응 없이 멈췄다'를 나중에 진단할 수 있게 한다.
+		TaskScheduler.UnobservedTaskException += (_, e) => { ReportCrash("UnobservedTaskException", e.Exception, fatal: false); e.SetObserved(); };
+	}
+
+	static void ReportCrash(string kind, Exception? ex, bool fatal) {
+		try {
+			Directory.CreateDirectory(Path.GetDirectoryName(CrashLogPath)!);
+			File.AppendAllText(CrashLogPath,
+				$"{DateTime.Now:yyyy-MM-dd HH:mm:ss} [{kind}] {ex}{Environment.NewLine}{new string('-', 70)}{Environment.NewLine}");
+		}
+		catch { }
+		if (_cliMode) { try { Console.Error.WriteLine($"[crash] {kind}: {ex?.GetType().Name}: {ex?.Message} (기록: {CrashLogPath})"); } catch { } return; }
+		if (!fatal) return;
+		try {
+			MessageBoxW(IntPtr.Zero,
+				$"VDF가 예기치 않게 종료된다.\n\n{ex?.GetType().Name}: {ex?.Message}\n\n기록: {CrashLogPath}",
+				"VDF — 치명적 오류", MB_ICONERROR);
+		}
+		catch { }
+	}
+
+	// ---------- FFmpeg 공유 라이브러리 위치 확보 ----------
+	// VDF.Core 는 ffmpeg.exe 옆 · 자기 자신(출력 폴더) 옆 · PATH 에서 avcodec-62.dll 등을 찾는다. 이 PC 의
+	// ffmpeg.exe 는 WinGet 심링크라 옆에 DLL 이 없고, DLL(~250MB)은 평면 설치 폴더에만 있다 — 그래서
+	// bin\Debug\… 에서 실행하면 라이브러리를 못 찾고 스캔 첫 호출에서 죽었다. 전체 세트를 가진 폴더를
+	// 찾아 프로세스 PATH 앞에 붙인다: Core 가 이미 하는 PATH 탐색이 성공하므로 어느 출력 폴더에서도
+	// 동작하고, 빌드마다 250MB 를 복사하지 않는다.
+	static void EnsureNativeFFmpegOnPath() {
+		try {
+			string[] want = ScanEngine.NativeFFmpegLibraryNames;
+			if (want.Length == 0) return;
+			bool Has(string dir) => dir.Length > 0 && Directory.Exists(dir) && want.All(f => File.Exists(Path.Combine(dir, f)));
+			static void Prepend(string dir) =>
+				Environment.SetEnvironmentVariable("PATH", dir + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH"));
+
+			string baseDir = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
+			if (Has(baseDir)) return;                                    // 설치 레이아웃: DLL 이 exe 옆에 있다 (Core 가 그대로 찾는다)
+			if (Has(_cfg.ffmpegLibFolder)) { Prepend(_cfg.ffmpegLibFolder); return; }   // 지난번에 찾아 기억해둔 폴더
+
+			// 출력 폴더에서 위로 올라가며 흔한 위치를 시도한다 — 개발 트리는 DLL 을 bin\Debug\… 보다
+			// 여러 단계 위의 설치/배포 폴더(…\dedup\VDF_Photino)에 두고 있다.
+			var dir = new DirectoryInfo(baseDir);
+			for (int up = 0; up < 7 && dir != null; up++, dir = dir.Parent) {
+				foreach (var name in new[] { "", "bin", "lib", "ffmpeg", "VDF_Photino", "vdf-deploy" }) {
+					string cand = name.Length == 0 ? dir.FullName : Path.Combine(dir.FullName, name);
+					if (!Has(cand)) continue;
+					Prepend(cand);
+					if (!string.Equals(_cfg.ffmpegLibFolder, cand, StringComparison.OrdinalIgnoreCase)) {
+						_cfg.ffmpegLibFolder = cand; SaveCfg();   // 다음 실행부터는 탐색 없이 바로
+					}
+					return;
+				}
+			}
+		}
+		catch { }   // 최선 노력: 못 찾으면 StartScan 의 사전 점검이 "무엇을 어디에 두라"고 알려준다
+	}
+
+	// FFmpeg 준비 상태 진단 (`VDF.Photino.exe ffcheck`). "스캔 시작하면 죽는다/막힌다"의 원인은 대개
+	// 여기다 — 어떤 파일이 어디서 발견됐는지(또는 안 됐는지)를 한 화면에 보여준다. EnsureNativeFFmpegOnPath
+	// 가 이미 돌아간 뒤이므로 자동 탐색이 반영된 "실제 스캔이 보게 될" 상태다.
+	static void FFCheck() {
+		Console.WriteLine($"[ffcheck] exe 폴더        : {AppContext.BaseDirectory}");
+		Console.WriteLine($"[ffcheck] ffmpeg          : {FFToolsUtils.GetPath(FFToolsUtils.FFTool.FFmpeg) ?? "(없음)"}");
+		Console.WriteLine($"[ffcheck] ffprobe         : {FFToolsUtils.GetPath(FFToolsUtils.FFTool.FFProbe) ?? "(없음)"}");
+		Console.WriteLine($"[ffcheck] 네이티브 바인딩 : {(_cfg.useNativeFfmpegBinding ? "켜짐 (공유 라이브러리 필요)" : "꺼짐 (ffmpeg.exe 프로세스 모드)")}");
+		Console.WriteLine($"[ffcheck] 라이브러리 폴더 : {(string.IsNullOrEmpty(_cfg.ffmpegLibFolder) ? "(미설정 — exe 폴더·PATH 에서 탐색)" : _cfg.ffmpegLibFolder)}");
+		var dirs = ProbeDirs().ToList();
+		foreach (var n in ScanEngine.NativeFFmpegLibraryNames) {
+			string where = "*** 못 찾음 ***";
+			foreach (var d in dirs) {
+				try { if (File.Exists(Path.Combine(d, n))) { where = d; break; } } catch { }
+			}
+			Console.WriteLine($"[ffcheck]   {n,-18} {where}");
+		}
+		Console.WriteLine($"[ffcheck] 결과: 네이티브 라이브러리 {(ScanEngine.NativeFFmpegExists ? "사용 가능 — 스캔 가능" : "사용 불가 — 스캔은 차단된다 (예전엔 이 지점에서 프로세스가 죽었다)")}");
+	}
+
+	// VDF.Core 가 공유 라이브러리를 찾는 순서와 같은 후보 폴더들 (진단 표시용).
+	static IEnumerable<string> ProbeDirs() {
+		yield return AppContext.BaseDirectory;
+		if (!string.IsNullOrEmpty(_cfg.ffmpegLibFolder)) yield return _cfg.ffmpegLibFolder;
+		if (FFToolsUtils.GetPath(FFToolsUtils.FFTool.FFmpeg) is { } fp && Path.GetDirectoryName(fp) is { Length: > 0 } fd) yield return fd;
+		foreach (var p in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator))
+			if (p.Length > 0) yield return p;
+	}
+
+	// 크래시 그물 검증 (`VDF.Photino.exe crashtest`): 포그라운드 스레드에서 미처리 예외를 일으켜
+	// crash.log 기록 경로가 살아있는지 확인한다. 런타임이 프로세스를 종료하므로 종료 코드는 0이 아니다.
+	static void CrashTest() {
+		Console.WriteLine($"[crashtest] 기록 위치: {CrashLogPath}");
+		new Thread(() => throw new InvalidOperationException("crashtest: 의도적인 미처리 예외")).Start();
+		Thread.Sleep(5000);   // 핸들러가 기록할 시간 (그 전에 런타임이 종료시킨다)
 	}
 
 	// VDF.Core Logger appends full file paths to log.txt in the exe dir (unconditional AppendAllText; can't be
@@ -312,6 +431,17 @@ static class Program {
 			// event never fires and the wait below would hang. Pre-check the tools and refuse cleanly instead.
 			if (FFToolsUtils.GetPath(FFToolsUtils.FFTool.FFProbe) is null || FFToolsUtils.GetPath(FFToolsUtils.FFTool.FFmpeg) is null) {
 				Reply(win, "scanBlocked", new { message = "ffmpeg/ffprobe를 찾을 수 없다 — 스캔에 필요하다. PATH에 두거나 exe 옆 bin/ 폴더에 넣어줘." });
+				return;
+			}
+			// PrepareSearch 는 네이티브 바인딩이 켜져 있으면 FFmpeg 공유 라이브러리도 요구한다 — 위의 exe
+			// 검사는 그걸 못 잡는다(ffmpeg.exe 는 PATH 에 있어도 DLL 은 따로다). 그 throw 는 async void
+			// StartSearch 안에서 나므로 예전엔 스캔 시작 즉시 프로세스가 죽었다. 여기서 미리 막고 알린다.
+			if (_cfg.useNativeFfmpegBinding && !ScanEngine.NativeFFmpegExists) {
+				Reply(win, "scanBlocked", new {
+					message = "FFmpeg 네이티브 라이브러리를 찾을 수 없다 — 스캔에 필요하다. 필요 파일: " +
+						string.Join(", ", ScanEngine.NativeFFmpegLibraryNames) +
+						$" → exe 폴더({AppContext.BaseDirectory})에 두거나, 환경설정에서 '네이티브 FFmpeg 바인딩'을 끄면 ffmpeg.exe(프로세스 모드)로 스캔한다."
+				});
 				return;
 			}
 			EnsureDb();
@@ -520,6 +650,9 @@ static class Program {
 		public string hardwareAccelerationMode { get; set; } = "none";
 		public bool useNativeFfmpegBinding { get; set; }
 		public int parallelAudioDecodeThreads { get; set; }
+		// FFmpeg 공유 라이브러리(avcodec-62.dll 등) 폴더. 비우면 EnsureNativeFFmpegOnPath 가 찾아 채운다 —
+		// 개발 빌드 폴더와 설치 폴더가 갈릴 때 DLL 250MB 를 복사하지 않기 위한 것.
+		public string ffmpegLibFolder { get; set; } = "";
 		// 썸네일
 		public int thumbnailCount { get; set; } = 1;
 		public int thumbnailMaxWidth { get; set; } = 100;
