@@ -873,21 +873,24 @@ namespace VDF.Core {
 			// we compute the new file's oshash only when a same-size analysed entry exists (zero reads
 			// on a fresh scan, where the DB is empty).
 			var relinkBySize = new Dictionary<long, List<FileEntry>>();
-			foreach (var e in DatabaseUtils.Database)
+			// [mdat-hash Stage 2] Container-invariant relink index. When a metadata re-embed changes an
+			// MP4's whole-file oshash AND its size (so the size+oshash relink misses on both key parts),
+			// the mdat-hash is unchanged — so a renamed+re-embedded file still matches its pre-embed entry
+			// here and reuses its (still-valid, stream-based) analysis instead of re-decoding. MP4-only.
+			var relinkByMdat = new Dictionary<string, List<FileEntry>>(StringComparer.Ordinal);
+			foreach (var e in DatabaseUtils.Database) {
 				if (e.OsHash != null) {
 					if (!relinkBySize.TryGetValue(e.FileSize, out var lst))
 						relinkBySize[e.FileSize] = lst = new List<FileEntry>();
 					lst.Add(e);
 				}
-			int relinkedCount = 0;
-			// [REDECODE-MEASURE] Measurement-only counters (no behavior change). They quantify how much
-			// re-decoding is triggered by a same-path content change — the ONLY population an embed-stable
-			// content hash (mdat-relative) could ever spare. size-changed = the :915 branch (metadata embed
-			// grows the file); the mp4-grow subset (small positive delta on an MP4-family container) is the
-			// likely-embed slice specifically. oshash-mismatch = the same-size :928 branch. Detail logging
-			// is capped so a large legitimate rescan can't spam the log; the counters still count all.
-			int redecodeSizeChanged = 0, redecodeSizeChangedMp4Grow = 0, redecodeOsHashMismatch = 0, redecodeDetailLogged = 0;
-			const int RedecodeDetailCap = 500;
+				if (e.MdatHash != null) {
+					if (!relinkByMdat.TryGetValue(e.MdatHash, out var lst2))
+						relinkByMdat[e.MdatHash] = lst2 = new List<FileEntry>();
+					lst2.Add(e);
+				}
+			}
+			int relinkedCount = 0, mdatReusedCount = 0;
 
 			foreach (string path in Settings.IncludeList) {
 				if (cancellationToken.IsCancellationRequested)
@@ -913,30 +916,35 @@ namespace VDF.Core {
 						continue;
 					}
 					if (!DatabaseUtils.Database.TryGetValue(fEntry, out var dbEntry)) {
-						// Path not in the DB: either a genuinely new file or one moved/renamed from a
-						// path that's now gone. Relink the latter so its analysis survives the move.
-						if (TryRelinkMovedFile(fEntry, relinkBySize))
+						// Path not in the DB: a genuinely new file, or one moved/renamed from a now-gone path.
+						// Try mdat-hash first (relinks a renamed file even if it was ALSO re-embedded, which
+						// breaks size+oshash), then the size+oshash relink (a plain move with unchanged bytes).
+						if (TryRelinkByMdatHash(fEntry, relinkByMdat)) { relinkedCount++; mdatReusedCount++; }
+						else if (TryRelinkMovedFile(fEntry, relinkBySize))
 							relinkedCount++;
 						else
 							DatabaseUtils.Database.Add(fEntry);
 					}
 					else if (fEntry.FileSize != dbEntry.FileSize) {
-						// Size changed -> content genuinely changed: drop stale analysis and re-decode.
-						// [REDECODE-MEASURE] Classify the potential embed-induced re-decode. fast_embed
-						// appends a small moov (cover+meta) at EOF, growing an MP4 by a few KiB..MiB while
-						// mdat stays byte-identical -> a small positive delta on an MP4-family container is
-						// the likely-embed signature. Genuine re-encodes/re-downloads change mdat massively
-						// (large or negative delta). Measurement only; the re-decode still happens.
-						redecodeSizeChanged++;
-						long delta = fEntry.FileSize - dbEntry.FileSize;
-						bool mp4Grow = delta > 0 && delta < (64L << 20) && IsMp4Family(fEntry.Path);
-						if (mp4Grow) redecodeSizeChangedMp4Grow++;
-						if (redecodeDetailLogged < RedecodeDetailCap) {
-							redecodeDetailLogged++;
-							Logger.Instance.Info($"[REDECODE-MEASURE] size-changed{(mp4Grow ? " mp4-grow(likely-embed)" : string.Empty)} delta={delta:N0} old={dbEntry.FileSize:N0} new={fEntry.FileSize:N0} '{fEntry.Path}'");
+						// Size changed at the same path. Before discarding analysis, check whether ONLY the
+						// container changed: a metadata re-embed grows the file but leaves the mdat payload
+						// byte-identical, so the frame/audio fingerprints stay valid. If the mdat-hash matches,
+						// keep the analysis and just refresh identity — no re-decode. [mdat-hash Stage 3]
+						string? md = IsMp4Family(fEntry.Path) ? MdatHashUtils.TryCompute(fEntry.Path) : null;
+						if (md != null && dbEntry.MdatHash != null && md == dbEntry.MdatHash) {
+							dbEntry.FileSize = fEntry.FileSize;
+							dbEntry.DateCreated = fEntry.DateCreated;
+							dbEntry.DateModified = fEntry.DateModified;
+							dbEntry.OsHash = OsHashUtils.TryCompute(fEntry.Path);   // whole-file hash moved with the container
+							dbEntry.MdatHash = md;
+							mdatReusedCount++;
 						}
-						DatabaseUtils.Database.Remove(dbEntry);
-						DatabaseUtils.Database.Add(fEntry);
+						else {
+							// Genuine content change (or non-MP4 / unparseable / no cached mdat-hash yet):
+							// drop stale analysis and re-decode.
+							DatabaseUtils.Database.Remove(dbEntry);
+							DatabaseUtils.Database.Add(fEntry);
+						}
 					}
 					else if (fEntry.DateCreated != dbEntry.DateCreated ||
 							fEntry.DateModified != dbEntry.DateModified) {
@@ -945,17 +953,21 @@ namespace VDF.Core {
 						// content swap. Verify with the oshash before discarding phash/mediaInfo.
 						string? os = OsHashUtils.TryCompute(fEntry.Path);
 						if (os != null && dbEntry.OsHash != null && os != dbEntry.OsHash) {
-							// Fingerprint differs -> different content at the same path -> re-analyze.
-							// [REDECODE-MEASURE] Same-size, different-oshash re-decode (rare same-size swap or
-							// a container-only rewrite that also moved the tail). Not the embed signature, but
-							// counted so the total re-analyze churn is visible. Measurement only.
-							redecodeOsHashMismatch++;
-							if (redecodeDetailLogged < RedecodeDetailCap) {
-								redecodeDetailLogged++;
-								Logger.Instance.Info($"[REDECODE-MEASURE] oshash-mismatch same-size old={dbEntry.OsHash} new={os} '{fEntry.Path}'");
+							// Same size, different whole-file oshash: a container rewrite (faststart) or a rare
+							// same-size content swap. If the mdat payload is unchanged it's just a container move
+							// -> keep analysis; else re-analyze. [mdat-hash Stage 3]
+							string? md2 = IsMp4Family(fEntry.Path) ? MdatHashUtils.TryCompute(fEntry.Path) : null;
+							if (md2 != null && dbEntry.MdatHash != null && md2 == dbEntry.MdatHash) {
+								dbEntry.DateCreated = fEntry.DateCreated;
+								dbEntry.DateModified = fEntry.DateModified;
+								dbEntry.OsHash = os;
+								dbEntry.MdatHash = md2;
+								mdatReusedCount++;
 							}
-							DatabaseUtils.Database.Remove(dbEntry);
-							DatabaseUtils.Database.Add(fEntry);
+							else {
+								DatabaseUtils.Database.Remove(dbEntry);
+								DatabaseUtils.Database.Add(fEntry);
+							}
 						}
 						else {
 							// Same (or unverifiable) fingerprint: same file, just re-dated. Keep the
@@ -974,14 +986,12 @@ namespace VDF.Core {
 			Logger.Instance.Info($"Files in database: {DatabaseUtils.Database.Count:N0} ({DatabaseUtils.Database.Count - oldFileCount:N0} files added)");
 			if (relinkedCount > 0)
 				Logger.Instance.Info($"Detected {relinkedCount:N0} moved/renamed file(s) — reused existing analysis (no re-decode)");
-			// [REDECODE-MEASURE] Per-scan verdict: how many re-analyses a same-path content change forced.
-			// mp4-grow(likely-embed) is the ONLY slice an embed-stable mdat-hash could have spared; if it is
-			// ~0 across normal scans, proposal #2 (mdat-relative hash) buys nothing and should not be built.
-			Logger.Instance.Info($"[REDECODE-MEASURE] re-analyze triggers this scan: size-changed={redecodeSizeChanged:N0} (mp4-grow/likely-embed={redecodeSizeChangedMp4Grow:N0}), oshash-mismatch={redecodeOsHashMismatch:N0}. An embed-stable mdat-hash could have spared at most the mp4-grow subset.");
+			if (mdatReusedCount > 0)
+				Logger.Instance.Info($"mdat-hash: kept analysis for {mdatReusedCount:N0} re-embedded / container-changed file(s) whose media streams were unchanged (no re-decode)");
 		});
 
-		// [REDECODE-MEASURE] MP4-family containers (mp4/m4v/mov) are the ones fast_embed grows in place by
-		// appending a trailing moov; only these can produce the "likely-embed" size-grow signature above.
+		// MP4-family containers (mp4/m4v/mov) — the ones whose mdat-hash is computable and whose metadata
+		// re-embeds change the whole-file oshash. Gates the mdat-hash relink, same-path guard, and backfill.
 		static bool IsMp4Family(string path) {
 			string e = System.IO.Path.GetExtension(path);
 			return e.Equals(".mp4", StringComparison.OrdinalIgnoreCase)
@@ -1030,6 +1040,42 @@ namespace VDF.Core {
 			match.FileSize = fEntry.FileSize;
 			DatabaseUtils.Database.Add(match);
 			Logger.Instance.Info($"Moved file relinked (analysis reused): '{oldPath}' -> '{match.Path}'");
+			return true;
+		}
+
+		// mdat-hash relink: like TryRelinkMovedFile but keyed on the CONTAINER-INVARIANT mdat-hash, so it
+		// relinks a renamed MP4 even when it was ALSO re-embedded (a metadata change that moved size+oshash).
+		// The media streams are unchanged, so the cached frame/audio analysis is still valid. MP4-only;
+		// returns false (caller then tries the size+oshash relink) for non-MP4, unparseable, no gone
+		// candidate, or >1 candidate sharing the mdat-hash (ambiguous -> never guess). [mdat-hash Stage 2]
+		bool TryRelinkByMdatHash(FileEntry fEntry, Dictionary<string, List<FileEntry>> relinkByMdat) {
+			if (!IsMp4Family(fEntry.Path))
+				return false;
+			string? mdat = MdatHashUtils.TryCompute(fEntry.Path);
+			if (mdat == null || !relinkByMdat.TryGetValue(mdat, out var candidates))
+				return false;
+			FileEntry? match = null;
+			foreach (var c in candidates) {
+				if (File.Exists(c.Path))
+					continue;                 // still-present path = a copy, not a move
+				if (match != null)
+					return false;             // >1 gone candidate with this mdat-hash -> ambiguous
+				match = c;
+			}
+			if (match == null)
+				return false;
+			// Re-key to the new path. The container changed, so refresh the whole-file oshash (else a later
+			// scan sees a stale oshash and re-decodes); the analysis and mdat-hash ride along unchanged.
+			string oldPath = match.Path;
+			DatabaseUtils.Database.Remove(match);
+			match.Path = fEntry.Path;
+			match.DateCreated = fEntry.DateCreated;
+			match.DateModified = fEntry.DateModified;
+			match.FileSize = fEntry.FileSize;
+			match.OsHash = OsHashUtils.TryCompute(fEntry.Path);
+			match.MdatHash = mdat;
+			DatabaseUtils.Database.Add(match);
+			Logger.Instance.Info($"Re-embedded+moved file relinked via mdat-hash (analysis reused): '{oldPath}' -> '{match.Path}'");
 			return true;
 		}
 
