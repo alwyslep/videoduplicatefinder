@@ -1522,6 +1522,12 @@ namespace VDF.Core {
 						// (which compares every historical entry) never spins up out-of-scope drives for a read.
 						if (entry.OsHash == null && IsInIncludeScope(entry))
 							entry.OsHash = OsHashUtils.TryCompute(entry.Path);
+						// [mdat-hash Stage 1] Container-invariant content key for MP4-family files, backfilled
+						// alongside oshash. Stable across a metadata/moov edit, so a later scan can relink a
+						// re-tagged/re-embedded file and reuse its analysis (Stage 2). MP4-only — the gate
+						// avoids a wasted box-walk on non-MP4 every scan. See MDAT-HASH-DESIGN.md.
+						if (entry.MdatHash == null && IsInIncludeScope(entry) && IsMp4Family(entry.Path))
+							entry.MdatHash = MdatHashUtils.TryCompute(entry.Path);
 
 						if (Settings.IncludeNonExistingFiles && entry.grayBytes?.Count > 0) {
 							bool hasAllInformation = entry.IsImage;

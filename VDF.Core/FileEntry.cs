@@ -107,6 +107,17 @@ namespace VDF.Core {
 		[MemoryPackOrder(12)]
 		public byte AudioFingerprintFailCount;
 
+		/// <summary>
+		/// Container-invariant content fingerprint for MP4-family files (hash of the mdat payload, see
+		/// <see cref="Utils.MdatHashUtils"/>). Unlike <see cref="OsHash"/> (whole-file), this is stable
+		/// across a metadata/moov edit — a tag write, cover embed, or faststart relocation that leaves the
+		/// media streams untouched — so a rescan can relink such a file and reuse its analysis instead of
+		/// re-decoding. <c>null</c> = not yet computed, or the file is non-MP4 / unparseable (caller falls
+		/// back to <see cref="OsHash"/>). See MDAT-HASH-DESIGN.md.
+		/// </summary>
+		[MemoryPackOrder(13)]
+		public string? MdatHash;
+
 		[MemoryPackIgnore]
 		internal bool invalid = true;
 
