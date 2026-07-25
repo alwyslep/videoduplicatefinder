@@ -766,6 +766,7 @@ namespace VDF.Core {
 			FfmpegEngine.CustomFFArguments = Settings.CustomFFArguments;
 			FfmpegEngine.UseNativeBinding = Settings.UseNativeFfmpegBinding;
 			FFTools.FFmpegNative.ParallelAudioFingerprinter.MaxDecodeThreads = Settings.ParallelAudioDecodeThreads;
+			FFTools.FFmpegNative.ParallelAudioFingerprinter.ReadersPerDrive = Settings.AudioReadersPerDrive;
 			DatabaseUtils.CustomDatabaseFolder = Settings.CustomDatabaseFolder;
 			DatabaseUtils.InvalidateDatabaseFolder();
 			Duplicates.Clear();
@@ -1377,7 +1378,8 @@ namespace VDF.Core {
 			// Explicit (seeded/saved) cap: launch at exactly that many workers. Auto only: warm up at
 			// min(fair share, 4) and let AIMD climb — the 4 is a cold-start heuristic, not a cap.
 			bool hasExplicitCap = driveCounters != null && driveCounters.TryGetValue(root, out var __seed) && __seed.CapOverride > 0;
-			int startC = hasExplicitCap ? FairCeiling() : Math.Max(1, Math.Min(FairCeiling(), 4));
+			int startC = hasExplicitCap ? FairCeiling()
+				: Math.Max(1, Math.Min(FairCeiling(), Settings.AdaptiveStartConcurrency > 0 ? Settings.AdaptiveStartConcurrency : 4));
 			int target = startC;
 			// AdaptiveThrottle (not a raw SemaphoreSlim): shrinking under CONTINUOUS full load can't steal
 			// an idle permit (there never is one — each worker immediately re-acquires the permit it just

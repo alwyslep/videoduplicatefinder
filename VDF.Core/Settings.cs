@@ -110,6 +110,24 @@ namespace VDF.Core {
 		// back to the sequential path per-file. See PARALLEL-AUDIO-DECODE-DESIGN.md.
 		public int ParallelAudioDecodeThreads;
 
+		// Adaptive gather: how many files a drive starts with before AIMD takes over. 4 (default) is
+		// a deliberately timid cold start, and the climb is +1 per adaptive window — 24 minutes to
+		// reach 16 at the 120 s default. On a CPU-bound library that leaves most cores idle for the
+		// whole ramp: measured 43 files / 5.18 GB going 212 s → 100 s (2.1×) purely by starting at
+		// 16 instead of 4, with byte-identical fingerprints, and cold throughput went UP (17.8 →
+		// 29.5 MB/s) because the audio read gate still admits one whole-file read per drive
+		// (2026-07-25). Raise it when the scan is decode-bound; leave it at 4 to keep the old ramp.
+		public int AdaptiveStartConcurrency = 4;
+
+		// How many files may be in their audio-fingerprint READ phase at once, per drive.
+		// 1 (default) = the original behaviour: one whole-file read per drive at a time, so a
+		// spindle never seeks between two streams. Raise it when the fingerprint is CPU-bound
+		// rather than read-bound — long, low-bitrate files spend most of their time decoding, and
+		// at 1 reader the rest of the machine sits idle waiting for the gate (measured on a
+		// USB-HDD library: cold and cache-warm scans took the same time, i.e. zero I/O pressure,
+		// while only ~9 of 24 logical cores were busy — 2026-07-25).
+		public int AudioReadersPerDrive = 1;
+
 		public string CustomFFArguments = string.Empty;
 		public string CustomDatabaseFolder = string.Empty;
 

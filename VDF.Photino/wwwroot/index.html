@@ -981,10 +981,12 @@
       { k: "maxDegreeOfParallelism", l: "최대 병렬 처리 수", ty: "num", h: "-1=모든 코어 · 1=한 개씩" },
       { k: "hddMaxDegreeOfParallelism", l: "HDD 병렬 처리 수", ty: "num", h: "스핀들 HDD 드라이브별" },
       { k: "adaptiveConcurrency", l: "드라이브별 적응형 동시성", ty: "sw" },
-      { k: "adaptiveWindowSeconds", l: "적응 윈도 (초)", ty: "num" },
+      { k: "adaptiveStartConcurrency", l: "적응형 시작 동시성", ty: "num", h: "드라이브별 시작 파일 수 · 4=보수적 · 지문이 CPU에 묶이면 12~16이 빠르다 (실측 2.1배)" },
+      { k: "adaptiveWindowSeconds", l: "적응 윈도 (초)", ty: "num", h: "이 간격마다 +1씩만 오른다 · 120은 16까지 24분" },
       { k: "hardwareAccelerationMode", l: "하드웨어 가속", ty: "sel", opts: ["none","auto","dxva2","d3d11va","qsv","cuda","vulkan","vaapi","vdpau","videotoolbox","drm","mediacodec"] },
       { k: "useNativeFfmpegBinding", l: "네이티브 FFmpeg 바인딩", ty: "sw" },
       { k: "parallelAudioDecodeThreads", l: "오디오 병렬 디코드 스레드", ty: "num", h: "0·1=순차 · 네이티브 바인딩 필요" },
+      { k: "audioReadersPerDrive", l: "드라이브당 오디오 읽기 수", ty: "num", h: "1=스핀들 1스트림(기본·안전) · HDD 라이브러리에선 올려도 이득 없었음(실측)" },
     ]},
     { t: "썸네일", items: [
       { k: "thumbnailCount", l: "샘플 프레임 수", ty: "num", h: "1=중간 지점만 · 늘리면 오탐↓ 스캔 느려짐 · 변경 시 다음 스캔에서 전체 재추출" },

@@ -71,7 +71,27 @@ namespace VDF.Core.FFTools.FFmpegNative {
 		// tail, so file N+1 reads while file N finishes decoding — recovering the disk
 		// idle gaps RAM-sequential tails leave (measured 35% on FC2-heavy folders).
 		private static readonly ConcurrentDictionary<string, SemaphoreSlim> readGates = new(StringComparer.OrdinalIgnoreCase);
-		private static SemaphoreSlim ReadGateFor(string root) => readGates.GetOrAdd(root, _ => new SemaphoreSlim(1, 1));
+		private static int readersPerDrive = 1;
+
+		/// <summary>
+		/// Concurrent audio-fingerprint READS allowed per drive. 1 (default) keeps the original
+		/// one-stream-per-spindle behaviour. Higher values let several files be read+decoded at
+		/// once on the same drive, which is what fills the CPU when the fingerprint is
+		/// decode-bound rather than read-bound. Set at scan start only — the gates are swapped,
+		/// never resized, exactly like <see cref="MaxDecodeThreads"/>.
+		/// </summary>
+		internal static int ReadersPerDrive {
+			get => readersPerDrive;
+			set {
+				value = Math.Clamp(value, 1, 16);
+				if (value == readersPerDrive) return;
+				readersPerDrive = value;
+				readGates.Clear();   // next acquire builds each drive's gate at the new width
+			}
+		}
+
+		private static SemaphoreSlim ReadGateFor(string root) =>
+			readGates.GetOrAdd(root, _ => new SemaphoreSlim(readersPerDrive, readersPerDrive));
 
 		private sealed class GateReleaser : IDisposable {
 			SemaphoreSlim? _gate;
@@ -391,6 +411,22 @@ namespace VDF.Core.FFTools.FFmpegNative {
 
 					if (ramSeqTask == null) {
 						// Constant samples-per-packet profile check via packet duration.
+						//
+						// NOTE (2026-07-25): this exact-conversion requirement rejects a LOT of real
+						// files — a container timebase coarser than the sample rate (1/1000, 1/90000)
+						// rounds every packet duration, so AAC-LC's uniform 1024 samples never
+						// converts exactly (measured: 124 of 144 files on a real library fell back
+						// here, which is why the audio fingerprint runs ~1 core per file). Relaxing
+						// it to "trust codecpar.frame_size, cross-checked within one timebase tick"
+						// was tried and MUST NOT be shipped as-is: it admits files the segment-
+						// parallel path does not reproduce bit-identically. One measured example is
+						// 22050 Hz stereo AAC in a 1/90000 timebase (durations alternating
+						// 4180/4179), whose parallel fingerprint differs from the sequential one
+						// while every seam check passes — the seam shadow-compare cannot catch it,
+						// because both neighbours of a seam share the same assumption.
+						// So this gate is load-bearing for CORRECTNESS, not just for the profile
+						// check. Fix the reducer/seam coverage first (golden test over 22.05 kHz and
+						// coarse timebases), then relax it. Compare with `fpdump` on two scans.
 						string? violation = null;
 						long pktSamples = -1;
 						long dur = pkt->duration;

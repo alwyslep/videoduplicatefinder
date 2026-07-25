@@ -68,6 +68,8 @@ static class Program {
 		MigrateLegacyCopyDb();                      // one-time carry from the old %TEMP% location (no re-scan)
 		Directory.CreateDirectory(CopyDbFolder);   // always ensure the copy exists as the safe fallback
 
+		if (args.Length > 1 && args[0] == "fpdump") { FpDump(args[1]); return; }   // DB의 오디오 지문 덤프 (경로별 해시)
+		if (args.Length > 0 && args[0] == "fpbench") { FpBench(args.Length > 1 ? int.Parse(args[1]) : 600); return; }   // 관리 지문 파이프라인 단독 비용
 		if (args.Length > 0 && args[0] == "ffcheck") { FFCheck(); return; }        // 스캔 전 FFmpeg 준비 상태 진단
 		if (args.Length > 0 && args[0] == "crashtest") { CrashTest(); return; }   // 크래시 기록 경로 검증
 		if (args.Length > 0 && args[0] == "selftest") { SelfTest(); return; }
@@ -225,6 +227,48 @@ static class Program {
 			Console.WriteLine($"[ffcheck]   {n,-18} {where}");
 		}
 		Console.WriteLine($"[ffcheck] 결과: 네이티브 라이브러리 {(ScanEngine.NativeFFmpegExists ? "사용 가능 — 스캔 가능" : "사용 불가 — 스캔은 차단된다 (예전엔 이 지점에서 프로세스가 죽었다)")}");
+	}
+
+	// 관리 코드(chromaprint) 파이프라인 단독 비용 (`VDF.Photino.exe fpbench [오디오초]`).
+	// 오디오 지문 1건의 비용은 ① FFmpeg 네이티브 디코드+리샘플 ② 이 관리 파이프라인(FFT·크로마·해시)
+	// 으로 갈린다. 벡터화가 의미 있는 곳은 ②뿐이므로, 최적화 전에 ②의 실제 비중을 재는 것이 목적이다.
+	// 11025Hz 모노 PCM 을 직접 먹여 ①을 완전히 배제한다.
+	static void FpBench(int audioSeconds) {
+		const int rate = 11025;
+		int total = rate * audioSeconds;
+		var pcm = new short[rate];                     // 1초 청크
+		uint seed = 12345;                             // 결정적 잡음 — 내용은 비용에 영향이 없다
+		for (int i = 0; i < pcm.Length; i++) { seed = seed * 1664525 + 1013904223; pcm[i] = (short)(seed >> 17); }
+
+		var ctx = new VDF.Core.Chromaprint.ChromaContext();
+		ctx.Start();
+		var sw = System.Diagnostics.Stopwatch.StartNew();
+		for (int s = 0; s < audioSeconds; s++) ctx.Feed(pcm);
+		ctx.Finish();
+		var fp = ctx.GetRawFingerprint();
+		sw.Stop();
+
+		double ms = sw.Elapsed.TotalMilliseconds;
+		Console.WriteLine($"[fpbench] 오디오 {audioSeconds}초 ({total:N0} 샘플) → 관리 파이프라인 {ms:N0} ms");
+		Console.WriteLine($"[fpbench] 오디오 1초당 {ms / audioSeconds:N3} ms · 지문 {fp.Length} 워드");
+		Console.WriteLine($"[fpbench] → 오디오 1시간당 {ms / audioSeconds * 3600 / 1000:N2} 초 (단일 코어)");
+	}
+
+	// DB 의 오디오 지문 덤프 (`VDF.Photino.exe fpdump <db폴더>`) — 경로별 지문 해시·길이를 정렬해 찍는다.
+	// 용도: 병렬 디코드 경로와 순차 경로가 **비트 단위로 같은 지문**을 만드는지 실파일로 검증하는 것.
+	// 세그먼트 seam 검사는 이걸 대신할 수 없다 — 두 워커가 같은(잘못된) 패킷당 샘플 수를 쓰면 서로
+	// 일치하면서 격자만 통째로 어긋나므로, 순차 결과와의 직접 비교만이 증거가 된다.
+	static void FpDump(string dbFolder) {
+		DatabaseUtils.CustomDatabaseFolder = dbFolder;
+		DatabaseUtils.InvalidateDatabaseFolder();
+		DatabaseUtils.LoadDatabase();
+		foreach (var e in DatabaseUtils.Database.OrderBy(x => x.Path, StringComparer.OrdinalIgnoreCase)) {
+			var fp = e.AudioFingerprint;
+			ulong h = 14695981039346656037UL;   // FNV-1a over the fingerprint words
+			if (fp != null)
+				foreach (uint w in fp) { h ^= w; h *= 1099511628211UL; }
+			Console.WriteLine($"{(fp == null ? "-none-" : h.ToString("x16"))}\t{fp?.Length ?? -1}\t{Path.GetFileName(e.Path)}");
+		}
 	}
 
 	// VDF.Core 가 공유 라이브러리를 찾는 순서와 같은 후보 폴더들 (진단 표시용).
@@ -650,6 +694,12 @@ static class Program {
 		public string hardwareAccelerationMode { get; set; } = "none";
 		public bool useNativeFfmpegBinding { get; set; }
 		public int parallelAudioDecodeThreads { get; set; }
+		// 드라이브당 동시 오디오 지문 읽기 수. 1 = 기존 동작(스핀들 1스트림). 지문이 읽기보다
+		// 디코드에 묶여 있으면(길고 저비트레이트 파일) 올릴수록 유휴 코어가 채워진다.
+		public int audioReadersPerDrive { get; set; } = 1;
+		// 적응 동시성의 드라이브별 시작 파일 수. 기본 4는 매우 보수적이고 +1/윈도로만 오르므로,
+		// 디코드에 묶인 라이브러리에선 램프 내내 코어가 남는다 (측정: 4→16 에서 2.1배).
+		public int adaptiveStartConcurrency { get; set; } = 4;
 		// FFmpeg 공유 라이브러리(avcodec-62.dll 등) 폴더. 비우면 EnsureNativeFFmpegOnPath 가 찾아 채운다 —
 		// 개발 빌드 폴더와 설치 폴더가 갈릴 때 DLL 250MB 를 복사하지 않기 위한 것.
 		public string ffmpegLibFolder { get; set; } = "";
@@ -743,6 +793,8 @@ static class Program {
 			? hw : FFHardwareAccelerationMode.none;
 		s.UseNativeFfmpegBinding = _cfg.useNativeFfmpegBinding;
 		s.ParallelAudioDecodeThreads = _cfg.parallelAudioDecodeThreads;
+		s.AudioReadersPerDrive = _cfg.audioReadersPerDrive;
+		s.AdaptiveStartConcurrency = _cfg.adaptiveStartConcurrency;
 		s.ThumbnailCount = _cfg.thumbnailCount;
 		s.ThumbnailMaxWidth = _cfg.thumbnailMaxWidth;
 		s.IgnoreReadOnlyFolders = _cfg.ignoreReadOnlyFolders;
