@@ -31,6 +31,7 @@ namespace VDF.Core.Chromaprint.Pipeline {
 		private readonly ChromaFilter _filter = new();
 		private readonly double[] _chromaBuf = new double[12];
 		private readonly double[] _filteredBuf = new double[12];
+		private readonly double[] _frameBuf = new double[Chroma.FrameSize];   // see ChromaContext._frameBuf
 
 		private short[] _samples = Array.Empty<short>();
 		private int _sampleCount;
@@ -76,7 +77,7 @@ namespace VDF.Core.Chromaprint.Pipeline {
 			samples.CopyTo(_samples.AsSpan(_sampleCount));
 			_sampleCount += samples.Length;
 
-			Span<double> frameBuf = stackalloc double[Chroma.FrameSize];
+			Span<double> frameBuf = _frameBuf;
 			int pos = 0;
 			while (pos + Chroma.FrameSize <= _sampleCount) {
 				for (int i = 0; i < Chroma.FrameSize; i++)

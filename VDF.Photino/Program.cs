@@ -68,8 +68,9 @@ static class Program {
 		MigrateLegacyCopyDb();                      // one-time carry from the old %TEMP% location (no re-scan)
 		Directory.CreateDirectory(CopyDbFolder);   // always ensure the copy exists as the safe fallback
 
-		if (args.Length > 1 && args[0] == "fpdump") { FpDump(args[1]); return; }   // DB의 오디오 지문 덤프 (경로별 해시)
-		if (args.Length > 0 && args[0] == "fpbench") { FpBench(args.Length > 1 ? int.Parse(args[1]) : 600); return; }   // 관리 지문 파이프라인 단독 비용
+		if (args.Length > 1 && args[0] == "fpdump") { FpDump(args[1], args.Length > 2 && args[2] == "words"); return; }   // DB의 오디오 지문 덤프
+		if (args.Length > 0 && args[0] == "fpbench") { FpBench(args.Length > 1 ? int.Parse(args[1]) : 600, args.Length > 2 ? int.Parse(args[2]) : 256); return; }
+		if (args.Length > 1 && args[0] == "fpsplit") { FpSplit(args[1]); return; }   // 디코드+리샘플 vs 관리 파이프라인 분리 계측
 		if (args.Length > 0 && args[0] == "ffcheck") { FFCheck(); return; }        // 스캔 전 FFmpeg 준비 상태 진단
 		if (args.Length > 0 && args[0] == "crashtest") { CrashTest(); return; }   // 크래시 기록 경로 검증
 		if (args.Length > 0 && args[0] == "selftest") { SelfTest(); return; }
@@ -87,6 +88,14 @@ static class Program {
 		if (args.Length > 0 && args[0] == "recycleselftest") {   // literal paths in source — no argv backslash mangling
 			foreach (var (p, exp) in new[] { (@"\\NAS\media\clip.mkv", false), (@"\\?\UNC\srv\s\x.mkv", false), (@"C:\Windows\notepad.exe", true) })
 				Console.WriteLine($"[recycleselftest] {(CanRecycle(p) == exp ? "PASS" : "FAIL")} canRecycle({p})={CanRecycle(p)} exp={exp}");
+			return;
+		}
+
+		// 인자를 줬는데 위의 어떤 모드에도 걸리지 않았다면 GUI 를 열지 않는다. 열어버리면 오타나
+		// 빌드 실패로 남은 구버전 exe 가 "창을 띄운 채 대기"하는 상태가 되고, 자동화에서는 그게
+		// 그냥 멈춘 것처럼 보인다 (실제로 두 번 10분씩 날렸다 — 2026-07-25).
+		if (_cliMode) {
+			Console.Error.WriteLine($"알 수 없는 모드 '{args[0]}' — 이 실행 파일이 그 모드를 모른다 (빌드가 오래됐거나 오타).");
 			return;
 		}
 
@@ -229,41 +238,107 @@ static class Program {
 		Console.WriteLine($"[ffcheck] 결과: 네이티브 라이브러리 {(ScanEngine.NativeFFmpegExists ? "사용 가능 — 스캔 가능" : "사용 불가 — 스캔은 차단된다 (예전엔 이 지점에서 프로세스가 죽었다)")}");
 	}
 
+	// 오디오 지문 1건의 비용을 단계별로 가른다 (`VDF.Photino.exe fpsplit <폴더>`).
+	// A: 디먹스+디코드+리샘플만 (콜백에서 아무것도 안 함) — `ffmpeg -vn -ar 11025 -ac 1` 과 직접 비교되는 값
+	// B: 거기에 관리 chromaprint 까지 (실제 경로와 동일)
+	// B−A = 관리 파이프라인, A = 네이티브+글루. 어느 쪽을 고쳐야 하는지 이 두 숫자가 결정한다.
+	// 폴더를 받는 이유: 경로에 공백이 있어도 인자 분해가 깨지지 않게 하려고.
+	static void FpSplit(string folder) {
+		if (!ScanEngine.NativeFFmpegExists) { Console.WriteLine("[fpsplit] 네이티브 라이브러리 없음"); return; }
+		var file = Directory.EnumerateFiles(folder).FirstOrDefault(f => f.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase) || f.EndsWith(".mkv", StringComparison.OrdinalIgnoreCase));
+		if (file == null) { Console.WriteLine("[fpsplit] 폴더에 mp4/mkv 없음"); return; }
+		Console.WriteLine($"[fpsplit] {Path.GetFileName(file)}");
+		FfmpegEngine.UseNativeBinding = true;
+		var proc = System.Diagnostics.Process.GetCurrentProcess();
+
+		double Measure(string tag, bool withChroma) {
+			proc.Refresh();
+			var u0 = proc.UserProcessorTime; var k0 = proc.PrivilegedProcessorTime;
+			var sw = System.Diagnostics.Stopwatch.StartNew();
+			int samples;
+			using (var dec = new VDF.Core.FFTools.FFmpegNative.AudioStreamDecoder(file, 11025, default)) {
+				if (!withChroma) samples = dec.DecodeAll(_ => { }, default, null);
+				else {
+					var ctx = new VDF.Core.Chromaprint.ChromaContext();
+					ctx.Start();
+					samples = dec.DecodeAll(s => ctx.Feed(s), default, null);
+					ctx.Finish();
+					_ = ctx.GetRawFingerprint();
+				}
+			}
+			sw.Stop();
+			proc.Refresh();
+			double u = (proc.UserProcessorTime - u0).TotalSeconds, k = (proc.PrivilegedProcessorTime - k0).TotalSeconds;
+			double audioHours = samples / 11025.0 / 3600.0;
+			Console.WriteLine($"[fpsplit] {tag}: 사용자 {u:N2} + 커널 {k:N2} 코어초 · 실시간 {sw.Elapsed.TotalSeconds:N2}s " +
+				$"· 오디오 {samples / 11025.0 / 60:N1}분 → 1시간당 {(u + k) / audioHours:N1} 코어초");
+			return u + k;
+		}
+
+		double a = Measure("A 디코드+리샘플만", false);
+		double b = Measure("B +관리 chromaprint", true);
+		Console.WriteLine($"[fpsplit] 관리 파이프라인 몫 = {b - a:N2} 코어초 ({(b > 0 ? (b - a) / b * 100 : 0):N0}%) · 네이티브+글루 = {a:N2} 코어초");
+
+		// C: 스캔이 실제로 부르는 진입점 그대로 — B 와 크게 다르면 차이는 이 래퍼 안에 있다.
+		for (int i = 0; i < 2; i++) {
+			proc.Refresh();
+			var u0 = proc.UserProcessorTime; var k0 = proc.PrivilegedProcessorTime;
+			var sw = System.Diagnostics.Stopwatch.StartNew();
+			var fp = VDF.Core.FFTools.ChromaprintEngine.ExtractFingerprint(file, false);
+			sw.Stop();
+			proc.Refresh();
+			double u = (proc.UserProcessorTime - u0).TotalSeconds, k = (proc.PrivilegedProcessorTime - k0).TotalSeconds;
+			double hours = (fp?.Length ?? 0) / 3600.0;   // 1워드 = 오디오 1초
+			Console.WriteLine($"[fpsplit] C{i + 1} ExtractFingerprint: 사용자 {u:N2} + 커널 {k:N2} 코어초 · 실시간 {sw.Elapsed.TotalSeconds:N2}s → 1시간당 {(u + k) / hours:N1} 코어초");
+		}
+	}
+
 	// 관리 코드(chromaprint) 파이프라인 단독 비용 (`VDF.Photino.exe fpbench [오디오초]`).
 	// 오디오 지문 1건의 비용은 ① FFmpeg 네이티브 디코드+리샘플 ② 이 관리 파이프라인(FFT·크로마·해시)
 	// 으로 갈린다. 벡터화가 의미 있는 곳은 ②뿐이므로, 최적화 전에 ②의 실제 비중을 재는 것이 목적이다.
 	// 11025Hz 모노 PCM 을 직접 먹여 ①을 완전히 배제한다.
-	static void FpBench(int audioSeconds) {
+	// chunk 는 반드시 실제 경로와 같은 크기로 재야 한다: 디코더는 AAC 프레임당 ~256 샘플(11025Hz 기준)
+	// 을 흘려보내는데, 1초(11025 샘플) 청크로 재면 호출 횟수가 43배 적고 캐시가 계속 더워서 **비용이
+	// 2~3배 낙관적으로 나온다**. 실제로 그 착오 때문에 관리 파이프라인 비중을 7.6% 로 잘못 봤다.
+	static void FpBench(int audioSeconds, int chunk) {
 		const int rate = 11025;
-		int total = rate * audioSeconds;
-		var pcm = new short[rate];                     // 1초 청크
+		var pcm = new short[chunk];
 		uint seed = 12345;                             // 결정적 잡음 — 내용은 비용에 영향이 없다
-		for (int i = 0; i < pcm.Length; i++) { seed = seed * 1664525 + 1013904223; pcm[i] = (short)(seed >> 17); }
+		int chunks = (int)((long)rate * audioSeconds / chunk);
 
 		var ctx = new VDF.Core.Chromaprint.ChromaContext();
 		ctx.Start();
 		var sw = System.Diagnostics.Stopwatch.StartNew();
-		for (int s = 0; s < audioSeconds; s++) ctx.Feed(pcm);
+		for (int c = 0; c < chunks; c++) {
+			for (int i = 0; i < pcm.Length; i++) { seed = seed * 1664525 + 1013904223; pcm[i] = (short)(seed >> 17); }
+			ctx.Feed(pcm);
+		}
 		ctx.Finish();
 		var fp = ctx.GetRawFingerprint();
 		sw.Stop();
 
 		double ms = sw.Elapsed.TotalMilliseconds;
-		Console.WriteLine($"[fpbench] 오디오 {audioSeconds}초 ({total:N0} 샘플) → 관리 파이프라인 {ms:N0} ms");
-		Console.WriteLine($"[fpbench] 오디오 1초당 {ms / audioSeconds:N3} ms · 지문 {fp.Length} 워드");
-		Console.WriteLine($"[fpbench] → 오디오 1시간당 {ms / audioSeconds * 3600 / 1000:N2} 초 (단일 코어)");
+		Console.WriteLine($"[fpbench] 오디오 {audioSeconds}초 · 청크 {chunk} 샘플 × {chunks:N0}회 → {ms:N0} ms · 지문 {fp.Length} 워드");
+		Console.WriteLine($"[fpbench] → 오디오 1시간당 {ms / audioSeconds * 3600 / 1000:N2} 코어초 (단일 코어)");
 	}
 
 	// DB 의 오디오 지문 덤프 (`VDF.Photino.exe fpdump <db폴더>`) — 경로별 지문 해시·길이를 정렬해 찍는다.
 	// 용도: 병렬 디코드 경로와 순차 경로가 **비트 단위로 같은 지문**을 만드는지 실파일로 검증하는 것.
 	// 세그먼트 seam 검사는 이걸 대신할 수 없다 — 두 워커가 같은(잘못된) 패킷당 샘플 수를 쓰면 서로
 	// 일치하면서 격자만 통째로 어긋나므로, 순차 결과와의 직접 비교만이 증거가 된다.
-	static void FpDump(string dbFolder) {
+	// words=true 면 워드 단위로 찍는다 — 두 경로가 **어느 초에서** 갈라지는지 짚기 위한 것
+	// (해시만으로는 "다르다"까지만 알 수 있다).
+	static void FpDump(string dbFolder, bool words) {
 		DatabaseUtils.CustomDatabaseFolder = dbFolder;
 		DatabaseUtils.InvalidateDatabaseFolder();
 		DatabaseUtils.LoadDatabase();
 		foreach (var e in DatabaseUtils.Database.OrderBy(x => x.Path, StringComparer.OrdinalIgnoreCase)) {
 			var fp = e.AudioFingerprint;
+			if (words) {
+				for (int i = 0; i < (fp?.Length ?? 0); i++)
+					Console.WriteLine($"{Path.GetFileName(e.Path)}\t{i}\t{fp![i]:x8}");
+				continue;
+			}
 			ulong h = 14695981039346656037UL;   // FNV-1a over the fingerprint words
 			if (fp != null)
 				foreach (uint w in fp) { h ^= w; h *= 1099511628211UL; }

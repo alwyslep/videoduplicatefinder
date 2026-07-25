@@ -416,17 +416,29 @@ namespace VDF.Core.FFTools.FFmpegNative {
 						// files — a container timebase coarser than the sample rate (1/1000, 1/90000)
 						// rounds every packet duration, so AAC-LC's uniform 1024 samples never
 						// converts exactly (measured: 124 of 144 files on a real library fell back
-						// here, which is why the audio fingerprint runs ~1 core per file). Relaxing
-						// it to "trust codecpar.frame_size, cross-checked within one timebase tick"
-						// was tried and MUST NOT be shipped as-is: it admits files the segment-
-						// parallel path does not reproduce bit-identically. One measured example is
-						// 22050 Hz stereo AAC in a 1/90000 timebase (durations alternating
-						// 4180/4179), whose parallel fingerprint differs from the sequential one
-						// while every seam check passes — the seam shadow-compare cannot catch it,
-						// because both neighbours of a seam share the same assumption.
-						// So this gate is load-bearing for CORRECTNESS, not just for the profile
-						// check. Fix the reducer/seam coverage first (golden test over 22.05 kHz and
-						// coarse timebases), then relax it. Compare with `fpdump` on two scans.
+						// here, i.e. ~86% of files never got segment-parallel decode). Relaxing it to
+						// "trust codecpar.frame_size, cross-checked within one timebase tick" drops
+						// that to 26/144 and is arithmetically sound — the packet size it infers is
+						// correct — but it exposes a pre-existing limitation of the parallel path:
+						//
+						//   Measured on 22050 Hz stereo AAC (1/90000 timebase, durations alternating
+						//   4180/4179, 131 s): the parallel fingerprint differs from the sequential
+						//   one in exactly ONE of 131 words (5ce5c850 → 5ce5c950, a single bit), at
+						//   word 59 — and segment 2 begins at 59.91 s. So it is a SEAM effect: after
+						//   the 1 s warmup a fresh decoder+resampler converges to within last-bit
+						//   rounding, not to bit-identity, and a chroma value sitting on a
+						//   quantisation threshold flips one fingerprint bit. The grid is NOT
+						//   misaligned (that would corrupt many words). The seam shadow-compare
+						//   cannot catch it either: both neighbours of a seam share the assumption.
+						//
+						// Whether that matters is a PRODUCT decision, not a bug to patch blindly:
+						// matching is Hamming-distance based (PartialClipSimilarityThreshold 0.8), so
+						// one bit in 131 words is ~0.008% of similarity — harmless for detection. But
+						// it gives up "same file ⇒ same fingerprint" reproducibility, which is what
+						// makes `fpdump` diffs a usable regression check. Until that trade is decided,
+						// keep the strict gate: it costs parallelism, never correctness.
+						// Reproduce: relax below, scan one 22.05 kHz file with 1 vs 24 decode
+						// threads into separate DBs, `fpdump <db> words` and diff.
 						string? violation = null;
 						long pktSamples = -1;
 						long dur = pkt->duration;

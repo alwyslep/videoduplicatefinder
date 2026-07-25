@@ -50,6 +50,11 @@ namespace VDF.Core.Chromaprint {
 		private readonly ChromaFilter _filter = new();
 		private readonly double[] _chromaBuf = new double[12];
 		private readonly double[] _filteredBuf = new double[12];
+		// Reused across frames AND across Feed calls. It used to be `stackalloc double[FrameSize]`
+		// inside ProcessFrames, i.e. 32 KB of zero-initialised stack per CALL — and the real decode
+		// path calls Feed once per AAC frame (~256 samples at 11025 Hz), so that was ~63k allocations
+		// per 24 minutes of audio for work that is fully overwritten before use anyway.
+		private readonly double[] _frameBuf = new double[Chroma.FrameSize];
 
 		// ──────────────────────────────────────────────────────────────────────
 		// Per-scan state
@@ -112,7 +117,7 @@ namespace VDF.Core.Chromaprint {
 		// ──────────────────────────────────────────────────────────────────────
 
 		private void ProcessFrames() {
-			Span<double> frameBuf = stackalloc double[Chroma.FrameSize];
+			Span<double> frameBuf = _frameBuf;
 			int pos = 0;
 
 			while (pos + Chroma.FrameSize <= _sampleCount) {
