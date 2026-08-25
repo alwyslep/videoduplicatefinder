@@ -14,10 +14,13 @@
     <!-- PerMonitorV2 DPI awareness at process load — fixes the intermittent 960×613 window size -->
     <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
-  <!-- Release output goes straight to the flat "installed" folder the user runs from
-       (C:\Users\geech\dev2\jav\dedup\VDF_Photino) instead of bin\Release\net10.0\win-x64.
-       Debug keeps the conventional bin\ path so dev builds never clobber the app in use. -->
-  <PropertyGroup Condition="'$(Configuration)'=='Release'">
+  <!-- EVERY configuration outputs to the one flat folder the user actually runs from
+       (C:\Users\geech\dev2\jav\dedup\VDF_Photino) instead of bin\<Config>\net10.0\win-x64.
+       This was Release-only, and the split cost real debugging time: a Release build looked
+       fully verified (clean build, tests green, new strings present in the DLL) while the
+       Debug exe the user launched still held week-old code, so a delivered fix appeared to
+       do nothing. One build folder, one exe, no way for the two to drift apart. -->
+  <PropertyGroup>
     <OutputPath>..\..\VDF_Photino\</OutputPath>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>

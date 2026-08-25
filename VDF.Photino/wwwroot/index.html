@@ -11,17 +11,29 @@
     --glow:linear-gradient(100deg,var(--g1),var(--g2) 55%,var(--g3));
   }
   *{box-sizing:border-box}
+  /* 100vh 가 아니라 100%: CSS zoom(확대/축소)이 걸리면 vh 는 확대 전 뷰포트 기준이라 본문이 창보다
+     길어져 아래가 잘린다. 백분율은 확대된 좌표계에서 정확히 창 높이를 가리킨다. */
+  html{height:100%}
   body{margin:0;background:
     radial-gradient(1100px 520px at 78% -12%, rgba(120,90,255,.10), transparent 60%),
     radial-gradient(900px 480px at 8% 8%, rgba(74,119,255,.06), transparent 55%),
     var(--bg2);
     color:var(--ink);font-family:var(--sans);letter-spacing:-.01em;line-height:1.5;
-    -webkit-font-smoothing:antialiased;min-height:100vh}
+    -webkit-font-smoothing:antialiased;
+    /* 앱 셸: 상단바·레일은 고정, 본문(.wrap)만 스크롤한다 — 검토정리에서 리스트를 굴려도
+       검색·필터·체크 옵션·정리 트레이가 화면에서 사라지지 않게 하기 위한 토대다. */
+    height:100%;display:flex;flex-direction:column;
+    /* 세로만 고정하고 가로는 잠그지 않는다: 창이 레이아웃보다 좁게 열리는 환경(고DPI에서 Photino
+       창 크기와 WebView 뷰포트가 어긋나는 경우)에서 overflow:hidden 이면 오른쪽 트레이·버튼에
+       스크롤로도 닿을 수 없게 된다. 실제로 그렇게 잘렸다. */
+    overflow-y:hidden;overflow-x:auto}
   .mono{font-family:var(--mono);letter-spacing:0;font-variant-numeric:tabular-nums}
   .muted{color:var(--muted)} .dim{color:var(--dim)}
 
   /* ---- top app bar (translucent + blur) ---- */
-  .appbar{position:sticky;top:0;z-index:30;display:flex;align-items:center;gap:13px;flex-wrap:nowrap;
+  /* wrap(← 예전 nowrap): 항목들이 flex-shrink:0 이라 창이 좁으면 가로로 넘쳐 잘렸다. 앱 셸이
+     overflow:hidden 이 된 뒤로는 잘린 부분에 아예 닿을 수 없으므로(우측 트레이까지 사라짐) 줄바꿈한다. */
+  .appbar{position:sticky;top:0;z-index:30;display:flex;align-items:center;gap:13px;flex-wrap:wrap;
     padding:11px 20px;background:rgba(15,15,17,.68);backdrop-filter:blur(18px) saturate(1.3);
     -webkit-backdrop-filter:blur(18px) saturate(1.3);border-bottom:1px solid var(--line)}
   .appbar>*{flex-shrink:0;white-space:nowrap}
@@ -38,6 +50,10 @@
   .cta:hover{filter:brightness(1.07);box-shadow:0 8px 28px -6px rgba(120,100,255,.7)}
   .cta.ghost{background:transparent;color:var(--muted);box-shadow:none;border:1px solid var(--line)}
   .cta.ghost:hover{color:var(--ink);border-color:var(--line2)}
+  /* 작업 진행 중 잠긴 버튼. 클릭은 살려둔다 — 눌러보면 왜 안 되는지 토스트가 말해준다. */
+  .busy-off,.busy-off:hover{opacity:.38;filter:grayscale(1) saturate(.2);box-shadow:none;cursor:not-allowed}
+  /* 반대로 그때만 뜨는 멈춤/일시정지는 또렷하게 — 지금 누를 수 있는 건 이쪽이라는 표시 */
+  #scanCtl .cta{color:var(--ink);border-color:var(--line2)}
 
   /* ---- stage rail (capsule chips, glow on active) ---- */
   .rail{display:flex;align-items:center;gap:6px;padding:12px 20px 4px}
@@ -51,8 +67,28 @@
   .chip.on .n{background:var(--glow);-webkit-background-clip:text;background-clip:text;color:transparent;opacity:1}
   .rail .sep{width:1px;height:18px;background:var(--line);margin:0 6px}
 
-  .wrap{max-width:1440px;margin:0 auto;padding:10px 20px 60px}
+  /* 폭 상한 없음: 창을 넓게 쓰라는 요구 — 예전 1440px 상한은 넓은 화면에서 양옆을 통째로 놀렸다.
+     넓어지는 공간은 전부 그룹 리스트(경로가 길어 가장 아쉬운 곳)로 간다. */
+  .wrap{flex:1;min-height:0;overflow-y:auto;width:100%;margin:0 auto;padding:10px 22px 60px}
+  .wrap.noscroll{overflow:hidden;padding-bottom:14px}   /* 검토정리는 자기 안에서 스크롤을 관리한다 */
   .screen{display:none} .screen.on{display:block;animation:fade .28s ease}
+
+  /* 검토정리: 헤더(제목·검색·필터·버튼)와 오른쪽 트레이는 제자리, 그룹 리스트만 스크롤된다.
+     고른 것만 지우거나 '중복 아님'을 찍으려면 옵션이 늘 손 닿는 곳에 있어야 한다. */
+  #s-review.on{display:flex;flex-direction:column;height:100%;min-height:0}
+  #s-review .review{flex:1;min-height:0;align-items:stretch}
+  #s-review .gcol{display:flex;flex-direction:column;min-height:0}
+  /* overflow-x:auto — 아주 긴 경로/테이블이 컬럼을 넓히려 들 때 리스트 안에서만 감당하게 한다
+     (안 그러면 그리드가 밀려 오른쪽 트레이가 창 밖으로 잘려 나간다) */
+  #s-review #groups{flex:1;min-width:0;min-height:0;overflow-y:auto;overflow-x:auto;padding-right:4px}
+  #s-review .gcol,#s-review .fmeta{min-width:0}
+  #s-review .fpath,#s-review .tpath{overflow-wrap:anywhere}
+  #s-review .tray{position:static;max-height:100%;overflow-y:auto}
+  /* 스크롤바는 감춘다 — 휠/트랙패드로만 굴린다 (막대가 없어도 스크롤은 그대로 동작한다) */
+  #s-review #groups,#s-review .tray{scrollbar-width:none;-ms-overflow-style:none}
+  #s-review #groups::-webkit-scrollbar,#s-review .tray::-webkit-scrollbar{width:0;height:0;display:none}
+  /* 환경설정·DB 뷰어는 .wrap 밖의 형제라, 앱 셸이 flex 가 된 뒤로는 스스로 스크롤해야 한다 */
+  #s-settings.on,#s-dbview.on{flex:1;min-height:0;overflow-y:auto;width:100%}
   @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
 
   .h1{font-size:20px;font-weight:650;letter-spacing:-.02em;margin:14px 0 2px}
@@ -63,7 +99,7 @@
   .row{display:flex;gap:16px}
 
   /* query bar */
-  .query{display:flex;align-items:center;gap:11px;background:var(--surface);border:1px solid var(--line);
+  .query{display:flex;align-items:center;gap:11px;flex-wrap:wrap;background:var(--surface);border:1px solid var(--line);
     border-radius:14px;padding:5px 6px 5px 15px;margin-bottom:14px}
   .query .gt{color:var(--indigo);font-family:var(--mono);font-size:15px}
   .query input{flex:1;background:transparent;border:0;outline:0;color:var(--ink);font-family:var(--mono);font-size:13px;padding:9px 0}
@@ -261,16 +297,14 @@
   <span class="dbstat mono">DB <b>28,417</b> 파일 · <b>6</b> 드라이브 · 마지막 스윕 3일 전</span>
   <span class="spacer"></span>
   <span class="pill mono" onclick="openCmdk()" title="커맨드 팔레트 — Ctrl+K">⌘K</span><span class="pill" onclick="openSettings()">환경설정</span><span class="pill" onclick="toggleConsole()">콘솔</span>
-  <button class="cta ghost" onclick="doCompare()">비교만 다시</button>
-  <button class="cta" onclick="startFullScan()">▶ 전체 스캔</button>
+  <button class="cta ghost" data-busy onclick="doCompare()">비교만 다시</button>
+  <button class="cta" data-busy onclick="startFullScan()">▶ 전체 스캔</button>
 </div>
 
 <div class="rail" id="rail">
   <div class="chip on" data-s="review" onclick="go('sources')"><span class="n">①</span> 소스</div>
-  <div class="chip" onclick="go('rules')"><span class="n">②</span> 규칙</div>
-  <div class="chip" onclick="go('scan')"><span class="n">③</span> 스캔</div>
-  <div class="chip" onclick="go('review')"><span class="n">④</span> 검토</div>
-  <div class="chip" onclick="go('reclaim')"><span class="n">⑤</span> 정리</div>
+  <div class="chip" onclick="go('scan')"><span class="n">②</span> 스캔</div>
+  <div class="chip" onclick="go('review')"><span class="n">③</span> 검토정리</div>
 </div>
 
 <div class="wrap">
@@ -295,124 +329,88 @@
     <div class="card pad" style="margin-top:14px;display:flex;align-items:center">
       <span class="mono muted" style="font-size:13px" id="srcRange">지정된 폴더 없음</span>
       <span class="spacer"></span>
-      <button class="cta" onclick="startFullScan()">스캔 화면으로 →</button>
-    </div>
-  </section>
-
-  <!-- RULES -->
-  <section class="screen" id="s-rules">
-    <div class="h1">② 규칙 — 무엇을 중복으로 볼까?</div>
-    <div class="sub">여기서 바꾼 값은 다음 스캔부터 적용된다. 엔진 동작은 그대로 — 값만 조절.</div>
-    <div class="grid2">
-      <div class="card pad">
-        <div class="lbl">시각 매치</div>
-        <div class="field"><div class="k">유사도 임계값 (%) · 낮출수록 더 많이 매칭</div><input id="rPercent" class="inp" style="width:96px;min-width:0" onchange="setRuleNum('percent',this)"></div>
-        <div class="field"><div class="k">pHash 그레이 검증 (%)</div><input id="rGray" class="inp" style="width:96px;min-width:0" onchange="setRuleNum('phashGray',this)"></div>
-        <div class="field"><div class="k">재생시간 허용 오차 (%)</div><input id="rDur" class="inp" style="width:96px;min-width:0" onchange="setRuleNum('durationPct',this)"></div>
-        <label class="chkrow" onclick="toggleRule('usePHash',this.querySelector('.sw'))"><span class="sw" id="swPHash"></span> pHash 사용 <span class="dim" style="font-size:11px;margin-left:2px">끄면 그레이스케일 %가 직접 적용</span></label>
-        <label class="chkrow" onclick="toggleRule('compareFlipped',this.querySelector('.sw'))"><span class="sw" id="swFlip"></span> 좌우 반전본도 비교</label>
-        <label class="chkrow" onclick="toggleRule('ignoreBW',this.querySelector('.sw'))"><span class="sw" id="swBW"></span> 검은 · 흰 픽셀 무시</label>
-      </div>
-      <div class="card pad">
-        <div class="lbl">범위 · 필터</div>
-        <label class="chkrow" onclick="toggleRule('includeSubDirs',this.querySelector('.sw'))"><span class="sw" id="swSub"></span> 하위 폴더 포함</label>
-        <label class="chkrow" onclick="toggleRule('includeImages',this.querySelector('.sw'))"><span class="sw" id="swImg"></span> 이미지 포함</label>
-        <label class="chkrow" onclick="toggleRule('entireDb',this.querySelector('.sw'))"><span class="sw" id="swDb"></span> 전체 DB와 비교</label>
-        <label class="chkrow" onclick="toggleRule('filterBySize',this.querySelector('.sw'))"><span class="sw" id="swSize"></span> 파일 크기로 필터</label>
-        <div class="field" style="margin:4px 0 0 44px;display:flex;gap:10px;align-items:center">
-          <span class="dim" style="font-size:12px">최소</span><input id="rMinMB" class="inp" style="width:76px;min-width:0" onchange="setRuleNum('minFileSizeMB',this)">
-          <span class="dim" style="font-size:12px">최대</span><input id="rMaxMB" class="inp" style="width:76px;min-width:0" onchange="setRuleNum('maxFileSizeMB',this)">
-          <span class="dim" style="font-size:11px">MB · 0=제한 없음</span>
-        </div>
-        <div class="lbl" style="margin-top:16px">우선순위 (유지본 선정 기준) <span class="dim" style="font-weight:400">— 드래그로 순서 변경 · 위일수록 우선</span></div>
-        <div id="prioChips" style="display:flex;flex-wrap:wrap;gap:7px"></div>
-      </div>
-    </div>
-    <div class="card pad" style="margin-top:14px;display:flex;align-items:center">
-      <span class="mono muted" style="font-size:12.5px">값 변경 즉시 저장 · 다음 비교부터 적용</span>
-      <span class="spacer"></span>
-      <button class="cta" onclick="doCompare()">이 규칙으로 비교 →</button>
+      <button class="cta" data-busy onclick="startFullScan()">스캔 화면으로 →</button>
     </div>
   </section>
 
   <!-- SCAN -->
   <section class="screen" id="s-scan">
     <div style="display:flex;align-items:center">
-      <div class="h1">③ 스캔</div>
+      <div class="h1">② 스캔</div>
       <span class="spacer"></span>
       <span id="scanCtl" style="display:none;gap:8px;margin-right:8px">
         <button class="cta ghost" id="btnPause" onclick="pauseScanUi()">⏸ 일시정지</button>
         <button class="cta ghost" id="btnStop" onclick="stopScanUi()" style="color:var(--red);border-color:rgba(255,107,107,.35)">⏹ 중지</button>
       </span>
-      <button class="cta" onclick="doStartScan()">▶ 스캔 시작</button>
+      <button class="cta" data-busy onclick="doStartScan()">▶ 스캔 시작</button>
     </div>
     <div class="sub">드라이브별 완료 상태 (현재 DB 기준) · 스캔 시작하면 실시간 진행.</div>
     <div id="scanNow"></div>
     <div class="row">
       <div class="card pad" style="flex:2.4" id="drives"></div>
       <div class="card pad" style="flex:1">
-        <div class="lbl">실시간 집계</div>
+        <!-- 제목은 renderTallies 가 바꾼다: 대기 중엔 DB 스냅샷, 스캔/비교 중엔 라이브 카운터 -->
+        <div class="lbl" id="talliesLbl">집계 — DB 현황</div>
         <div id="tallies"></div>
       </div>
     </div>
   </section>
 
-  <!-- REVIEW (hero) -->
+  <!-- REVIEW + RECLAIM — 한 화면 (탭이 갈려 있으면 옵션/명령 접근이 불편하다) -->
   <section class="screen on" id="s-review">
-    <div class="h1">④ 검토</div>
+    <div class="h1">③ 검토정리</div>
     <div class="query">
       <span class="gt">&gt;</span>
       <input id="q" placeholder="경로·이름 필터 (예: 2160p, drive:F)" oninput="filter()">
-      <span class="qhint">유지할 1개만 남기고 나머지를 체크 = 삭제 후보</span>
-      <button class="cta ghost" style="padding:7px 13px;font-size:12.5px" onclick="openCheckMenu(event)">☑ 체크 옵션 ▾</button>
-      <button class="cta" style="padding:7px 15px;font-size:12.5px" onclick="doMpvCompare()">▶ 순회비교</button>
+      <span class="qhint">유지 1개만 남기고 체크 = 삭제 후보</span>
+      <!-- 구버전 GUI 의 메뉴 이름 그대로: '선택' 과 '체크된 항목 삭제'. 두 메뉴 모두 여기 한 곳에만 둔다
+           (예전엔 같은 '체크 옵션'이 상단과 사이드바에 나뉘어 있어 어디를 눌러야 할지 헷갈렸다). -->
+      <button class="cta ghost" style="padding:7px 13px;font-size:12.5px" onclick="openSelectMenu(event)">선택 ▾</button>
+      <button class="cta ghost" style="padding:7px 13px;font-size:12.5px" onclick="openDelMenu(event)">체크된 항목 삭제 ▾</button>
+      <button class="cta" data-busy style="padding:7px 15px;font-size:12.5px" onclick="doMpvCompare()">▶ 순회비교</button>
       <div class="toggle"><button id="viewStrip" class="on" onclick="setView('strip')">스트립</button><button id="viewTable" onclick="setView('table')">테이블</button></div>
     </div>
     <div class="facets" id="facets"></div>
     <div class="review">
-      <div id="groups"></div>
+      <div class="gcol">
+        <div id="groups"></div>
+        <!-- 그룹은 페이지 단위로 받는다. 체크 상태는 경로 단위라 페이지를 넘겨도 유지되고,
+             삭제·복사·보고서는 화면이 아니라 전체 결과에서 대상을 모은다 (C# BuildSelection). -->
+        <div id="gpager" style="display:none;gap:8px;margin-top:14px;align-items:center">
+          <button class="cta ghost" id="gPrev" onclick="groupsPage(-1)">◀ 이전</button>
+          <button class="cta ghost" id="gNext" onclick="groupsPage(1)">다음 ▶</button>
+          <span class="dim" style="font-size:12px" id="gPageInfo"></span>
+        </div>
+      </div>
       <div class="tray">
-        <div class="lab">정리 대기함</div>
-        <div class="big" id="reclaimSize">1.76 TB</div>
-        <div class="mono muted" style="font-size:12.5px">삭제 <span id="cutN">1,176</span> 파일</div>
-        <hr>
-        <div class="brk"><span>휴지통 <span class="dim">되돌림 · 기본</span></span><span class="mono" id="brkTrash">0</span></div>
+        <div class="lab">정리 대기함 <span class="dim">— 전체 결과 기준</span></div>
+        <div class="big" id="reclaimSize">—</div>
+        <div class="mono muted" style="font-size:12.5px">체크 <span id="cutN">0</span> 파일</div>
+        <div class="mono" style="font-size:11.5px;color:var(--muted)" id="cutMiss"></div>
+        <button class="reclaim-cta" data-busy onclick="doReclaim()">🗑 휴지통으로 정리</button>
         <div class="safe">✓ 유지본은 기본 해제 — 직접 클릭하면 체크 가능(호박색·삭제 시 경고) · 실행 전엔 디스크 무접촉</div>
-        <button class="reclaim-cta" onclick="go('reclaim')">정리 ▸</button>
-      </div>
-    </div>
-  </section>
-
-  <!-- RECLAIM -->
-  <section class="screen" id="s-reclaim">
-    <div class="h1">⑤ 정리 — 실행 계획 검토</div>
-    <div class="sub">체크한 항목만 처리된다. 실행 전엔 디스크에 아무것도 안 닿음. 되돌리기 Ctrl+Z.</div>
-    <div class="row">
-      <div class="card pad" style="flex:1.1">
-        <div class="lab">정리 대기함</div>
-        <div class="big" style="font-size:40px" id="reclaimSize5">—</div>
-        <div class="mono muted" style="font-size:13px">체크 <span id="cutN5">0</span> 파일</div>
-        <div style="display:flex;gap:8px">
-          <button class="reclaim-cta" style="flex:1" onclick="doReclaim()">🗑  휴지통으로 정리 ▸</button>
-          <button class="reclaim-cta" style="width:54px;flex:none" title="삭제 옵션 — 영구 삭제 · 폴더로 복사 · 폴더로 이동" onclick="openDelMenu(event)">▾</button>
-        </div>
-        <div style="font-size:11.5px;color:var(--muted);margin-top:10px">기본: 휴지통(DB 포함) · ▾ 영구 삭제 / 폴더로 복사 / 폴더로 이동(DB 경로 갱신)</div>
-      </div>
-      <div style="flex:1.9;display:flex;flex-direction:column;gap:14px">
-        <div class="card pad">
-          <div class="lbl">선택 도우미</div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="cta ghost" onclick="selBulk('auto')">우선순위 자동선택</button><button class="cta ghost" onclick="selBulk('invert')">선택 반전</button><button class="cta ghost" onclick="selBulk('clear')">선택 해제</button><button class="cta ghost" onclick="openCheckMenu(event)">☑ 체크 옵션 ▾</button></div>
-        </div>
-        <div class="card pad">
-          <div class="lbl">액션별 계획</div>
-          <div class="tally"><span>🗑 휴지통 <span class="dim">되돌림 · 기본 삭제 경로</span></span><span class="mono" id="planTrash">0 파일 · —</span></div>
-          <div style="margin-top:12px"><button class="cta ghost" onclick="exportCsv()">📄 결과 CSV 내보내기</button>
-            <span class="dim" style="font-size:11.5px;margin-left:8px">그룹·유지본·체크 상태 포함</span></div>
+        <div class="dim" style="font-size:11.5px;margin-top:10px">영구 삭제 · 폴더로 복사/이동 · 시뮬레이션은 상단 <b>체크된 항목 삭제 ▾</b>,<br>체크 계열은 상단 <b>선택 ▾</b> 에 모여 있다.</div>
+        <hr>
+        <div class="lab">내보내기</div>
+        <div style="margin-top:8px">
+          <button class="cta ghost" style="padding:6px 10px;font-size:12px" onclick="exportCsv()">📄 이 페이지 CSV</button>
         </div>
       </div>
     </div>
   </section>
 
+</div>
+
+<!-- 확인 대화상자 (앱 테마). 네이티브 MessageBox 는 흰 바탕이라 눈이 부셔서 대체했다. -->
+<div class="cmdk" id="okdlg" onclick="if(event.target===this)confirmAns(false)">
+  <div class="ckbox" style="padding:20px;width:min(620px,92vw)">
+    <div class="lbl" id="okTitle" style="margin-bottom:10px">확인</div>
+    <div id="okBody" style="white-space:pre-wrap;font-size:13.5px;line-height:1.6;color:var(--ink);max-height:52vh;overflow:auto"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px">
+      <button class="cta ghost" onclick="confirmAns(false)">아니요 <span class="kbd" style="margin-left:4px">Esc</span></button>
+      <button class="cta" id="okYes" onclick="confirmAns(true)">예 <span class="kbd" style="margin-left:4px;border-color:rgba(255,255,255,.35);color:#fff">Enter</span></button>
+    </div>
+  </div>
 </div>
 
 <!-- 드롭다운 메뉴 (체크 옵션 · 삭제 옵션 — openMenu 가 내용을 채운다) -->
@@ -465,7 +463,7 @@
 </div>
 
 <!-- SETTINGS (in-page screen — no modal; left section tabs) -->
-<section class="screen" id="s-settings" style="max-width:1440px;margin:0 auto;padding:10px 20px 60px">
+<section class="screen" id="s-settings" style="padding:10px 22px 60px">
     <div class="h1">환경설정</div>
     <div class="sub">변경 즉시 저장 · 엔진 옵션은 다음 스캔/비교부터 적용.</div>
     <div class="setwrap">
@@ -503,9 +501,9 @@
 </section>
 
 <!-- DB VIEWER (in-page screen — paged index browser) -->
-<section class="screen" id="s-dbview" style="max-width:1440px;margin:0 auto;padding:10px 20px 60px">
+<section class="screen" id="s-dbview" style="padding:10px 22px 60px">
     <div class="h1">DB 뷰어</div>
-    <div class="sub">지문 인덱스 엔트리 열람. ✕ = 인덱스에서 잊기(파일은 그대로, 재스캔 시 다시 등록). 디스크에 없는 파일의 지문은 일부러 남긴다 — 같은 파일을 다시 받으면 바로 잡아내기 위해서.</div>
+    <div class="sub">지문 인덱스 엔트리 열람. ✕ = 인덱스에서 잊기(파일은 그대로, 재스캔 시 다시 등록) · 🗑 = 파일을 휴지통으로 삭제(DB 엔트리도 함께 제거) · 📂 = 탐색기에서 표시. 디스크에 없는 파일의 지문은 일부러 남긴다 — 같은 파일을 다시 받으면 바로 잡아내기 위해서.</div>
     <div class="query" style="margin-bottom:14px">
       <span class="gt">&gt;</span>
       <input id="dbq" placeholder="경로 검색" oninput="dbSearch()">
@@ -554,7 +552,11 @@
   // 유지본(keep)도 직접 클릭하면 체크(삭제 후보)될 수 있다 — 구버전 GUI 와 동일. 다른 건 기본값뿐:
   // cutState 에 명시 항목이 없으면 유지본=해제, 비유지=체크. 체크된 유지본은 호박색으로 표시되고,
   // 삭제 시 overrides 로 전달돼 C# 확인 대화상자가 개수를 경고한다 (명시 승인 없인 C#이 거부).
-  function isCut(f){ return (f.p in cutState) ? cutState[f.p] : !f.keep; }
+  // 기본값에서 f.miss(디스크에 없는 톰스톤)를 빼는 것이 핵심이다: 톰스톤은 유지본이 아니라는 이유로
+  // 자동 체크됐고, 그래서 정리를 눌러도 "휴지통 0개 · DB 엔트리만 제거 N" 만 나왔다. 지울 게 없으니
+  // 기본은 해제 — DB 엔트리를 비우려면 '사라진 파일 체크'로 명시적으로 고른다.
+  // C# BuildSelection 의 판정과 반드시 같은 규칙이어야 한다 (다르면 본 것과 다른 걸 지운다).
+  function isCut(f){ return (f.p in cutState) ? cutState[f.p] : (!f.keep && !f.miss); }
   // lc(경로)->1 : 유지본에 대한 체크가 "일괄/서버 산출"임을 표시. 삭제 승인(override)은 직접 클릭만 —
   // tog() 가 수동 토글 시 표식을 지워서, 화면의 호박색 체크박스를 본인이 누른 경우에만 승인이 된다.
   var __autoCut={};
@@ -614,6 +616,9 @@
     if(dk.length>1) h+='<span class="facet g">│ 드라이브</span>'+dk.map(function(d){return chip(d,"drive:"+d.toLowerCase(),drv[d]);}).join("");
     box.innerHTML=h;
   }
+  // 디스크에 없는 파일(지문만 남은 톰스톤) — 왜 체크가 안 되어 있는지 화면에서 바로 보이게 한다.
+  function missTag(f){ return f.miss ? ' <span class="keep-tag" style="background:rgba(255,107,107,.14);color:var(--red);border-color:rgba(255,107,107,.3)" title="디스크에 없다 — 지문만 남은 엔트리. 체크하면 DB 엔트리만 정리된다">없음</span>' : ''; }
+  window.missTag=missTag;
   function renderGroups(){
     var qi=document.getElementById("q"), q=(qi?qi.value:"").toLowerCase();
     var html=""; __files=[]; window.__thumbByPath={}; window.__pathByIdx={};
@@ -630,7 +635,7 @@
           var idx=__files.length; __files.push(f); window.__thumbByPath[f.p]=idx; window.__pathByIdx[idx]=f.p;
           var cells=f.m.map(function(x){return '<td class="tmono '+mClass(f,x)+'">'+x+'</td>';}).join("");
           html+='<tr><td><span class="tcb '+(f.keep?'kcb ':'')+(isCut(f)?'cut':'')+'" id="cb'+idx+'" onclick="tog('+idx+')"></span></td>'
-            +'<td class="tpath" title="'+f.p.replace(/"/g,"&quot;")+'">'+f.p+(f.keep?' <span class="keep-tag">유지</span>':'')
+            +'<td class="tpath" title="'+f.p.replace(/"/g,"&quot;")+'">'+f.p+(f.keep?' <span class="keep-tag">유지</span>':'')+missTag(f)
             +'<span class="fop" title="재생" onclick="fileOp(event,\'open\','+idx+')">▶</span><span class="fop" title="탐색기에서 표시" onclick="fileOp(event,\'reveal\','+idx+')">📂</span><span class="fop" title="이름 변경" onclick="renameUi(event,'+idx+')">✏</span></td>'
             +cells+'<td class="tmono">'+g.sim+'</td></tr>';
         });
@@ -641,7 +646,7 @@
           var mtxt=f.m.map(function(x){return '<span class="'+mClass(f,x)+'">'+x+'</span>';}).join("");
           html+='<div class="fcard"><span class="cb '+(f.keep?'kcb ':'')+(isCut(f)?'cut':'')+'" id="cb'+idx+'" onclick="tog('+idx+')"></span>'
             +'<div class="thumb" id="thumb'+idx+'" data-i="'+idx+'" data-t="'+f.t+'"><span class="res">'+f.res+'</span></div>'
-            +'<div class="fmeta"><div class="fpath">'+f.p+(f.keep?' <span class="keep-tag">유지</span>':'')
+            +'<div class="fmeta"><div class="fpath">'+f.p+(f.keep?' <span class="keep-tag">유지</span>':'')+missTag(f)
             +'<span class="fop" title="재생" onclick="fileOp(event,\'open\','+idx+')">▶</span><span class="fop" title="탐색기에서 표시" onclick="fileOp(event,\'reveal\','+idx+')">📂</span><span class="fop" title="이름 변경" onclick="renameUi(event,'+idx+')">✏</span></div><div class="fmetrics">'+mtxt+'</div></div>'
             +'<span class="sim">'+g.sim+'</span></div>';
         });
@@ -735,13 +740,25 @@
       e.preventDefault(); selUndo();
     }
   });
+  // 대기함 숫자의 진실은 서버에 있다 (cutStats): 화면은 그룹 한 페이지만 들고 있으므로 여기서 센 값은
+  // "이 페이지" 뿐이다. 즉시 반응을 위해 페이지 값을 먼저 칠하고, 전체 결과 기준 합계가 오면 덮어쓴다.
+  // 이 블록은 최상위 스크립트라 함수 선언이 곧 window.* 다 — 같은 이름으로 래퍼를 씌우면 자기 자신을
+  // 호출하는 무한 재귀가 된다. 이름을 분리해 둔다.
+  function paintCut(s){
+    var e=document.getElementById("reclaimSize"); if(e)e.textContent=s.bytes||"—";
+    e=document.getElementById("cutN"); if(e)e.textContent=Number(s.count||0).toLocaleString();
+    e=document.getElementById("cutMiss");
+    if(e)e.textContent = s.miss ? ("이 중 "+Number(s.miss).toLocaleString()+"개는 디스크에 없음 — DB 엔트리만 정리된다") : "";
+  }
+  // 트리아지 저장 + 전체 기준 합계 요청 (같은 왕복의 응답이 cutStats 다).
+  // _triReady 가드는 필수: getTriage 왕복 전의 cutState 는 "빈 값"이지 "체크 없음"이 아니다 —
+  // 그대로 저장하면 사용자가 쌓아둔 검토 체크를 통째로 지운다 (recount 와 같은 이유).
+  function pushTriage(){ if(_triReady&&window.vdf)window.vdf.send("saveTriage",{cut:cutState,autoCut:Object.keys(__autoCut)}); }
+  window.pushTriage=pushTriage;
   function recount(){
     var bytes=0,count=0;
     GROUPS.forEach(function(g){g.files.forEach(function(f){ if(isCut(f)){ bytes+=(f.bytes||0); count++; } });});
-    var human=count?humanBytes(bytes):"—", cnt=count.toLocaleString();
-    ["reclaimSize","reclaimSize5"].forEach(function(id){var e=document.getElementById(id); if(e)e.textContent=human;});
-    ["cutN","cutN5","brkTrash"].forEach(function(id){var e=document.getElementById(id); if(e)e.textContent=cnt;});
-    var pt=document.getElementById("planTrash"); if(pt)pt.textContent=cnt+" 파일 · "+human;
+    paintCut({count:count,bytes:count?humanBytes(bytes):"—",miss:0});
     // triage persistence: cutState is what a restart would lose — debounce-save it beside the DB.
     // recount() runs after every cutState mutation (and some pure re-renders; extra saves are cheap).
     // Gated on _triReady: before the getTriage round-trip lands, cutState belongs to NO db (startup:
@@ -749,7 +766,7 @@
     // CURRENT db folder — an early save would wipe or cross-contaminate the other DB's triage.
     if(!_triReady) return;
     clearTimeout(window.__triTimer);
-    window.__triTimer=setTimeout(function(){ if(window.vdf)window.vdf.send("saveTriage",{cut:cutState}); },600);
+    window.__triTimer=setTimeout(pushTriage,600);
   }
   var _triReady=false;
   // DB target changed: the loaded triage is now the wrong DB's — drop it and disarm saving until the
@@ -766,12 +783,25 @@
   window.selBulk=selBulk; window.selUndo=selUndo; window.selReset=selReset;
   renderGroups();
 
-  function go(s){document.querySelectorAll(".screen").forEach(e=>e.classList.remove("on"));document.getElementById("s-"+s).classList.add("on");
-    const idx={sources:0,rules:1,scan:2,review:3,reclaim:4}[s];
-    document.querySelectorAll("#rail .chip").forEach((c,i)=>c.classList.toggle("on",i===idx));window.scrollTo({top:0,behavior:"smooth"});
+  function go(s){
+    if(s==="reclaim")s="review";   // ⑤정리는 검토정리로 합쳐졌다 — 옛 호출/북마크도 그대로 동작해야 한다
+    if(s==="rules"){ if(window.openSettings)openSettings(); if(window.setOptTab)setOptTab(1); return; }   // 규칙은 환경설정 안으로
+    const el=document.getElementById("s-"+s); if(!el)return;
+    document.querySelectorAll(".screen").forEach(e=>e.classList.remove("on"));el.classList.add("on");
+    const idx={sources:0,scan:1,review:2}[s];
+    document.querySelectorAll("#rail .chip").forEach((c,i)=>c.classList.toggle("on",i===idx));
+    // 검토정리는 리스트 컬럼이 스스로 스크롤한다 — 본문 스크롤을 꺼야 헤더/트레이가 제자리에 남는다
+    const wrap=document.querySelector(".wrap");
+    if(wrap){
+      wrap.classList.toggle("noscroll",s==="review");
+      // 환경설정/DB 뷰어 화면은 .wrap 바깥에 있다 — .wrap 이 flex 공간을 먹으면 그 화면이 눌린다
+      const outside=(s==="settings"||s==="dbview");
+      wrap.style.display=outside?"none":"";
+      if(!outside)wrap.scrollTo({top:0,behavior:"smooth"});
+    }
     if(s==="scan"&&window.vdf&&window.vdf.send)window.vdf.send("driveInfo");}   // real per-drive state, not the sample
   // fix the sources chip onclick mapping
-  document.querySelectorAll("#rail .chip").forEach((c,i)=>{c.onclick=()=>go(["sources","rules","scan","review","reclaim"][i]);});
+  document.querySelectorAll("#rail .chip").forEach((c,i)=>{c.onclick=()=>go(["sources","scan","review"][i]);});
   go('review'); // sync initial state (④ 검토 hero)
   let tt;function toast(m){clearTimeout(tt);let t=document.getElementById("_t");if(!t){t=document.createElement("div");t.id="_t";t.style.cssText="position:fixed;left:50%;bottom:60px;transform:translateX(-50%);z-index:60;background:rgba(30,30,36,.9);backdrop-filter:blur(10px);border:1px solid var(--line);color:var(--ink);padding:9px 16px;border-radius:11px;font-size:13px;box-shadow:0 10px 30px rgba(0,0,0,.5)";document.body.appendChild(t);}t.textContent=m;t.style.opacity=1;tt=setTimeout(()=>t.style.opacity=0,1400);}
 </script>
@@ -785,7 +815,21 @@
     return true;
   }
   var handlers = {};
-  var _busy = false;   // one long engine op (compare/scan) at a time — the C# side serializes too
+  // 긴 엔진 작업은 한 번에 하나뿐이다 — C# 쪽도 _engineLock 으로 직렬화한다. 지금까지 _busy 가드는
+  // 토스트로 튕기기만 해서 버튼은 멀쩡히 눌리는 모습이었다. 스캔이 도는 줄 모르고 계속 누르게 되는
+  // 원인이라 상태를 눈에 보이게 칠한다: 작업을 "시작"하는 버튼은 잠그고, 멈춤/일시정지는 그때 나타난다.
+  // 레일(①②③)은 절대 잠그지 않는다 — 진행 화면으로 가는 길까지 막으면 안 된다.
+  var _busy = false, _busySel = "[data-busy]";
+  function paintBusy() {
+    var els = document.querySelectorAll(_busySel);
+    for (var i = 0; i < els.length; i++) {
+      els[i].classList.toggle("busy-off", _busy);
+      if (_busy) els[i].setAttribute("aria-disabled", "true");
+      else els[i].removeAttribute("aria-disabled");
+    }
+  }
+  // send() 는 브리지가 없으면 false 를 준다 — 그 값을 그대로 물려 받아야 래치가 안 걸린다.
+  function setBusy(v) { _busy = !!v; paintBusy(); return _busy; }
   window.vdf = { send: send, on: function (c, f) { handlers[c] = f; } };
 
   // ---- 콘솔 드로어 (path-free operation log) ----
@@ -846,11 +890,12 @@
     _lastStage = "";
     clog("비교 시작 — 전체 DB 재비교");
     if (window.toast) toast("비교 중… 전체 DB 재비교 (기존 지문)");
-    _busy = send("compare");   // a bridge-less send can never unlatch — don't latch on it
+    setBusy(send("compare"));   // a bridge-less send can never unlatch — don't latch on it
   };
 
   window.vdf.on("progress", function (d) {
     scanCtl(true);   // compare-only runs are pausable/stoppable too — surface the controls on ③
+    if (d.tallies) renderTallies(d.tallies, "실시간 집계 — 비교 중");   // 아래에서 선언 — 함수 선언이라 호이스팅된다
     stageLog("비교", d.pct, d.stage);
     var parts = ["비교 " + (d.pct || 0) + "%"];
     if (d.stage) parts.push(escH(d.stage));
@@ -860,22 +905,50 @@
     if (window.toast) toast("비교 중… " + (d.pct || 0) + "%" + (d.stage ? " · " + d.stage : "") + (d.file ? " · " + d.file : ""));
   });
 
+  // 그룹 페이지 상태. 체크 상태(cutState)는 경로 단위 + 서버가 전체 결과를 기준으로 판단하므로
+  // 페이지를 넘겨도 선택은 그대로다 — 페이지는 표시 장치일 뿐이다.
+  var _gPage = { offset: 0, page: 150, total: 0 };
   window.vdf.on("groups", function (d) {
-    _busy = false; scanCtl(false); setScanNow("");
+    setBusy(false); scanCtl(false); setScanNow("");
     if (!d || !d.groups) return;
-    if (window.selReset) selReset();          // undo snapshots from the previous result set are stale
+    // 페이지 넘김(paged)은 같은 결과셋이므로 선택 되돌리기 이력을 버리지 않는다. 새 비교/복원일 때만 버린다.
+    if (!d.paged) { if (window.selReset) selReset(); }
+    _gPage = { offset: d.offset || 0, page: d.page || 150, total: d.totalGroups || 0 };
     window.GROUPS = d.groups;                 // replace the mock sample data
     if (window.pruneKeeperChecks) pruneKeeperChecks();   // 새로 유지본이 된 경로의 낡은 체크(true)를 무효화
     if (d.why) window.__why = d.why;          // 선정 근거 from the priority order
     if (window.renderGroups) renderGroups();
+    paintPager();
+    if (window.pushTriage) pushTriage();      // 전체 결과 기준 대기함 합계(cutStats)를 다시 받아온다
     if (window.go) go("review");
-    clog("비교 완료 · " + (d.totalGroups || 0).toLocaleString() + " 그룹 · " + (d.items || 0).toLocaleString() + " 파일" +
-         (d.shown < d.totalGroups ? " (상위 " + d.shown + " 표시)" : ""), "ok");
-    if (window.toast)
-      toast("중복 " + (d.totalGroups || 0).toLocaleString() + "개 그룹 · " +
-            (d.items || 0).toLocaleString() + " 파일" +
-            (d.shown < d.totalGroups ? " (상위 " + d.shown + " 표시)" : ""));
+    var head = (d.restored ? "결과 복원" : "비교 완료") + " · " + (d.totalGroups || 0).toLocaleString() + " 그룹 · " +
+               (d.items || 0).toLocaleString() + " 파일";
+    clog(head + (d.note ? (" · " + escH(d.note)) : ""), d.restored ? "warn" : "ok");
+    if (window.toast) toast(d.note ? d.note : head);
   });
+
+  // ---- 그룹 페이지 넘김 ----
+  function paintPager() {
+    var box = document.getElementById("gpager"); if (!box) return;
+    var multi = _gPage.total > _gPage.page;
+    box.style.display = multi ? "flex" : "none";
+    if (!multi) return;
+    var from = _gPage.offset + 1, to = Math.min(_gPage.offset + _gPage.page, _gPage.total);
+    var info = document.getElementById("gPageInfo");
+    if (info) info.textContent = from.toLocaleString() + "–" + to.toLocaleString() + " / 전체 " + _gPage.total.toLocaleString() + " 그룹 (되찾을 용량 순)";
+    var pv = document.getElementById("gPrev"), nx = document.getElementById("gNext");
+    if (pv) pv.disabled = _gPage.offset <= 0;
+    if (nx) nx.disabled = to >= _gPage.total;
+  }
+  window.groupsPage = function (dir) {
+    if (_busy) { if (window.toast) toast("작업 진행 중… 끝나면 다시"); return; }
+    var next = _gPage.offset + dir * _gPage.page;
+    if (next < 0 || next >= _gPage.total) return;
+    send("groupsPage", { offset: next });
+  };
+
+  // 전체 결과 기준 정리 대기함 합계 (saveTriage 왕복의 응답)
+  window.vdf.on("cutStats", function (d) { if (window.paintCut) paintCut(d); });
 
   // ---- 환경설정 (mpvGrid path) ----
   window.vdf.on("settings", function (d) {
@@ -926,9 +999,7 @@
   window.browseMpv = function () { send("browseMpv"); };
   window.saveMpvPath = function () { var v = document.getElementById("mpvPath"); send("saveSetting", { key: "mpvGridPath", val: v ? v.value : "" }); };
 
-  // ---- 규칙 (engine Settings) ----
-  function setVal(id, v) { var e = document.getElementById(id); if (e) e.value = v; }
-  function setSw(id, on) { var e = document.getElementById(id); if (e) e.classList.toggle("on", !!on); }
+  // ---- 규칙 (engine Settings) — 화면은 환경설정 '매칭 규칙' 탭 하나로 통합됐다 ----
   var PRIO_LABEL = { hdr: "HDR", res: "해상도", bitrate: "비트레이트", duration: "재생시간", size: "크기" };
   var _prio = ["hdr", "res", "bitrate", "duration", "size"];
   window.__why = "HDR › 해상도 › 비트레이트";
@@ -956,11 +1027,6 @@
     });
   }
   window.vdf.on("rules", function (d) {
-    setVal("rPercent", d.percent); setVal("rGray", d.phashGray); setVal("rDur", d.durationPct);
-    setVal("rMinMB", d.minFileSizeMB); setVal("rMaxMB", d.maxFileSizeMB);
-    setSw("swPHash", d.usePHash); setSw("swFlip", d.compareFlipped); setSw("swBW", d.ignoreBW);
-    setSw("swSub", d.includeSubDirs); setSw("swImg", d.includeImages);
-    setSw("swDb", d.entireDb); setSw("swSize", d.filterBySize);
     if (d.priority && d.priority.length) {
       _prio = d.priority.slice();
       window.__why = _prio.slice(0, 3).map(function (k) { return PRIO_LABEL[k]; }).join(" › ");
@@ -969,14 +1035,26 @@
     window.__lastRules = d;                        // re-fill when a settings tab renders its controls
     if (window.__fillOpts) window.__fillOpts(d);   // full engine options in the settings screen
   });
-  window.setRuleNum = function (key, el) { var v = parseFloat(el.value); if (!isNaN(v)) send("setRule", { key: key, val: v }); };
-  window.toggleRule = function (key, sw) {
-    var on = !sw.classList.contains("on"); sw.classList.toggle("on", on);
-    send("setRule", { key: key, val: on });
-  };
 
   // ---- 환경설정: full engine options (schema-driven; mirrors VDF.Core Settings) ----
   var OPT_SECTIONS = [
+    // 예전 ② 규칙 탭. 별도 화면으로 갈라져 있으면 "무엇을 중복으로 볼까"와 나머지 엔진 설정이
+    // 두 군데로 흩어져 혼란스럽다는 요청 — 환경설정 안의 첫 탭으로 합쳤다. 저장 경로는 그대로(setRule).
+    { t: "매칭 규칙", items: [
+      { k: "percent", l: "유사도 임계값 (%)", ty: "num", h: "낮출수록 더 많이 매칭된다 · 다음 비교부터 적용" },
+      { k: "phashGray", l: "pHash 그레이 검증 (%)", ty: "num" },
+      { k: "durationPct", l: "재생시간 허용 오차 (%)", ty: "num" },
+      { k: "usePHash", l: "pHash 사용", ty: "sw", h: "끄면 그레이스케일 %가 직접 적용" },
+      { k: "compareFlipped", l: "좌우 반전본도 비교", ty: "sw" },
+      { k: "ignoreBW", l: "검은 · 흰 픽셀 무시", ty: "sw" },
+      { k: "includeSubDirs", l: "하위 폴더 포함", ty: "sw" },
+      { k: "includeImages", l: "이미지 포함", ty: "sw" },
+      { k: "entireDb", l: "전체 DB와 비교", ty: "sw" },
+      { k: "filterBySize", l: "파일 크기로 필터", ty: "sw" },
+      { k: "minFileSizeMB", l: "최소 크기 (MB)", ty: "num", h: "0=제한 없음" },
+      { k: "maxFileSizeMB", l: "최대 크기 (MB)", ty: "num", h: "0=제한 없음" },
+      { ty: "prio", l: "유지본 우선순위", h: "드래그로 순서 변경 · 위(왼쪽)일수록 우선 — 검토 목록의 ‘유지’ 표시가 이 순서로 정해진다" },
+    ]},
     { t: "스캔 성능", items: [
       { k: "maxDegreeOfParallelism", l: "최대 병렬 처리 수", ty: "num", h: "-1=모든 코어 · 1=한 개씩" },
       { k: "hddMaxDegreeOfParallelism", l: "HDD 병렬 처리 수", ty: "num", h: "스핀들 HDD 드라이브별" },
@@ -1026,11 +1104,14 @@
     ]},
   ];
   var OPT_BY_KEY = {};
-  OPT_SECTIONS.forEach(function (s) { s.items.forEach(function (it) { OPT_BY_KEY[it.k] = it; }); });
+  OPT_SECTIONS.forEach(function (s) { s.items.forEach(function (it) { if (it.k) OPT_BY_KEY[it.k] = it; }); });
 
   function optRow(it) {
     var hint = it.h ? '<div class="ohint' + (it.warn ? ' warn' : '') + '">' + it.h + '</div>' : '';
     var ctl;
+    // 우선순위는 값 하나가 아니라 순서라서 전용 행이다 (드래그 정렬은 renderPrio 가 붙인다)
+    if (it.ty === "prio") return '<div class="orow" style="align-items:flex-start"><div class="olab">' + it.l + hint + '</div>' +
+      '<div id="prioChips" style="display:flex;flex-wrap:wrap;gap:7px;justify-content:flex-end;max-width:60%"></div></div>';
     if (it.ty === "sw") ctl = '<span class="sw" id="opt_' + it.k + '" onclick="optToggle(\'' + it.k + '\',this)"></span>';
     else if (it.ty === "sel") ctl = '<select class="osel" id="opt_' + it.k + '" onchange="optSel(\'' + it.k + '\',this)">' +
       it.opts.map(function (o) { var v = Array.isArray(o) ? o[0] : o, l = Array.isArray(o) ? o[1] : o; return '<option value="' + v + '">' + l + '</option>'; }).join("") + '</select>';
@@ -1057,6 +1138,7 @@
       if (i > 0) {
         ol.innerHTML = OPT_SECTIONS[i - 1].items.map(optRow).join("");
         if (window.__lastRules) fillOpts(window.__lastRules);   // fill the freshly-rendered controls
+        renderPrio();   // 우선순위 행이 있는 탭이면 칩을 다시 붙인다 (없으면 no-op)
       }
     }
   };
@@ -1087,18 +1169,37 @@
   // ---- 커맨드 팔레트 (Ctrl+K) — 이동/실행/설정 점프. 삭제류 명령은 의도적으로 제외 ----
   var CK_BASE = [
     { c: "이동", t: "① 소스 — 스캔할 폴더", k: "sources go", run: function () { go("sources"); } },
-    { c: "이동", t: "② 규칙 — 매칭 기준", k: "rules go", run: function () { go("rules"); } },
-    { c: "이동", t: "③ 스캔", k: "scan go", run: function () { go("scan"); } },
-    { c: "이동", t: "④ 검토 — 중복 그룹", k: "review dup go", run: function () { go("review"); } },
-    { c: "이동", t: "⑤ 정리 — 휴지통 계획", k: "reclaim trash go", run: function () { go("reclaim"); } },
+    { c: "이동", t: "② 스캔", k: "scan go", run: function () { go("scan"); } },
+    { c: "이동", t: "규칙 — 매칭 기준 (환경설정 안)", k: "rules matching go settings", run: function () { go("rules"); } },
+    { c: "이동", t: "④ 검토정리 — 중복 그룹 · 삭제", k: "review reclaim dup trash go", run: function () { go("review"); } },
     { c: "실행", t: "▶ 전체 스캔 시작", k: "full scan start", run: function () { startFullScan(); } },
     { c: "실행", t: "비교만 다시 실행", k: "compare rerun", run: function () { doCompare(); } },
+    { c: "실행", t: "▶ 순회비교 (mpvGrid)", k: "mpv grid compare tour", run: function () { window.doMpvCompare(); } },
+    // 탭을 합친 이유가 "옵션/명령 접근"이라, 삭제·선택 계열은 팔레트에서도 전부 바로 닿게 둔다.
+    { c: "삭제", t: "🗑 휴지통으로 정리 (체크 항목 · DB 포함)", k: "reclaim trash delete", run: function () { go("review"); window.doReclaim(); } },
+    { c: "삭제", t: "⚠ 영구 삭제 (체크 항목 · 복구 불가)", k: "reclaim permanent delete", run: function () { go("review"); window.doReclaim(true); } },
+    { c: "삭제", t: "폴더로 복사 (체크 항목)", k: "copy to folder", run: function () { go("review"); window.doCopyTo(); } },
+    { c: "삭제", t: "폴더로 이동 (체크 항목 · DB 경로 갱신)", k: "move to folder", run: function () { go("review"); window.doMoveTo(); } },
+    { c: "선택", t: "우선순위 자동선택 (기본 선택 복원)", k: "auto select priority", run: function () { go("review"); selBulk("auto"); } },
+    { c: "선택", t: "체크 반전", k: "invert selection", run: function () { go("review"); selBulk("invert"); } },
+    { c: "선택", t: "체크 모두 해제", k: "clear selection", run: function () { go("review"); selBulk("clear"); } },
+    { c: "선택", t: "100% 동일 체크 (첫 번째 유지)", k: "identical check", run: function () { go("review"); window.autoCheck("identical"); } },
+    { c: "선택", t: "크기 빼고 100% 동일 체크 (가장 작은 것 유지)", k: "identical but size", run: function () { go("review"); window.autoCheck("identicalButSize"); } },
+    { c: "선택", t: "최저 품질 체크 (우선순위 기준)", k: "lowest quality check", run: function () { go("review"); window.autoCheck("lowest"); } },
+    { c: "선택", t: "사라진 파일 체크 (디스크에 없음 · DB 엔트리 정리용)", k: "missing check tombstone", run: function () { go("review"); window.autoCheck("missing"); } },
+    { c: "선택", t: "가장 오래된 것 체크 (최신 유지)", k: "oldest check", run: function () { go("review"); window.autoCheck("oldest"); } },
+    { c: "선택", t: "가장 최신 체크 (오래된 것 유지)", k: "newest check", run: function () { go("review"); window.autoCheck("newest"); } },
+    { c: "선택", t: "사용자 지정 체크…", k: "custom selection dialog", run: function () { go("review"); window.openCustomDlg(); } },
+    { c: "선택", t: "선택 되돌리기 (Ctrl+Z)", k: "undo selection", run: function () { selUndo(); } },
     { c: "보기", t: "검토 — 스트립 보기", k: "view strip", run: function () { go("review"); setView("strip"); } },
     { c: "보기", t: "검토 — 테이블 보기", k: "view table", run: function () { go("review"); setView("table"); } },
+    { c: "보기", t: "다음 그룹 페이지 ▶", k: "next page groups", run: function () { go("review"); window.groupsPage(1); } },
+    { c: "보기", t: "◀ 이전 그룹 페이지", k: "prev page groups", run: function () { go("review"); window.groupsPage(-1); } },
     { c: "콘솔", t: "콘솔 열기/닫기", k: "console toggle log", run: function () { toggleConsole(); } },
     { c: "콘솔", t: "콘솔 지우기", k: "console clear", run: function () { clearConsole(); } },
     { c: "데이터", t: "DB 뷰어 열기", k: "db viewer database index", run: function () { window.openDbView(); } },
-    { c: "데이터", t: "결과 CSV 내보내기", k: "csv export results", run: function () { window.exportCsv(); } }
+    { c: "데이터", t: "정리 시뮬레이션 보고서 (아무것도 안 지움)", k: "dry run report json", run: function () { window.exportDryRun(); } },
+    { c: "데이터", t: "이 페이지 CSV 내보내기", k: "csv export results", run: function () { window.exportCsv(); } }
   ];
   function ckCmds() {
     return CK_BASE.concat(SET_TABS.map(function (t, i) {
@@ -1258,15 +1359,21 @@
         '<div class="dbar"><i style="width:' + d.pct + '%"></i></div>' + act + '</div>';
     }).join("");
   }
-  function renderTallies(tallies) {
-    var box = document.getElementById("tallies"); if (!box) return;
+  // 값에 엔진이 준 문자열(단계 이름 등)이 섞여 오므로 라벨·값 모두 이스케이프한다.
+  // title 이 있으면 박스 제목까지 바꾼다 — 같은 자리에 DB 스냅샷과 라이브 카운터가 번갈아 들어오니,
+  // 지금 보고 있는 숫자가 어느 쪽인지 제목이 말해줘야 한다.
+  function renderTallies(tallies, title) {
+    var lbl = document.getElementById("talliesLbl"); if (lbl && title) lbl.textContent = title;
+    var box = document.getElementById("tallies"); if (!box || !tallies) return;
     box.innerHTML = tallies.map(function (t) {
-      return '<div class="tally"><span>' + t[0] + '</span><span class="mono">' + t[1] + '</span></div>';
+      return '<div class="tally"><span>' + escH(t[0]) + '</span><span class="mono">' + escH(t[1]) + '</span></div>';
     }).join("");
   }
-  window.vdf.on("driveInfo", function (d) { if (d.drives) renderDrives(d.drives); if (d.tallies) renderTallies(d.tallies); });
+  window.vdf.on("driveInfo", function (d) { if (d.drives) renderDrives(d.drives); if (d.tallies) renderTallies(d.tallies, "집계 — DB 현황"); });
   window.vdf.on("scanProgress", function (d) {
     if (d.drives) renderDrives(d.drives);
+    // 단계 전환 알림처럼 tallies 없는 프레임도 온다 — 그 땐 직전 숫자를 그대로 두고 제목도 건드리지 않는다
+    if (d.tallies) renderTallies(d.tallies, "실시간 집계 — 스캔 중");
     scanCtl(true);
     if (_paused) {   // progress while "paused" = the pause never took (engine no-op window) — self-correct
       _paused = false; var pb = document.getElementById("btnPause"); if (pb) pb.textContent = "⏸ 일시정지";
@@ -1320,86 +1427,69 @@
     } else { clog("강제 중단 요청", "warn"); if (window.toast) toast("강제 중단…"); }
   });
   window.vdf.on("scanAborted", function () {
-    _busy = false; scanCtl(false); setScanNow("");
+    setBusy(false); scanCtl(false); setScanNow("");
     clog("스캔 중단됨 — 지금까지 완료된 지문은 DB에 남는다", "warn");
     if (window.toast) toast("스캔 중단됨");
   });
-  window.vdf.on("scanBlocked", function (d) { _busy = false; setScanNow(""); clog(d.message, "warn"); if (window.toast) toast(d.message); if (window.go) go("sources"); });
+  window.vdf.on("scanBlocked", function (d) { setBusy(false); setScanNow(""); clog(d.message, "warn"); if (window.toast) toast(d.message); if (window.go) go("sources"); });
   window.startFullScan = function () { if (window.go) go("scan"); };   // go("scan") already pulls driveInfo
   window.doStartScan = function () {
     if (_busy) { if (window.toast) toast("작업 진행 중… 끝나면 다시"); return; }
     _lastStage = "";
     clog("스캔 시작");
     if (window.toast) toast("스캔 시작…");
-    _busy = send("startScan");   // see doCompare
+    setBusy(send("startScan"));   // see doCompare
   };
 
   // ---- ⑤ 정리 실행 (체크 항목 삭제 — 휴지통 기본 · permanent=true 면 영구 삭제) ----
   window.doReclaim = function (permanent) {
     if (_busy) { if (window.toast) toast("작업 진행 중… 끝나면 다시"); return; }
-    var cut = window.isCut || function (f) { return !f.keep; };
-    // cutState 는 경로 단위라 같은 경로는 어느 그룹에서든 체크 상태가 같다:
-    //  체크됨       → paths (직접 클릭으로 체크된 유지본이면 overrides 에도 — 사용자의 명시 승인)
-    //  미체크 유지본 → keepers (C#이 어떤 경로로도 삭제 거부)
-    // __autoCut 표식이 있는 유지본 체크(일괄/서버 산출)는 승인이 아니다 — C#의 keeper 가드가 걸러내고
-    // 확인 대화상자가 "보호되어 건너뜀"으로 알려준다. 직접 클릭(tog)이 표식을 지워야만 승인이 된다.
-    var seen = {}, paths = [], protectMap = {}, overMap = {};
-    (window.GROUPS || []).forEach(function (g) {
-      g.files.forEach(function (f) {
-        var lc = f.p.toLowerCase();
-        if (cut(f)) { if (!seen[lc]) { seen[lc] = 1; paths.push(f.p); } if (f.keep && !(window.__autoCut && window.__autoCut[lc])) overMap[lc] = f.p; }
-        else if (f.keep) protectMap[lc] = f.p;
-      });
-    });
-    if (!paths.length) { if (window.toast) toast("정리할 체크 항목이 없다"); return; }
-    var keepers = Object.keys(protectMap).filter(function (k) { return !seen[k]; }).map(function (k) { return protectMap[k]; });
-    var overrides = Object.keys(overMap).map(function (k) { return overMap[k]; });
+    if (!(window.GROUPS || []).length) { if (window.toast) toast("비교 결과가 없다 — 상단 ‘비교만 다시’를 먼저"); return; }
+    // 대상 수집은 C#(BuildSelection)이 한다: 화면은 그룹 한 페이지만 들고 있어서 여기서 모으면 나머지
+    // 페이지의 체크가 라벨과 달리 조용히 빠졌다. 보내는 건 사용자 의도 그대로 두 가지뿐 —
+    //   cut     : 기본값과 다른 명시적 체크/해제 (경로 단위)
+    //   autoCut : "직접 클릭이 아니라 일괄/서버 산출로 체크된 유지본" 표식 = 삭제 승인이 아니다
+    // 유지본 보호와 승인 판정, 휴지통 가능 여부까지 전부 C# 이 다시 확인한다.
     // latch until reclaimDone/reclaimCancelled/fatal error — a second 정리 click mid-deletion would
     // re-collect the same paths. Bridge-less send (browser QA) can never unlatch → don't latch.
-    _busy = send("reclaim", { paths: paths, keepers: keepers, overrides: overrides, permanent: !!permanent });
+    setBusy(send("reclaim", { cut: cutState, autoCut: Object.keys(__autoCut), permanent: !!permanent }));
   };
   window.vdf.on("reclaimDone", function (d) {
-    _busy = false;
-    var msg = "정리 완료 · " + d.deleted + "개 " + (d.permanent ? "영구 삭제" : "휴지통으로") + " · " + d.freed + " 확보" +
-      (d.entryOnly ? (" · DB 엔트리만 제거 " + d.entryOnly) : "") +
-      (d.skipped ? (" · 건너뜀 " + d.skipped) : "") + (d.failed ? (" · 실패 " + d.failed) : "");
+    setBusy(false);
+    // 파일은 하나도 안 지웠고 "이미 없어진 파일의 엔트리"만 정리한 경우를 먼저 말한다 — 예전엔
+    // "0개 휴지통으로"가 앞에 나와서 아무것도 안 된 것처럼 보였다.
+    var msg = (d.deleted === 0 && d.entryOnly)
+      ? ("DB 엔트리 정리 완료 · " + d.entryOnly + "개 (파일은 이미 디스크에 없었다)")
+      : ("정리 완료 · " + d.deleted + "개 " + (d.permanent ? "영구 삭제" : "휴지통으로") + " · " + d.freed + " 확보" +
+         (d.entryOnly ? (" · 없어진 파일 엔트리 " + d.entryOnly + "개 정리") : ""));
+    msg += (d.skipped ? (" · 건너뜀 " + d.skipped) : "") + (d.failed ? (" · 실패 " + d.failed) : "");
     clog(msg, d.failed ? "warn" : "ok");
     if (window.toast) toast(msg);
   });
   window.vdf.on("reclaimProgress", function (d) { if (window.toast) toast("삭제 진행… " + d.done + "/" + d.total); });
-  window.vdf.on("reclaimCancelled", function () { _busy = false; clog("정리 취소"); if (window.toast) toast("정리 취소됨"); });
+  window.vdf.on("reclaimCancelled", function () { setBusy(false); clog("정리 취소"); if (window.toast) toast("정리 취소됨"); });
 
   // ---- 폴더로 복사 / 이동 (체크된 항목 — 이동은 DB 경로 자동 갱신) ----
-  function collectChecked() {
-    var cut = window.isCut || function (f) { return !f.keep; };
-    var seen = {}, out = [];
-    (window.GROUPS || []).forEach(function (g) {
-      g.files.forEach(function (f) {
-        if (cut(f)) { var lc = f.p.toLowerCase(); if (!seen[lc]) { seen[lc] = 1; out.push(f.p); } }
-      });
-    });
-    return out;
-  }
+  // 대상 수집도 정리와 같은 서버측 선택 모델을 쓴다 (페이지에 갇히지 않게).
   function startFileOp(move) {
     if (_busy) { if (window.toast) toast("작업 진행 중… 끝나면 다시"); return; }
-    var ps = collectChecked();
-    if (!ps.length) { if (window.toast) toast("체크된 항목이 없다"); return; }
-    _busy = send(move ? "moveTo" : "copyTo", { paths: ps });
+    if (!(window.GROUPS || []).length) { if (window.toast) toast("결과가 없다 — 먼저 ‘비교만 다시’"); return; }
+    setBusy(send(move ? "moveTo" : "copyTo", { cut: cutState, autoCut: Object.keys(__autoCut) }));
   }
   window.doCopyTo = function () { startFileOp(false); };
   window.doMoveTo = function () { startFileOp(true); };
   window.vdf.on("copyDone", function (d) {
-    _busy = false;
+    setBusy(false);
     var msg = "복사 완료 · " + d.done + "개 → " + d.dest + (d.skipped ? (" · 건너뜀 " + d.skipped) : "") + (d.failed ? (" · 실패 " + d.failed) : "");
     clog(msg, d.failed ? "warn" : "ok"); if (window.toast) toast(msg);
   });
   window.vdf.on("moveDone", function (d) {   // 행/체크 상태는 파일별 'renamed' 푸시가 이미 옮겨놨다
-    _busy = false;
+    setBusy(false);
     var msg = "이동 완료 · " + d.done + "개 → " + d.dest + " (DB 경로 갱신됨)" + (d.skipped ? (" · 건너뜀 " + d.skipped) : "") + (d.failed ? (" · 실패 " + d.failed) : "");
     clog(msg, d.failed ? "warn" : "ok"); if (window.toast) toast(msg);
   });
-  window.vdf.on("copyCancelled", function () { _busy = false; if (window.toast) toast("복사 취소됨"); });
-  window.vdf.on("moveCancelled", function () { _busy = false; if (window.toast) toast("이동 취소됨"); });
+  window.vdf.on("copyCancelled", function () { setBusy(false); if (window.toast) toast("복사 취소됨"); });
+  window.vdf.on("moveCancelled", function () { setBusy(false); if (window.toast) toast("이동 취소됨"); });
   window.vdf.on("fileOpProgress", function (d) { if (window.toast) toast(d.op + " 중… " + d.done + "/" + d.total); });
   window.vdf.on("notMatchDone", function (d) {
     var set = {}; (d.paths || []).forEach(function (p) { set[p.toLowerCase()] = 1; });
@@ -1430,26 +1520,14 @@
   window.vdf.on("csvCancelled", function () { if (window.toast) toast("취소됨"); });
 
   // ---- 자동 체크 (구버전 '선택' 메뉴 — 계산은 C#, 결과 cut 맵을 cutState 에 병합) ----
-  function visiblePaths(alsoChecked) {
-    var qi = document.getElementById("q"), q = (qi ? qi.value : "").toLowerCase();
-    var match = window.fmatch || function () { return true; };
-    var out = { visible: [], checkedPaths: [] };
-    (window.GROUPS || []).forEach(function (g) {
-      g.files.forEach(function (f) {
-        if (!match(f, q)) return;
-        out.visible.push(f.p);
-        // '이미 체크된 그룹 건너뛰기'용: 명시 체크(cutState true)만 — 기본값(비유지=체크)까지 세면
-        // 모든 그룹에 체크가 있어서 전부 건너뛰는 무동작이 된다 (구버전도 명시 Checked 기준).
-        if (alsoChecked && cutState[f.p] === true) out.checkedPaths.push(f.p);
-      });
-    });
-    return out;
-  }
+  // 범위는 검색창 문자열만 보낸다: 예전에는 "화면에 보이는 경로 목록"을 보냈는데 화면은 그룹 한
+  // 페이지만 들고 있어서, '최저 품질 체크' 같은 라벨이 실제로는 첫 페이지에만 적용됐다. 이제 C# 이
+  // 같은 필터 규칙(FilterMatch)으로 전체 결과에 적용한다.
   function autoCheck(mode, opts) {
     if (_busy) { if (window.toast) toast("작업 진행 중… 끝나면 다시"); return; }
-    var v = visiblePaths(!!(opts && opts.skipChecked));
-    if (!v.visible.length) { if (window.toast) toast("대상 결과가 없다 — 먼저 ‘비교만 다시’"); return; }
-    send("autoCheck", { mode: mode, visible: v.visible, opts: opts || null, checkedPaths: v.checkedPaths });
+    if (!(window.GROUPS || []).length) { if (window.toast) toast("대상 결과가 없다 — 먼저 ‘비교만 다시’"); return; }
+    var qi = document.getElementById("q");
+    send("autoCheck", { mode: mode, opts: opts || null, q: qi ? qi.value : "", cut: cutState, autoCut: Object.keys(__autoCut) });
   }
   window.autoCheck = autoCheck;
   window.vdf.on("autoChecked", function (d) {
@@ -1472,11 +1550,10 @@
   // ---- 체크된 항목 정리 시뮬레이션 보고서 (dry-run JSON — 아무것도 안 지운다) ----
   function exportDryRun() {
     if (_busy) { if (window.toast) toast("작업 진행 중… 끝나면 다시"); return; }
-    // 정리(doReclaim)와 완전히 같은 수집: 필터로 숨겨진 체크 항목도 포함 — 보고서가 실제 삭제
-    // 집합보다 적게 나오면 "미리보기"라는 존재 이유가 무너진다.
-    var paths = collectChecked();
-    if (!paths.length) { if (window.toast) toast("체크된 항목이 없다"); return; }
-    send("dryRun", { paths: paths });
+    // 정리(doReclaim)와 완전히 같은 수집을 C# 이 한다(BuildSelection) — 보고서가 실제 삭제 집합보다
+    // 적게 나오면 "미리보기"라는 존재 이유가 무너진다.
+    if (!(window.GROUPS || []).length) { if (window.toast) toast("결과가 없다 — 먼저 ‘비교만 다시’"); return; }
+    send("dryRun", { cut: cutState, autoCut: Object.keys(__autoCut) });
   }
   window.exportDryRun = exportDryRun;
   window.vdf.on("dryRunDone", function (d) {
@@ -1500,17 +1577,23 @@
     }).join("");
     m.style.left = "0px"; m.style.top = "0px";   // 먼저 크기를 재고
     m.classList.add("open");
+    // 화면 확대(CSS zoom)가 걸리면 getBoundingClientRect/clientX 는 '확대된 뒤' 좌표로 오는데
+    // position:fixed 의 left/top 은 '확대 전' 좌표계로 해석된다 — 그대로 쓰면 확대율만큼 밀려난다
+    // (실측: 버튼 left 985 → 메뉴가 1477 에 열림). 확대율로 나눠 같은 좌표계로 맞춘다.
+    var z = _uiZoom || 1;
+    var vw = window.innerWidth / z, vh = window.innerHeight / z;
     var x = 20, y = 20, r = ev && ev.currentTarget && ev.currentTarget.getBoundingClientRect ? ev.currentTarget.getBoundingClientRect() : null;
-    if (r) { x = r.left; y = r.bottom + 6; } else if (ev) { x = ev.clientX; y = ev.clientY; }
-    x = Math.max(10, Math.min(x, window.innerWidth - m.offsetWidth - 10));
-    y = Math.max(10, Math.min(y, window.innerHeight - m.offsetHeight - 10));
+    if (r) { x = r.left / z; y = (r.bottom + 6) / z; } else if (ev) { x = ev.clientX / z; y = ev.clientY / z; }
+    x = Math.max(10, Math.min(x, vw - m.offsetWidth - 10));
+    y = Math.max(10, Math.min(y, vh - m.offsetHeight - 10));
     m.style.left = x + "px"; m.style.top = y + "px";
   }
   document.addEventListener("click", function (e) {
     var m = document.getElementById("dmenu");
     if (m && m.classList.contains("open") && !m.contains(e.target)) closeMenu();
   });
-  window.openCheckMenu = function (ev) {
+  // 구버전 GUI 의 '선택' 메뉴를 그 이름과 순서 그대로. 체크를 만드는 모든 수단이 여기 하나뿐이다.
+  window.openSelectMenu = function (ev) {
     openMenu(ev, [
       { t: "100% 동일 체크 (첫 번째 유지)", run: function () { autoCheck("identical"); } },
       { t: "크기 빼고 100% 동일 체크 (가장 작은 것 유지)", run: function () { autoCheck("identicalButSize"); } },
@@ -1520,12 +1603,14 @@
       { t: "가장 최신 체크 (오래된 것 유지)", run: function () { autoCheck("newest"); } },
       { t: "사용자 지정 체크…", run: function () { openCustomDlg(); } },
       { sep: 1 },
-      { t: "체크 해제", run: function () { selBulk("clear"); } },
+      { t: "우선순위 자동선택 (기본 선택 복원)", run: function () { selBulk("auto"); } },
       { t: "체크 반전", run: function () { selBulk("invert"); } },
-      { sep: 1 },
-      { t: "📄 체크된 항목 정리 시뮬레이션 보고서 내보내기", run: function () { exportDryRun(); } },
+      { t: "체크 해제", run: function () { selBulk("clear"); } },
+      { t: "선택 되돌리기 (Ctrl+Z)", run: function () { selUndo(); } },
     ]);
   };
+  window.openCheckMenu = window.openSelectMenu;   // 옛 이름 호출 호환 (명령 팔레트·QA 하네스)
+  // 구버전 '체크된 항목 삭제' 하위 메뉴. 처분 계열은 전부 여기 하나뿐 — 사이드바에 같은 메뉴를 또 두지 않는다.
   window.openDelMenu = function (ev) {
     openMenu(ev, [
       { t: "🗑 휴지통으로 삭제 (DB 포함)", run: function () { doReclaim(); } },
@@ -1533,6 +1618,8 @@
       { sep: 1 },
       { t: "폴더로 복사…", run: function () { doCopyTo(); } },
       { t: "폴더로 이동 (DB 경로 자동 갱신)…", run: function () { doMoveTo(); } },
+      { sep: 1 },
+      { t: "📄 정리 시뮬레이션 보고서 (아무것도 안 지움)", run: function () { exportDryRun(); } },
     ]);
   };
 
@@ -1566,10 +1653,20 @@
   };
   // stable row index → path (paths are unsafe inside onclick attrs — same pattern as __files)
   var _dbRows = [];
-  window.dbOp = function (op, i) {
+  window.dbOp = function (op, i, ev) {
     var p = _dbRows[i]; if (!p) return;
-    if (op === "reveal") send("revealFile", { path: p });
-    else send("dbRemove", { path: p });
+    if (op === "reveal") { send("revealFile", { path: p }); return; }
+    if (op === "del") {   // 실제 파일 삭제 — 어느 쪽이든 C#이 네이티브 확인 대화상자를 띄운다
+      openMenu(ev, [
+        { t: "🗑 휴지통으로 삭제 (DB 엔트리도 제거)", run: function () { send("dbDelete", { path: p }); } },
+        { t: "⚠ 영구 삭제 — 복구 불가", warn: 1, run: function () { send("dbDelete", { path: p, permanent: true }); } },
+        // 파일이 이미 없어도 위 두 명령은 그대로 동작한다 (드라이브가 온라인이면 엔트리만 제거)
+        { sep: 1 },
+        { t: "✕ 인덱스에서만 잊기 (파일은 그대로)", run: function () { send("dbRemove", { path: p }); } },
+      ]);
+      return;
+    }
+    send("dbRemove", { path: p });
   };
   window.vdf.on("dbRows", function (d) {
     _dbState = { matched: d.matched, page: d.page };
@@ -1579,7 +1676,8 @@
     var h = '<table class="rtable"><thead><tr><th></th><th>경로</th><th>크기</th><th>길이</th><th>수정일</th><th>지문</th></tr></thead><tbody>';
     d.rows.forEach(function (r, i) {
       var fp = (r.fp ? "영상" : "") + (r.fp && r.au ? "·" : "") + (r.au ? "음성" : "") || "—";
-      h += '<tr><td><span class="fop" title="인덱스에서 잊기" onclick="dbOp(\'rm\',' + i + ')">✕</span>'
+      h += '<tr><td><span class="fop" title="인덱스에서 잊기 (파일은 그대로)" onclick="dbOp(\'rm\',' + i + ')">✕</span>'
+        + '<span class="fop" title="파일 삭제 — 휴지통 / 영구" onclick="dbOp(\'del\',' + i + ',event)">🗑</span>'
         + '<span class="fop" title="탐색기에서 표시" onclick="dbOp(\'reveal\',' + i + ')">📂</span></td>'
         + '<td class="tpath" title="' + esc(r.p).replace(/"/g, "&quot;") + '">' + esc(r.p) + (r.err ? ' <span style="color:var(--red);font-size:10.5px">meta오류</span>' : '') + '</td>'
         + '<td class="tmono">' + r.size + '</td><td class="tmono">' + r.dur + '</td><td class="tmono">' + r.mod + '</td>'
@@ -1592,9 +1690,16 @@
     if (info) info.textContent = d.matched ? (d.offset + 1) + "–" + Math.min(d.offset + d.page, d.matched) + " 표시" : "";
   });
   window.vdf.on("dbRemoved", function (d) {
-    clog("DB에서 잊음 · 남은 엔트리 " + d.total.toLocaleString(), "warn");
+    clog("DB에서 잊음 (파일은 그대로) · 남은 엔트리 " + d.total.toLocaleString(), "warn");
     dbLoad();   // refresh the current page
   });
+  window.vdf.on("dbDeleted", function (d) {
+    var msg = (d.entryOnly ? "DB 엔트리 제거 (파일은 이미 없었음)" : (d.permanent ? "영구 삭제" : "휴지통으로 삭제") + " · " + d.freed + " 확보")
+      + " · 남은 엔트리 " + d.total.toLocaleString();
+    clog(msg, "warn"); if (window.toast) toast(msg);
+    dbLoad();
+  });
+  window.vdf.on("dbDeleteCancelled", function () { if (window.toast) toast("삭제 취소됨"); });
 
   // ---- 썸네일 (lazy: extract a frame only when a card scrolls into view) ----
   var _thumbObs = null, _thumbQ = {}, _thumbTimer = null, _thumbDone = {};
@@ -1641,7 +1746,11 @@
     });
     // 승격된 키퍼에 남은 낡은 체크는 삭제 승인이 아니다 — 즉시 무효화 (비유지 시절의 체크였다)
     if (d.newKeeps && d.newKeeps.length && window.pruneKeeperChecks) pruneKeeperChecks();
-    if (window.renderGroups) renderGroups();
+    // 사라진 파일의 체크 표시는 남겨둘 이유가 없다 — 안 지우면 트리아지 파일에 유령 항목이 쌓인다
+    // (실제로 사용자 트리아지에 이미 지운 파일 100건이 체크된 채로 남아 있었다).
+    Object.keys(cutState).forEach(function (k) { if (k.toLowerCase() === lc) delete cutState[k]; });
+    delete __autoCut[lc];
+    if (window.renderGroups) renderGroups();   // → recount() 가 트리아지 저장 + 전체 합계 갱신까지 예약한다
     if (window.toast) toast("삭제 반영: " + baseName(d.path));
   });
   window.vdf.on("renamed", function (d) {
@@ -1664,18 +1773,84 @@
   // Only a FATAL error (C# marks the ones that end the long op) may clear the single-flight gate —
   // an unrelated thumbs/listDir/mpv error mid-scan must not re-enable 스캔/정리 or hide the stop controls.
   window.vdf.on("error", function (d) {
-    if (d && d.fatal) { _busy = false; scanCtl(false); setScanNow(""); }   // 죽은 스캔의 상태줄이 "진행 중"으로 남으면 안 된다
+    if (d && d.fatal) { setBusy(false); scanCtl(false); setScanNow(""); }   // 죽은 스캔의 상태줄이 "진행 중"으로 남으면 안 된다
     clog("오류: " + (d && d.message), "err"); if (window.toast) toast("오류: " + (d && d.message));
   });
   window.__busy = function () { return _busy; };   // prototype-side bulk ops check this before touching GROUPS
 
   window.vdf.on("triage", function (d) { if (window.__mergeTriage) window.__mergeTriage(d.cut); });
+
+  // ---- 확인 대화상자 (앱 테마) ----
+  // 네이티브 MessageBox 대신 화면 안 모달. C# 이 계획을 세워 보내고, 여기서 받은 답을 다시 보내면
+  // C# 이 그 자리에서 이어서 실행한다 (confirm → confirmAck).
+  var _confirmId = 0;
+  window.vdf.on("confirm", function (d) {
+    _confirmId = d.id;
+    var t = document.getElementById("okTitle"), b = document.getElementById("okBody"), y = document.getElementById("okYes");
+    if (t) t.textContent = d.title || "확인";
+    if (b) b.textContent = d.body || "";
+    if (y) {
+      y.firstChild.nodeValue = (d.yes || "예") + " ";
+      // 위험한 작업(영구 삭제·유지본 포함)은 버튼을 빨갛게
+      y.style.background = d.danger ? "linear-gradient(135deg,#c0392b,#e74c3c)" : "";
+      y.style.boxShadow = d.danger ? "0 6px 22px -6px rgba(231,76,60,.6)" : "";
+    }
+    var dlg = document.getElementById("okdlg");
+    if (dlg) { dlg.classList.add("open"); setTimeout(function () { if (y) y.focus(); }, 30); }
+  });
+  window.confirmAns = function (ok) {
+    var dlg = document.getElementById("okdlg"); if (dlg) dlg.classList.remove("open");
+    if (!_confirmId) return;
+    var id = _confirmId; _confirmId = 0;
+    send("confirmAck", { id: id, ok: !!ok });
+  };
+  document.addEventListener("keydown", function (e) {
+    var dlg = document.getElementById("okdlg");
+    if (!dlg || !dlg.classList.contains("open")) return;
+    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); confirmAns(false); }
+    else if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); confirmAns(true); }
+  }, true);   // capture: 다른 Esc/Enter 처리기(팔레트·이름변경)보다 먼저 잡는다
+
+  // ---- 화면 확대/축소 (Ctrl+휠 · Ctrl +/- · Ctrl+0) ----
+  // WebView 는 --force-device-scale-factor=1 로 뜬다(안 그러면 서피스가 창보다 커져 오른쪽이 잘린다).
+  // 그래서 확대는 앱이 직접 CSS 로 한다 — 브라우저 기본 줌과 달리 값을 저장할 수 있어서, 눈에 맞춘
+  // 배율이 재시작해도 그대로 남는다. 기본값은 시스템 화면 배율(= 예전과 같은 크기).
+  var _uiZoom = 1, _uiSys = 1;
+  function applyZoom(z, save) {
+    _uiZoom = Math.max(0.5, Math.min(3, Math.round(z * 100) / 100));
+    document.documentElement.style.zoom = _uiZoom;
+    if (save) {
+      clearTimeout(window.__zoomTimer);
+      // 시스템 배율과 같으면 0(자동)으로 저장 — 나중에 모니터/배율이 바뀌어도 따라간다
+      var val = Math.abs(_uiZoom - _uiSys) < 0.005 ? 0 : _uiZoom;
+      window.__zoomTimer = setTimeout(function () { send("saveSetting", { key: "uiZoom", val: val }); }, 400);
+      if (window.toast) toast("확대 " + Math.round(_uiZoom * 100) + "%" + (val === 0 ? " (기본)" : ""));
+    }
+  }
+  window.vdf.on("uiScale", function (d) { _uiSys = d.sys || 1; applyZoom(d.scale || 1, false); });
+  function reportViewport() {
+    send("viewport", { w: window.innerWidth, h: window.innerHeight, dpr: window.devicePixelRatio, sw: document.documentElement.scrollWidth });
+  }
+  // passive:false 여야 preventDefault 가 먹는다 (안 그러면 WebView 기본 줌과 이중으로 걸린다)
+  window.addEventListener("wheel", function (e) {
+    if (!e.ctrlKey && !e.metaKey) return;
+    e.preventDefault();
+    applyZoom(_uiZoom + (e.deltaY < 0 ? 0.1 : -0.1), true);
+  }, { passive: false });
+  document.addEventListener("keydown", function (e) {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    if (e.key === "0") { e.preventDefault(); applyZoom(_uiSys, true); }
+    else if (e.key === "+" || e.key === "=") { e.preventDefault(); applyZoom(_uiZoom + 0.1, true); }
+    else if (e.key === "-" || e.key === "_") { e.preventDefault(); applyZoom(_uiZoom - 0.1, true); }
+  });
   window.addEventListener("load", function () {
     // In the real app the prototype's sample rows must never be mistaken for results: CSV export,
     // 중복 아님 and 정리 all read window.GROUPS. send() is false only in a plain browser (QA harness),
     // where the sample data is exactly what the tests drive.
     if (send("stats")) { window.GROUPS = []; if (window.renderGroups) renderGroups(); }
     send("getRules"); send("getSources"); send("listDir", { path: "" }); send("getTriage");
+    send("getResults");   // 지난번 비교 결과 복원 — 재시작했다고 목록이 사라지면 안 된다
+    reportViewport();   // 고DPI에서 창보다 크게 렌더돼 오른쪽이 잘리는지 C#이 판정 → fitZoom 으로 보정
   });
 })();
 

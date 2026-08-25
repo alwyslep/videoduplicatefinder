@@ -48,13 +48,42 @@ static class Program {
 	// BuildingHashesDone BEFORE ScanAborted on abort (ScanEngine.cs:588-596).
 	static volatile ScanEngine? _stopReqFor;
 	const string U_MINUS = "−";   // − : the mock's metric-delta minus (JS colors on this char)
-	const int MaxGroupsShown = 150;    // cap cards sent to the webview; report the true total
+	const int GroupPageSize = 150;    // groups per page sent to the webview; report the true total
+
+	// ---------- DB 변경 영속화 ----------
+	// EVERY in-memory DB mutation must reach the disk, or it silently un-happens on the next launch.
+	// That was the bug behind "순회비교로만 삭제가 되고 나머지는 안 먹힌다": the mpvGrid sidecar and the
+	// DB 뷰어 ✕ removed the entry from the static DatabaseUtils.Database but never saved, so a restart
+	// resurrected every deleted file as a tombstone, the compare put those ghosts back in the groups,
+	// they defaulted to checked, and 정리 could only report "휴지통 0개 · DB 엔트리만 제거 N".
+	// Debounced because a save rewrites the WHOLE index (770MB on this user's library) — per-file saves
+	// during an mpvGrid deletion spree would stall the app. Flushed on exit so nothing is ever lost.
+	static readonly object _dbSaveLock = new();
+	static System.Threading.Timer? _dbSaveTimer;
+	static bool _dbDirty;
+	const int DbSaveDebounceMs = 2500;
+
+	static void MarkDbDirty() {
+		lock (_dbSaveLock) {
+			_dbDirty = true;
+			_dbSaveTimer ??= new System.Threading.Timer(_ => FlushDb(), null, Timeout.Infinite, Timeout.Infinite);
+			_dbSaveTimer.Change(DbSaveDebounceMs, Timeout.Infinite);   // coalesce a burst into one write
+		}
+	}
+
+	// Best-effort: a failed save must never take the app down (it runs on a timer thread).
+	static void FlushDb() {
+		lock (_dbSaveLock) { if (!_dbDirty) return; _dbDirty = false; }
+		try { lock (_engineLock) ScanEngine.SaveDatabase(); }
+		catch (Exception ex) { Console.Error.WriteLine($"[db] save failed: {ex.Message}"); lock (_dbSaveLock) _dbDirty = true; }
+	}
 
 	// WinExe has no console — CLI test modes (selftest/scantest/…) attach the invoking terminal's
 	// console so their Console.WriteLine output still lands there. No-op when launched from Explorer.
 	[System.Runtime.InteropServices.DllImport("kernel32.dll")]
 	static extern bool AttachConsole(int dwProcessId);
 	const int ATTACH_PARENT_PROCESS = -1;
+
 
 	[STAThread]
 	static void Main(string[] args) {
@@ -78,6 +107,10 @@ static class Program {
 		if (args.Length > 1 && args[0] == "trashtest") { TrashTest(args[1]); return; }
 		if (args.Length > 1 && args[0] == "stoptest") { StopTest(args[1]); return; }
 		if (args.Length > 0 && args[0] == "blacklisttest") { BlacklistTest(); return; }
+		if (args.Length > 0 && args[0] == "aumidtest") { AumidTest(); return; }         // 작업표시줄 신원이 실제로 박히는지
+		if (args.Length > 0 && args[0] == "seltest") { SelTest(); return; }             // 체크 규칙(유지본·톰스톤·명시 승인)
+		if (args.Length > 0 && args[0] == "restoretest") { RestoreTest(); return; }     // 결과 저장→복원 왕복
+		if (args.Length > 0 && args[0] == "dbpersisttest") { DbPersistTest(); return; } // 삭제/잊기가 디스크까지 가는지
 		if (args.Length > 0 && args[0] == "renametest") { RenameTombstoneTest(); return; }
 		if (args.Length > 1 && args[0] == "recyclecheck") { Console.WriteLine($"[recyclecheck] canRecycle={CanRecycle(args[1])}  {args[1]}"); return; }
 		if (args.Length > 1 && args[0] == "thumbtest") {
@@ -99,25 +132,65 @@ static class Program {
 			return;
 		}
 
+		TaskbarIdentity.ApplyToProcess();   // 창 생성 전에 한 번 — 최종 확정은 아래 WindowCreated 에서 (TaskbarIdentity 주석 참고)
+
 		TryDeleteLog();   // clear any prior session's log BEFORE Core's first write (it appends private paths)
 
+		// 고DPI 잘림 방지. 이 조합(Photino + WebView2)에서는 WebView 바운드가 CSS 픽셀로 전달돼,
+		// 배율 150% 화면에서 Chromium 이 창보다 1.5배 큰 서피스를 그린다 → 오른쪽 1/3(정리 트레이·
+		// 버튼)이 창 밖으로 나가고 스크롤로도 닿을 수 없었다. 실측: 창 클라이언트 1158px, 뷰포트
+		// 1159 CSS px, dpr 1.5, scrollWidth == 뷰포트(레이아웃 자체는 정확히 들어맞음).
+		// 디바이스 스케일을 1로 고정하면 서피스 = 창 크기가 되어 정확히 맞는다. 배율 100% 화면에서는
+		// 아무 변화가 없다(이미 1이다). CSS 쪽 overflow-x:auto 는 그래도 남겨둔 이중 안전장치.
+		Environment.SetEnvironmentVariable("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "--force-device-scale-factor=1");
+
 		string index = Path.Combine(AppContext.BaseDirectory, "wwwroot", "index.html");
+		var (winW, winH) = StartupWindowSize();
 		var win = new PhotinoWindow()
 			.SetTitle("VDF — Deep Space")
 			.SetIconFile(Path.Combine(AppContext.BaseDirectory, "app.ico"))
 			.SetUseOsDefaultSize(false)
-			.SetSize(1440, 920)   // the restore-down size
+			.SetSize(winW, winH)
 			.Center()
 			.SetContextMenuEnabled(false)
 			.SetDevToolsEnabled(true)
+			// 창이 생기자마자 작업표시줄 신원을 우리 것으로 확정한다. 여기여야 하는 이유는
+			// TaskbarIdentity 주석 참고 — Photino.Native 가 창을 만들며 프로세스 ID 를 제목으로 덮어쓴다.
+			.RegisterWindowCreatedHandler((s, _) => TaskbarIdentity.ApplyToWindow(((PhotinoWindow)s!).WindowHandle))
 			.RegisterWebMessageReceivedHandler(OnMessage)
 			.Load(index);
-		// Opens at the 1440×920 centered size set above — the user prefers a normal window over
-		// maximized. The old intermittent 960×613 DPI-scale sizing bug is fixed by app.manifest
-		// (PerMonitorV2), so SetSize is reliable without maximizing.
+		// 일반 창(전체화면 아님)으로 열되 크기는 작업 영역에서 계산한다 — StartupWindowSize 참고.
 		win.WaitForClose();
+		FlushDb();        // pending in-memory DB edits (사이드카 삭제 · DB 뷰어 ✕ · 개명) land before we exit
 		TryDeleteLog();   // wipe on normal exit — nothing with private paths persists after use (best-effort: a hard crash mid-session leaves it)
 	}
+
+	[System.Runtime.InteropServices.DllImport("user32.dll")]
+	static extern bool GetClientRect(IntPtr hWnd, out WinRect lpRect);
+	[System.Runtime.InteropServices.DllImport("user32.dll")]
+	static extern uint GetDpiForWindow(IntPtr hWnd);
+
+	// ---------- 시작 창 크기 ----------
+	// 고정 1440×920 은 이 머신에서 실제로 문제를 냈다: 창은 그보다 좁게 열리는데 WebView 는 레이아웃을
+	// 더 넓게 잡아, 오른쪽 정리 트레이와 버튼들이 창 밖으로 잘려 나갔다. 작업 영역에서 계산해 레이아웃이
+	// 확실히 들어가는 크기로 연다 (전체화면은 아니다 — 일반 창을 선호). 실패하면 예전 값으로 되돌린다.
+	static (int w, int h) StartupWindowSize() {
+		try {
+			if (OperatingSystem.IsWindows() && SystemParametersInfo(SPI_GETWORKAREA, 0, out WinRect wa, 0)) {
+				int aw = wa.right - wa.left, ah = wa.bottom - wa.top;
+				if (aw > 400 && ah > 300)
+					return (Math.Min(aw, Math.Clamp((int)(aw * 0.90), 1200, 1760)),
+							Math.Min(ah, Math.Clamp((int)(ah * 0.92), 760, 1100)));
+			}
+		}
+		catch { }
+		return (1440, 920);
+	}
+	const uint SPI_GETWORKAREA = 0x0030;
+	[System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+	struct WinRect { public int left, top, right, bottom; }
+	[System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
+	static extern bool SystemParametersInfo(uint action, uint uiParam, out WinRect pvParam, uint fWinIni);
 
 	// One-time move of the isolated copy off %TEMP% to %LOCALAPPDATA% (see CopyDbFolder). Same-volume =
 	// instant rename that carries the existing index, so NO re-scan. Cross-volume Move throws before
@@ -363,6 +436,12 @@ static class Program {
 		Thread.Sleep(5000);   // 핸들러가 기록할 시간 (그 전에 런타임이 종료시킨다)
 	}
 
+	// 작업표시줄 신원 검증 (`VDF.Photino.exe aumidtest`): GUI 경로가 창을 만들기 전에 부르는 것과
+	// 똑같은 P/Invoke 를 태우고 되읽어 본다. 이게 PASS 여야 고정 아이콘이 이 exe 하고만 짝이 된다.
+	// 프로세스 밖에서는 확인할 수 없다 — SHGetPropertyStoreForWindow 는 창 고유 재정의만 돌려주고
+	// 프로세스 수준 ID 는 비어 보인다(그래서 이 모드가 있다).
+	static void AumidTest() => Console.WriteLine($"[aumidtest] {TaskbarIdentity.SelfTestProcess()}");
+
 	// VDF.Core Logger appends full file paths to log.txt in the exe dir (unconditional AppendAllText; can't be
 	// safely blocked from outside without aborting scans). Best-effort containment: delete it at startup + exit
 	// so no private-path log persists between sessions. Never touched while Core runs.
@@ -407,8 +486,32 @@ static class Program {
 				// before the pool thread runs the lambda (ObjectDisposedException → command silently dropped).
 				case "dbQuery": { var q = doc.RootElement.Clone(); Task.Run(() => { lock (_engineLock) DbQuery(win, q); }); break; }
 				case "dbRemove": { var r = doc.RootElement.Clone(); Task.Run(() => { lock (_engineLock) DbRemove(win, r); }); break; }
+					case "confirmAck": AnswerConfirm(doc.RootElement); break;   // 앱 테마 확인 모달의 응답
+				case "viewport": {
+						// 화면 배율을 알려준다. WebView 는 --force-device-scale-factor=1 로 띄우므로(안 그러면
+						// 서피스가 창보다 커져 오른쪽이 잘린다) JS 가 그만큼 CSS 로 확대해 글자 크기를 원래대로
+						// 돌린다. 잘림 없이 시스템 배율 그대로 보이는 조합이 이것뿐이다.
+						var hw = Process.GetCurrentProcess().MainWindowHandle;
+						double sys = 1;
+						try { if (hw != IntPtr.Zero) { uint d = GetDpiForWindow(hw); if (d >= 48) sys = d / 96.0; } } catch { }
+						if (doc.RootElement.TryGetProperty("payload", out var vp)) {
+							string client = hw != IntPtr.Zero && GetClientRect(hw, out WinRect c) ? $"{c.right - c.left}x{c.bottom - c.top}" : "?";
+							try { File.WriteAllText(Path.Combine(Path.GetTempPath(), "vdf-viewport.txt"), $"client={client} viewport={vp.GetRawText()} sysScale={sys} savedZoom={_cfg.uiZoom}"); } catch { }
+						}
+						// 저장된 값이 있으면 그것, 없으면 시스템 배율 (= 예전과 같은 글자 크기로 열린다)
+						Reply(win, "uiScale", new { scale = Math.Round(_cfg.uiZoom > 0 ? _cfg.uiZoom : sys, 4), sys = Math.Round(sys, 4) });
+						break;
+					}
 				case "getTriage": ReplyTriage(win); break;
-				case "saveTriage": SaveTriage(doc.RootElement); break;
+				case "saveTriage": SaveTriage(win, doc.RootElement); break;
+				// 결과 복원/페이지 넘김 — DB 를 읽으므로 엔진 락 안에서 (스캔 중이면 끝난 뒤에 처리된다)
+				case "getResults": Task.Run(() => { lock (_engineLock) RestoreResults(win); }); break;
+				case "groupsPage": {
+					int off = doc.RootElement.TryGetProperty("payload", out var gp) && gp.TryGetProperty("offset", out var oe) && oe.TryGetInt32(out int o) ? o : 0;
+					Task.Run(() => { lock (_engineLock) SendGroupsPage(win, off, paged: true); });
+					break;
+				}
+				case "dbDelete": DbDelete(win, doc.RootElement); break;   // sync: native confirm dialog on the message thread
 				case "getSources": ReplySources(win); break;
 				case "listDir": { var d = doc.RootElement.Clone(); Task.Run(() => ListDir(win, d)); break; }   // read-only folder enumeration for the source tree
 				case "setSources": SetSources(win, doc.RootElement); break;   // tree replaces the whole include list
@@ -472,6 +575,7 @@ static class Program {
 					file = string.IsNullOrEmpty(e.CurrentFile) ? "" : Path.GetFileName(e.CurrentFile),   // 파일명만 — 지금 뭘 비교 중인지 보여달라는 요청
 					elapsed = (long)e.Elapsed.TotalSeconds,
 					remain = e.Remaining > TimeSpan.Zero ? (long)e.Remaining.TotalSeconds : -1,
+					tallies = LiveTallies(e),   // 비교만 돌 때도 ③ 의 집계는 살아 있어야 한다 (Drives 는 null → 전역 카운터 분기)
 				});
 			}
 			engine.Progress += prog;
@@ -497,15 +601,17 @@ static class Program {
 			var dupes = engine.Duplicates;
 			ApplyGroupBlacklist(dupes);
 			_lastDupes = dupes;   // for on-demand thumbnails
-			var groups = BuildGroups(dupes, out int totalGroups);
-			string why = string.Join(" › ", _cfg.priority.Take(3).Select(LabelFor));
-			Console.WriteLine($"[compare] {dupes.Count} items in {totalGroups} groups, {sw.ElapsedMilliseconds}ms");
-			Reply(win, "groups", new { totalGroups, shown = groups.Count, items = dupes.Count, why, groups });
+			SaveResults();        // 재시작 후 재비교 없이 이 목록으로 돌아오기 위한 스냅샷
+			Console.WriteLine($"[compare] {dupes.Count} items, {sw.ElapsedMilliseconds}ms");
+			SendGroupsPage(win, 0);
 		}
 		// fatal: this error ENDS the long op the JS gated _busy on — only these may clear that gate
 		// (a thumbs/listDir/mpv error mid-scan must not, or the single-flight guard dies mid-scan).
 		catch (Exception ex) { Reply(win, "error", new { message = ex.Message, fatal = true }); }
-		finally { _activeScan = null; _stopReqFor = null; }   // runs under _engineLock — strictly before the next op starts
+		finally {
+			_activeScan = null; _stopReqFor = null;   // runs under _engineLock — strictly before the next op starts
+			LoadDriveInfo(win);   // 끝났으면 집계를 DB 스냅샷으로 되돌린다 — 마지막 진행 프레임에 얼어붙지 않게
+		}
 	}
 
 	// ③ 스캔 — per-drive completion straight from the DB (GetDrivePreview): NO scanning, safe to call anytime.
@@ -514,24 +620,44 @@ static class Program {
 			EnsureDb();
 			var eng = new ScanEngine();
 			eng.Settings.CustomDatabaseFolder = ActiveDbFolder;
+			// 소스를 ApplyRules 보다 먼저 넣는다 — 순서가 핵심이다. ApplyRules 는
+			// `ScanAgainstEntireDatabase = _cfg.entireDb || IncludeList.Count == 0` 로 정하므로, 빈 목록에
+			// 대고 부르면 미리보기가 조용히 "전체 DB" 로 뒤집힌다. 그러면 스캔이 절대 훑지 않는 폴더까지
+			// 세어서, 스캔을 몇 번 돌려도 절대 줄지 않는 '남은 파일' 이 생긴다. 스캔과 같은 범위를 봐야 한다.
+			foreach (var f in _cfg.sources.Where(Directory.Exists)) eng.Settings.IncludeList.Add(f);
 			ApplyRules(eng.Settings);   // scope/entireDb shape the preview
 			var dp = eng.GetDrivePreview();
 			long totBytes = dp.Sum(d => d.TotalBytes), doneBytes = dp.Sum(d => d.DoneBytes);
 			int totFiles = dp.Sum(d => d.TotalFiles), doneFiles = dp.Sum(d => d.DoneFiles);
+			// 디스크에서 사라진 미완 엔트리는 스캔이 끝낼 방법이 없다 — '남은 일' 이 아니라 별도 항목이고,
+			// 진행률 분모에서도 빼야 100% 에 도달한다. (그전엔 남은 1,830·진행 94.5% 가 영구 고정이었다.)
+			int ghost = dp.Sum(d => d.MissingIncomplete);
+			long ghostBytes = dp.Sum(d => d.MissingIncompleteBytes);
+			// 너무 어두워 비교에서 제외된 엔트리도 마찬가지다 — 스캔이 손도 대지 않으므로 남은 일이 아니고,
+			// 그렇다고 '분석 완료' 도 아니다. 둘 중 어디에 넣어도 비율이 거짓말이 된다.
+			int dark = dp.Sum(d => d.ExcludedDark);
+			long darkBytes = dp.Sum(d => d.ExcludedDarkBytes);
+			int idle = ghost + dark;   // 스캔이 영원히 건드리지 않는 것의 합
+			long idleBytes = ghostBytes + darkBytes;
+			long liveBytes = Math.Max(0, totBytes - idleBytes);
 			var drives = dp.Select(d => new {
-				root = d.Root, doneFiles = d.DoneFiles, totalFiles = d.TotalFiles,
-				fps = 0d, pct = d.TotalBytes > 0 ? (int)(100.0 * d.DoneBytes / d.TotalBytes)
-					: d.TotalFiles > 0 ? (int)(100.0 * d.DoneFiles / d.TotalFiles) : 0,
+				root = d.Root, doneFiles = d.DoneFiles,
+				totalFiles = d.TotalFiles - d.MissingIncomplete - d.ExcludedDark,
+				fps = 0d, pct = PctOf(d.DoneBytes, d.TotalBytes - d.MissingIncompleteBytes - d.ExcludedDarkBytes,
+									  d.DoneFiles, d.TotalFiles - d.MissingIncomplete - d.ExcludedDark),
 			}).ToArray();
-			var tallies = new object[] {
-				new[] { "전체 파일", totFiles.ToString("#,0", CultureInfo.InvariantCulture) },
-				new[] { "분석 완료", doneFiles.ToString("#,0", CultureInfo.InvariantCulture) },
-				new[] { "남은 파일", (totFiles - doneFiles).ToString("#,0", CultureInfo.InvariantCulture) },
-				new[] { "전체 용량", HumanBytes(totBytes) },
-				new[] { "드라이브", dp.Length.ToString() },
-				new[] { "진행", totBytes > 0 ? (100.0 * doneBytes / totBytes).ToString("0.#", CultureInfo.InvariantCulture) + "%" : "0%" },
+			var tallies = new List<string[]> {
+				new[] { "스캔 대상", N0(totFiles - idle) },
+				new[] { "분석 완료", N0(doneFiles) },
+				new[] { "남은 파일", N0(totFiles - doneFiles - idle) },
 			};
-			Reply(win, "driveInfo", new { drives, tallies });
+			// 0 이면 줄을 숨긴다 — 정상 상태에서 굳이 "사라진 기록 0" 을 볼 이유가 없다.
+			if (ghost > 0) tallies.Add(new[] { "완료 불가", N0(ghost) + " · 파일 없음" });
+			if (dark > 0) tallies.Add(new[] { "비교 제외", N0(dark) + " · 너무 어두움" });
+			tallies.Add(new[] { "전체 용량", HumanBytes(liveBytes) });
+			tallies.Add(new[] { "드라이브", dp.Length.ToString() });
+			tallies.Add(new[] { "진행", liveBytes > 0 ? (100.0 * doneBytes / liveBytes).ToString("0.#", CultureInfo.InvariantCulture) + "%" : "0%" });
+			Reply(win, "driveInfo", new { drives, tallies = tallies.ToArray() });
 		}
 		catch (Exception ex) { Reply(win, "error", new { message = ex.Message }); }
 	}
@@ -540,6 +666,7 @@ static class Program {
 	// GUARD: only scans the user's explicitly-chosen source folders (_cfg.sources). Empty => refuse, so a
 	// full 35TB library re-scan is never triggered by accident. Writes land on the DB copy only.
 	static void StartScan(PhotinoWindow win) {
+		bool ran = false;   // DB 를 실제로 건드렸나 — scanBlocked 로 되돌아온 경우엔 마무리 갱신을 건너뛴다
 		try {
 			var folders = _cfg.sources.Where(Directory.Exists).ToArray();
 			if (folders.Length == 0) {
@@ -564,6 +691,7 @@ static class Program {
 				return;
 			}
 			EnsureDb();
+			ran = true;
 			var engine = new ScanEngine();
 			engine.Settings.CustomDatabaseFolder = ActiveDbFolder;
 			ApplyRules(engine.Settings);
@@ -588,6 +716,7 @@ static class Program {
 					elapsed = (long)e.Elapsed.TotalSeconds,
 					remain = e.Remaining > TimeSpan.Zero ? (long)e.Remaining.TotalSeconds : -1,
 					drives,
+					tallies = LiveTallies(e),   // '실시간 집계' — 이게 없으면 박스가 스캔 전 DB 스냅샷에 얼어붙는다
 				});
 			}
 			engine.Progress += prog;
@@ -634,33 +763,46 @@ static class Program {
 
 			ApplyGroupBlacklist(engine.Duplicates);
 			_lastDupes = engine.Duplicates;   // for on-demand thumbnails
-			var groups = BuildGroups(engine.Duplicates, out int totalGroups);
-			string why = string.Join(" › ", _cfg.priority.Take(3).Select(LabelFor));
-			Reply(win, "groups", new { totalGroups, shown = groups.Count, items = engine.Duplicates.Count, why, groups });
+			SaveResults();
+			SendGroupsPage(win, 0);
 		}
 		catch (Exception ex) { Reply(win, "error", new { message = ex.Message, fatal = true }); }   // ends the long op — see RunCompare
-		finally { _activeScan = null; _stopReqFor = null; }   // runs under _engineLock — strictly before the next op starts
+		finally {
+			_activeScan = null; _stopReqFor = null;   // runs under _engineLock — strictly before the next op starts
+			// 완료·중단·오류 어느 쪽으로 끝나든 집계를 DB 스냅샷으로 되돌린다. 이게 없으면 스캔이 끝난 뒤에도
+			// 마지막 진행 프레임(속도·동시 작업…)이 그대로 남아, ③ 을 떠났다 돌아오기 전엔 갱신되지 않는다.
+			if (ran) LoadDriveInfo(win);
+		}
 	}
 
-	static List<object> BuildGroups(IEnumerable<DuplicateItem> dupes, out int totalGroups) {
-		var byGroup = dupes.GroupBy(d => d.GroupId)
-						   .Select(g => g.ToList())
-						   .Where(g => g.Count >= 2)
-						   .ToList();
-		totalGroups = byGroup.Count;
-
-		// Most-reclaimable first: order by bytes held in the non-keep members.
-		var withKeep = byGroup
-			.Select(items => { var keep = PickKeep(items); return (items, keep, waste: items.Where(x => x != keep).Sum(x => Math.Max(0, x.SizeLong))); })
-			.ToList();
-		// Bake the keeper of EVERY group (not just the 150 sent) — this is what the UI displays, so
+	// 전체 결과를 "되찾을 바이트" 순으로 정렬한다. 화면은 이 목록을 페이지 단위로만 받지만, 삭제·복사·
+	// 이동·보고서는 화면이 아니라 _lastDupes 전체에서 대상을 모으므로(BuildSelection) 페이지는 순수한
+	// 표시 장치다. 예전에는 상위 150그룹만 보내고 그 150개에서만 대상을 모아서, 그 밖의 체크는 라벨과
+	// 달리 아무 데서도 처리되지 않았다.
+	static List<(List<DuplicateItem> items, DuplicateItem keep, long waste)> OrderGroups(IEnumerable<DuplicateItem> dupes) {
+		var withKeep = dupes.GroupBy(d => d.GroupId)
+							.Select(g => g.ToList())
+							.Where(g => g.Count >= 2)
+							.Select(items => { var keep = PickKeep(items); return (items, keep, waste: items.Where(x => x != keep).Sum(x => Math.Max(0, x.SizeLong))); })
+							.ToList();
+		// Bake the keeper of EVERY group (not just the page sent) — this is what the UI displays, so
 		// ReElectKeeps must match against it (not a PickKeep re-run: priority edits mid-session or an
 		// already-dead higher-ranked member would miss) and Reclaim unions it into the protected set.
 		lock (_sideLock) _keepByGroup = withKeep.ToDictionary(t => t.items[0].GroupId, t => t.keep.Path);
-		var ordered = withKeep.OrderByDescending(t => t.waste).Take(MaxGroupsShown);
+		// GroupId 까지 포함한 전순서: waste 동률에서 순서가 흔들리면 페이지를 넘길 때 항목이 튄다.
+		return withKeep.OrderByDescending(t => t.waste).ThenBy(t => t.items[0].GroupId).ToList();
+	}
 
-		var result = new List<object>();
-		foreach (var (items, keep, _) in ordered) {
+	// 한 페이지 분량의 그룹 카드를 보낸다. note/restored 는 "이전 결과를 복원했다"를 화면에 알리기 위한 것.
+	static void SendGroupsPage(PhotinoWindow win, int offset, string note = "", bool restored = false, bool paged = false) {
+		var snap = _lastDupes;
+		var ordered = OrderGroups(snap);
+		int totalGroups = ordered.Count;
+		if (offset >= totalGroups) offset = Math.Max(0, (totalGroups - 1) / GroupPageSize * GroupPageSize);
+		if (offset < 0) offset = 0;
+
+		var groups = new List<object>();
+		foreach (var (items, keep, _) in ordered.Skip(offset).Take(GroupPageSize)) {
 			var sims = items.Select(i => i.Similarity).OrderByDescending(x => x).ToList();
 			// Closest real match: highest similarity below 100 (a partial-clip group injects a self-100
 			// member; ordinary groups have none, so sims[1] would understate a chained 3+ member group).
@@ -673,24 +815,35 @@ static class Program {
 					t = FormatDuration(it.Duration),
 					res = Height(it) is int h && h > 0 ? h + "p" : "?",
 					keep = isKeep ? 1 : 0,
-					bytes = it.SizeLong,
+					miss = Missing(it) ? 1 : 0,   // 디스크에 없음(톰스톤) — 지울 게 없으니 기본 체크에서 빠진다
+					bytes = Math.Max(0, it.SizeLong),
 					m = isKeep ? KeepMetrics(it) : DeltaMetrics(it, keep),
 				});
 			}
-			result.Add(new { sim = $"{Math.Round(simVal)}%", files });
+			groups.Add(new { sim = $"{Math.Round(simVal)}%", files });
 		}
-		return result;
+		string why = string.Join(" › ", _cfg.priority.Take(3).Select(LabelFor));
+		Reply(win, "groups", new {
+			totalGroups, offset, page = GroupPageSize, shown = groups.Count,
+			items = snap.Count, why, groups, note, restored, paged,
+		});
 	}
+
+	// 톰스톤(디스크에 없는 파일). DuplicateItem 은 생성 시점에 stat 해서 없으면 SizeLong = -1 을 남긴다 —
+	// 결과를 만들/복원할 때 이미 낸 비용이라 여기서 다시 디스크를 때리지 않는다. 삭제 직전의 최종 판정은
+	// Reclaim 이 File.Exists 로 따로 한다(그 사이에 바뀔 수 있으므로).
+	static bool Missing(DuplicateItem d) => d.SizeLong < 0;
 
 	// Best-quality member = the one to keep, ranked by the user's 우선순위 order (_cfg.priority),
 	// with size as the final deterministic tie-break.
 	static DuplicateItem PickKeep(List<DuplicateItem> items) {
-		IOrderedEnumerable<DuplicateItem>? o = null;
+		// 디스크에 없는 멤버는 절대 유지본이 될 수 없다: 톰스톤이 유지본으로 뽑히면 실존하는 사본이
+		// 전부 삭제 후보가 된다 (자동 체크의 Live() 가드를 유지본 선출 자체로 끌어올린 것).
+		IOrderedEnumerable<DuplicateItem> o = items.OrderByDescending(i => i.SizeLong >= 0);
 		foreach (var c in _cfg.priority)
 			if (_critSel.TryGetValue(c, out var sel))
-				o = o == null ? items.OrderByDescending(sel) : o.ThenByDescending(sel);
-		o = o?.ThenByDescending(i => i.SizeLong) ?? items.OrderByDescending(i => i.SizeLong);
-		return o.First();
+				o = o.ThenByDescending(sel);
+		return o.ThenByDescending(i => i.SizeLong).First();
 	}
 
 	static string[] KeepMetrics(DuplicateItem k) => new[] {
@@ -759,6 +912,7 @@ static class Program {
 		public string[] excludes { get; set; } = System.Array.Empty<string>(); // ① 제외 → Settings.BlackList
 		public bool realDbMode { get; set; }              // OPT-IN: use the real DB folder instead of the copy
 		public string realDbFolder { get; set; } = "";    // the user's real ScannedFiles.db folder
+		public double uiZoom { get; set; }                // 화면 확대율 (Ctrl+휠). 0 = 시스템 화면 배율 그대로
 
 		// ---- full engine options (환경설정) — names/defaults mirror VDF.Core Settings.cs ----
 		// 스캔 성능
@@ -817,6 +971,61 @@ static class Program {
 			DatabaseUtils.InvalidateDatabaseFolder();
 			DatabaseUtils.LoadDatabase();
 		}
+	}
+
+	// ③ 스캔의 '실시간 집계' — scanProgress 마다 새로 만들어 보낸다. 예전엔 이 박스를 driveInfo(DB 스냅샷)
+	// 한 번만 채웠고 scanProgress 는 드라이브 카드만 갱신했다 — 그래서 스캔이 도는 내내 시작 전 숫자에
+	// 얼어붙어 있었다("실시간"인데 아무것도 안 변한다).
+	// 옆 카드/상태줄이 이미 보여주는 것(드라이브별 done·total·pct, 지금 처리 중 파일, 경과·남음)은 일부러
+	// 뺐다 — 여기엔 합쳐야만 보이는 값, 그리고 엔진이 세지만 어디에도 안 나오던 값만 둔다.
+	static string[][] LiveTallies(ScanProgressChangedEventArgs e) {
+		var t = new List<string[]>();
+		string N(long v) => N0(v);
+		if (e.Drives is { Length: > 0 } dv) {
+			long doneB = 0, totB = 0;
+			int analyzed = 0, missing = 0, done = 0, fp = 0, fpTarget = 0, conc = 0, dec = 0, active = 0;
+			double fps = 0;
+			foreach (var d in dv) {
+				doneB += d.DoneBytes; totB += d.TotalBytes; done += d.DoneFiles;
+				analyzed += d.Analyzed; missing += d.Missing;
+				fp += d.Fingerprinted; fpTarget += d.FingerprintTarget;
+				conc += d.Concurrency; dec += d.DecodeWorkers; fps += d.FilesPerSec;
+				active += d.ActiveFiles?.Length ?? 0;
+			}
+			// 캐시/플래그로 즉시 끝난 파일 = 완료 − 실제로 도구를 돌린 것 − 사라진 것. 바가 훅 차오르는 이유가
+			// 여기서 설명된다 (재스캔은 대부분 캐시 적중이라 '실제 분석'만 느리게 오른다).
+			t.Add(new[] { "처리 속도", N((long)Math.Round(fps)) + " f/s" });
+			t.Add(new[] { "동시 작업", (conc > 0 ? conc : active).ToString() + (dec > 0 ? $" · 디코드 {dec}" : "") });
+			t.Add(new[] { "실제 분석", N(analyzed) });
+			t.Add(new[] { "캐시 적중", N(Math.Max(0, done - analyzed - missing)) });
+			t.Add(new[] { "사라진 파일", N(missing) });
+			t.Add(new[] { "읽은 용량", HumanBytes(doneB) + " / " + HumanBytes(totB) });
+			// FingerprintTarget==0 이면 부분클립 감지가 꺼진 것 — 그 땐 재고 자체를 숨긴다.
+			if (fpTarget > 0) t.Add(new[] { "오디오 지문", N(fp) + " / " + N(fpTarget) });
+		}
+		else {
+			// Drives 는 파일 읽기(GatherInfos) 단계에서만 온다 — 비교 단계엔 null 이라 전역 카운터로 채운다.
+			t.Add(new[] { "진행", (e.MaxPosition > 0 ? (int)(100L * e.CurrentPosition / e.MaxPosition) : 0) + "%" });
+			t.Add(new[] { "처리", N(e.CurrentPosition) + " / " + N(e.MaxPosition) });
+			if (!string.IsNullOrEmpty(e.CurrentStage)) t.Add(new[] { "단계", e.CurrentStage });
+			t.Add(new[] { "경과", FmtSec((long)e.Elapsed.TotalSeconds) });
+			t.Add(new[] { "남음", e.Remaining > TimeSpan.Zero ? "~" + FmtSec((long)e.Remaining.TotalSeconds) : "—" });
+		}
+		return t.ToArray();
+	}
+
+	static string N0(long v) => v.ToString("#,0", CultureInfo.InvariantCulture);
+
+	// Byte-based when we have sizes, file-based otherwise. Clamped: the caller subtracts unreachable
+	// entries from the denominator, and a bad/negative total must not paint a 300%-wide bar.
+	static int PctOf(long doneBytes, long totalBytes, int doneFiles, int totalFiles) =>
+		Math.Clamp(totalBytes > 0 ? (int)(100.0 * doneBytes / totalBytes)
+			: totalFiles > 0 ? (int)(100.0 * doneFiles / totalFiles) : 0, 0, 100);
+
+	static string FmtSec(long s) {
+		if (s < 0) return "—";
+		long h = s / 3600, m = s % 3600 / 60, ss = s % 60;
+		return h > 0 ? $"{h}:{m:00}:{ss:00}" : $"{m}:{ss:00}";
 	}
 
 	static string HumanBytes(long n) {
@@ -980,6 +1189,8 @@ static class Program {
 			bool dbChange = false;
 			switch (key) {
 				case "mpvGridPath": _cfg.mpvGridPath = v.GetString() ?? ""; break;
+				// 화면 확대/축소 (Ctrl+휠). 0 = 자동 = 시스템 화면 배율. 눈에 맞춘 값이 재시작해도 남아야 한다.
+				case "uiZoom": _cfg.uiZoom = v.TryGetDouble(out double z) ? Math.Clamp(z, 0, 4) : 0; break;
 				case "realDbFolder": _cfg.realDbFolder = v.GetString() ?? ""; dbChange = true; break;
 				case "realDbMode": _cfg.realDbMode = v.ValueKind == JsonValueKind.True; dbChange = true; break;
 			}
@@ -1113,73 +1324,67 @@ static class Program {
 				Reply(win, "error", new { message = "정리 요청이 비어있다.", fatal = true }); return;
 			}
 			bool permanent = pl.TryGetProperty("permanent", out var pm) && pm.ValueKind == JsonValueKind.True;
-			var overrides = new HashSet<string>(StringComparer.OrdinalIgnoreCase);   // 체크된 유지본 = 사용자의 명시 승인
-			if (pl.TryGetProperty("overrides", out var ov) && ov.ValueKind == JsonValueKind.Array)
-				foreach (var k in ov.EnumerateArray()) { var s = k.GetString(); if (!string.IsNullOrEmpty(s)) overrides.Add(s); }
-			// Defense in depth: even if the JS sends a keeper path (stale cutState bug), we never delete it
-			// without an explicit override.
-			var keepers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-			if (pl.TryGetProperty("keepers", out var ks))
-				foreach (var k in ks.EnumerateArray()) { var s = k.GetString(); if (!string.IsNullOrEmpty(s)) keepers.Add(s); }
-			// The client only sees the top-150 groups, so its keepers list CANNOT protect a path that is
-			// keeper in an unsent group yet a checked member of a shown one. Rebuild from the FULL result
-			// set (current rules) and union the UI-baked keeper map — kept current by ReElectKeeps when
-			// mpvGrid kills a keeper — so every group with survivors keeps one protected copy. NO
-			// File.Exists here: a stat storm over a huge result set would freeze the message thread.
-			// ponytail: a keeper deleted in Explorer mid-session isn't re-detected until the next 비교.
-			foreach (var g in _lastDupes.GroupBy(d => d.GroupId).Select(x => x.ToList()).Where(x => x.Count >= 2))
-				keepers.Add(PickKeep(g).Path);
-			lock (_sideLock) keepers.UnionWith(_keepByGroup.Values);
+			// 대상은 화면이 아니라 전체 결과에서 모은다: 화면은 한 페이지(150그룹)만 들고 있어서, 예전처럼
+			// 화면이 보낸 경로만 처리하면 나머지 페이지의 체크는 라벨과 달리 조용히 무시됐다.
+			// 유지본 보호는 여기서도 한 번 더 건다 — 명시 승인(직접 클릭) 없이는 절대 안 지운다.
+			var sel = BuildSelection(pl);
+			var keepers = sel.Keepers;
+			var overrides = sel.Overrides;
+			if (sel.Checked.Count == 0) {
+				Reply(win, "error", new { message = "체크된 항목이 없다 — 지울 것을 먼저 체크해줘. (비교 결과가 없으면 ‘비교만 다시’ 먼저)", fatal = true });
+				return;
+			}
 
 			var toDelete = new List<string>();
-			var entryOnly = new List<string>();   // 디스크에 없는데 볼륨은 온라인 = 진짜 사라진 파일: DB 엔트리만 제거 (구버전 동작)
-			int keeperSkips = 0, unsafeSkips = 0, offlineSkips = 0;
+			var entryOnly = new List<string>();   // 파일에 닿을 수 없거나 이미 없다 → DB 엔트리만 제거
+			int keeperSkips = 0, unsafeSkips = 0, offlineEntries = 0;
 			var rootReady = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);   // 루트당 1회 — 죽은 UNC/외장에 경로마다 수 초씩 대기하는 폭풍 방지
-			var dirOk = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
-			if (pl.TryGetProperty("paths", out var ps))
-				foreach (var p in ps.EnumerateArray()) {
-					var s = p.GetString();
-					if (string.IsNullOrEmpty(s)) continue;
-					if (keepers.Contains(s) && !overrides.Contains(s)) { keeperSkips++; continue; }   // NEVER an unapproved keeper
-					string rt = Path.GetPathRoot(s) ?? "";
-					if (!rootReady.TryGetValue(rt, out bool rdy)) rootReady[rt] = rdy = DriveReady(rt);
-					if (!rdy) { offlineSkips++; continue; }   // 오프라인 루트는 File.Exists 조차 부르지 않는다
-					if (!File.Exists(s)) {
-						// 마운트 포인트 볼륨 분리 오인 방지: 루트가 살아있어도 부모 폴더까지 닿아야
-						// "진짜 사라짐"으로 본다 — 아니면 지문(톰스톤)을 통째로 날리는 오판이 된다.
-						string dir = Path.GetDirectoryName(s) ?? "";
-						if (!dirOk.TryGetValue(dir, out bool de)) dirOk[dir] = de = dir.Length > 0 && Directory.Exists(dir);
-						if (de) entryOnly.Add(s); else offlineSkips++;
-						continue;
-					}
-					if (!permanent && !CanRecycle(s)) { unsafeSkips++; continue; }   // no Recycle Bin → refuse (영구 삭제 메뉴로만 가능)
-					toDelete.Add(s);
+			foreach (var item in sel.Checked) {
+				string s = item.Path;
+				if (string.IsNullOrEmpty(s)) continue;
+				if (keepers.Contains(s) && !overrides.Contains(s)) { keeperSkips++; continue; }   // NEVER an unapproved keeper
+				switch (Classify(s, rootReady)) {
+					case FileState.MissingOffline: entryOnly.Add(s); offlineEntries++; break;
+					case FileState.Missing: entryOnly.Add(s); break;
+					default:
+						if (!permanent && !CanRecycle(s)) unsafeSkips++;   // 휴지통 없는 볼륨 → 영구 삭제 메뉴로만
+						else toDelete.Add(s);
+						break;
 				}
+			}
 			if (toDelete.Count == 0 && entryOnly.Count == 0) {
-				Reply(win, "error", new { message = $"처리할 수 있는 파일이 없다 (유지본 제외 {keeperSkips} · 휴지통 미지원 {unsafeSkips} · 오프라인 {offlineSkips}).", fatal = true });
+				Reply(win, "error", new { message = $"처리할 항목이 없다 (유지본 제외 {keeperSkips} · 휴지통 미지원 {unsafeSkips}).", fatal = true });
 				return;
 			}
 
 			long bytes = toDelete.Sum(p => { try { return new FileInfo(p).Length; } catch { return 0L; } });
 			int keeperDel = toDelete.Count(overrides.Contains);
 			var msg = new StringBuilder();
-			msg.Append(permanent
-				? $"⚠ {toDelete.Count}개 파일 ({HumanBytes(bytes)})을 영구 삭제할까?\n\n휴지통을 거치지 않는다 — 복구 불가!"
-				: $"{toDelete.Count}개 파일 ({HumanBytes(bytes)})을 휴지통으로 보낼까?\n\n고정 드라이브 → Windows 휴지통(복구 가능).");
+			// 지울 파일이 하나도 없고 "이미 없어진 파일의 엔트리"만 남은 경우를 먼저 말한다 — 예전엔
+			// "0개 파일을 휴지통으로 보낼까?" 로 물어서, 실행해도 0개라는 것처럼 보였다.
+			if (toDelete.Count == 0)
+				msg.Append($"체크된 {entryOnly.Count}개는 이미 디스크에 없다.\n\nDB 인덱스 엔트리만 정리할까?\n(파일은 이미 없어서 지울 게 없다)");
+			else
+				msg.Append(permanent
+					? $"⚠ {toDelete.Count}개 파일 ({HumanBytes(bytes)})을 영구 삭제할까?\n\n휴지통을 거치지 않는다 — 복구 불가!"
+					: $"{toDelete.Count}개 파일 ({HumanBytes(bytes)})을 휴지통으로 보낼까?\n\n고정 드라이브 → Windows 휴지통(복구 가능).");
 			if (keeperDel > 0) msg.Append($"\n\n⚠ 이 중 {keeperDel}개는 '유지' 표시 파일이 체크되어 있다 — 정말 함께 삭제할지 확인해줘!");
 			if (keeperSkips > 0) msg.Append($"\n\n※ 유지본으로 보호된 {keeperSkips}개는 건너뜀 — 삭제하려면 화면에서 해당 유지본을 직접 클릭해 체크(호박색)해야 한다.");
-			if (entryOnly.Count > 0) msg.Append($"\n\n※ 디스크에 없는 {entryOnly.Count}개는 DB 엔트리만 제거된다.");
+			if (toDelete.Count > 0 && entryOnly.Count > 0) msg.Append($"\n\n※ 디스크에 없는 {entryOnly.Count}개는 DB 엔트리만 제거된다.");
+			if (offlineEntries > 0) msg.Append($"\n\n※ 이 중 {offlineEntries}개는 오프라인 드라이브라 파일에 닿을 수 없다 — DB 엔트리만 제거된다.");
 			if (unsafeSkips > 0) msg.Append($"\n\n※ 네트워크/이동식 드라이브의 {unsafeSkips}개는 휴지통이 없어 건너뜀 (영구 삭제 메뉴로는 가능).");
-			if (offlineSkips > 0) msg.Append($"\n\n※ 오프라인 드라이브의 {offlineSkips}개는 건너뜀.");
-			var choice = win.ShowMessage(permanent ? "영구 삭제 확인" : "정리 확인", msg.ToString(),
-				PhotinoDialogButtons.YesNo, PhotinoDialogIcon.Warning);
-			if (choice != PhotinoDialogResult.Yes) { Reply(win, "reclaimCancelled", new { }); return; }
-
-			Task.Run(() => {
+			AskConfirm(win,
+				toDelete.Count == 0 ? "DB 엔트리 정리" : permanent ? "영구 삭제 확인" : "정리 확인",
+				msg.ToString(), permanent || keeperDel > 0,
+				toDelete.Count == 0 ? "엔트리 정리" : permanent ? "영구 삭제" : "휴지통으로", ok => {
+			if (!ok) { Reply(win, "reclaimCancelled", new { }); return; }
+			{
 				int deleted = 0, failed = 0, prog = 0, total = toDelete.Count + entryOnly.Count; long freed = 0;
+				var purged = new List<string>(total);   // 결과 목록에서도 빼야 다음 실행에 유령으로 돌아오지 않는다
 				lock (_engineLock) {
 					foreach (var p in entryOnly) {
 						try { _dbEngine.RemoveFromDatabase(new FileEntry { Path = p }); } catch { }
+						purged.Add(p);
 						Reply(win, "removed", new { path = p, newKeeps = ReElectKeeps(p) });
 						Reply(win, "reclaimProgress", new { done = ++prog, total });
 					}
@@ -1188,7 +1393,7 @@ static class Program {
 						try {
 							if (permanent) File.Delete(p); else MoveToTrash(p);
 							try { _dbEngine.RemoveFromDatabase(new FileEntry { Path = p }); } catch { }   // (DB 포함)
-							freed += len; deleted++;
+							freed += len; deleted++; purged.Add(p);
 							// 체크된 유지본이 지워졌을 수 있다 — 그룹의 키퍼를 재선출해 UI 태그를 갱신 (sidecar 삭제와 동일 기계).
 							Reply(win, "removed", new { path = p, newKeeps = ReElectKeeps(p) });
 						}
@@ -1196,9 +1401,11 @@ static class Program {
 						Reply(win, "reclaimProgress", new { done = ++prog, total });
 					}
 					// (DB 포함)을 재시작 후에도 보장 — 구버전 DeleteInternal 도 끝에 SaveDatabase 를 불렀다.
-					if (deleted > 0 || entryOnly.Count > 0) try { ScanEngine.SaveDatabase(); } catch { }
+					if (purged.Count > 0) try { ScanEngine.SaveDatabase(); } catch { }
 				}
-				Reply(win, "reclaimDone", new { deleted, failed, skipped = keeperSkips + unsafeSkips + offlineSkips, entryOnly = entryOnly.Count, freed = HumanBytes(freed), permanent });
+				DropFromResults(purged.ToArray());
+				Reply(win, "reclaimDone", new { deleted, failed, skipped = keeperSkips + unsafeSkips, entryOnly = entryOnly.Count, freed = HumanBytes(freed), permanent });
+			}
 			});
 		}
 		catch (Exception ex) { Reply(win, "error", new { message = ex.Message, fatal = true }); }
@@ -1213,6 +1420,41 @@ static class Program {
 			return new DriveInfo(root).IsReady;
 		}
 		catch { return false; }
+	}
+
+	// ---------- 확인 대화상자 (앱 테마) ----------
+	// 네이티브 MessageBox 는 흰 바탕이라 어두운 화면에서 눈이 부시다. 화면 안 모달로 대체한다.
+	// 부수 효과로 메시지 스레드도 막지 않는다 — 예전엔 대화상자가 떠 있는 동안 중지/일시정지 같은
+	// 메시지가 전달되지 못했다.
+	static readonly Dictionary<int, Action<bool>> _confirms = new();
+	static int _confirmSeq;
+	static void AskConfirm(PhotinoWindow win, string title, string body, bool danger, string yes, Action<bool> done) {
+		int id = Interlocked.Increment(ref _confirmSeq);
+		lock (_confirms) _confirms[id] = done;
+		Reply(win, "confirm", new { id, title, body, danger, yes });
+	}
+	static void AnswerConfirm(JsonElement root) {
+		if (!root.TryGetProperty("payload", out var p) || !p.TryGetProperty("id", out var ide) || !ide.TryGetInt32(out int id)) return;
+		bool ok = p.TryGetProperty("ok", out var oke) && oke.ValueKind == JsonValueKind.True;
+		Action<bool>? cb;
+		lock (_confirms) { _confirms.Remove(id, out cb); }
+		if (cb != null) Task.Run(() => cb(ok));   // 메시지 스레드에서 무거운 작업을 하지 않는다
+	}
+
+	// 삭제 판단을 위한 파일 상태 분류. 사용자가 삭제를 결정하면 앱은 거부하지 않는다 —
+	// 온라인/오프라인은 "무엇을 할 수 있는지"만 정할 뿐이다:
+	//   Present        : 파일이 있다 → 휴지통/영구 삭제 + DB 엔트리 제거
+	//   Missing        : 온라인 드라이브인데 파일이 없다 → DB 엔트리만 제거
+	//   MissingOffline : 드라이브가 오프라인이라 파일에 닿을 수 없다 → DB 엔트리만 제거 (개수는 따로 알린다)
+	// 오프라인 루트에서는 File.Exists 를 아예 부르지 않는다 — 죽은 UNC 는 경로마다 수 초씩 걸린다.
+	// (예전엔 오프라인·부모 폴더 없음을 이유로 거부했는데, 폴더째 지운 파일이 전부 여기 걸려
+	//  "오프라인 N개" 오류만 나고 정리가 안 됐다.)
+	internal enum FileState { Present, Missing, MissingOffline }
+	static FileState Classify(string path, Dictionary<string, bool> rootReady) {
+		string rt = Path.GetPathRoot(path) ?? "";
+		if (!rootReady.TryGetValue(rt, out bool rdy)) rootReady[rt] = rdy = DriveReady(rt);
+		if (!rdy) return FileState.MissingOffline;
+		return File.Exists(path) ? FileState.Present : FileState.Missing;
 	}
 
 	// The Recycle Bin exists only on FIXED local drives. On UNC/network + removable media there is none,
@@ -1344,23 +1586,19 @@ static class Program {
 	}
 
 	// ---------- 자동 체크 (구버전 GUI '선택' 메뉴 이식 — 메타데이터 전부는 C# 쪽에만 있어 서버측 계산) ----------
-	// visible = 화면 필터를 통과한 경로들 (구버전 IsVisibleInFilter 게이팅과 같은 범위 제한).
+	// 범위 = 검색 필터(q)를 통과하는 전체 결과. 예전에는 화면이 보낸 "보이는 경로"를 범위로 썼는데, 화면은
+	// 한 페이지(150그룹)만 들고 있어서 "최저 품질 체크" 같은 라벨이 사실은 첫 페이지에만 적용됐다.
 	// 응답 cut 맵은 "명시적으로 바뀌는 항목"만 담고 JS 가 cutState 에 병합한다 (Ctrl+Z 1회로 되돌림).
 	static void AutoCheck(PhotinoWindow win, JsonElement root) {
 		try {
 			if (!root.TryGetProperty("payload", out var pl) || pl.ValueKind != JsonValueKind.Object) return;
 			string mode = pl.TryGetProperty("mode", out var md) ? md.GetString() ?? "" : "";
-			static HashSet<string> PathSet(JsonElement obj, string prop) {
-				var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-				if (obj.TryGetProperty(prop, out var arr) && arr.ValueKind == JsonValueKind.Array)
-					foreach (var v in arr.EnumerateArray()) { var s = v.GetString(); if (!string.IsNullOrEmpty(s)) set.Add(s); }
-				return set;
-			}
-			var visible = PathSet(pl, "visible");
-			var checkedSet = PathSet(pl, "checkedPaths");
+			string q = pl.TryGetProperty("q", out var qe) ? (qe.GetString() ?? "").Trim() : "";
 			var snap = _lastDupes;
-			var groups = snap.Where(d => visible.Contains(d.Path))
+			var groups = snap.Where(d => FilterMatch(d, q))
 							 .GroupBy(d => d.GroupId).Select(g => g.ToList()).Where(g => g.Count >= 2).ToList();
+			// '사용자 지정 체크'의 skipChecked 용 현재 체크 상태 — 이것도 전체 결과 기준으로 서버가 낸다.
+			var checkedSet = new HashSet<string>(BuildSelection(pl).Checked.Select(i => i.Path), StringComparer.OrdinalIgnoreCase);
 
 			var cut = new Dictionary<string, bool>(StringComparer.Ordinal);
 			// Keep(false)가 Check(true)를 이긴다: 한 경로가 두 그룹(일반+부분클립)에 걸릴 때 어느 한쪽의
@@ -1417,21 +1655,18 @@ static class Program {
 					}
 					break;
 				}
-				case "missing": {   // 사라진 파일 체크 — 온라인 볼륨에서 실제로 없어진 것만 (오프라인/마운트 분리는 오인 방지 제외)
+				case "missing": {   // 사라진 파일 체크 — 지금 디스크에서 못 찾는 것 전부
 					label = "사라진 파일 체크";
 					int offline = 0;
-					var dirOk = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
 					foreach (var it in groups.SelectMany(g => g)) {
-						string rt = Path.GetPathRoot(it.Path) ?? "";
-						if (!rootReady.TryGetValue(rt, out bool ok)) rootReady[rt] = ok = DriveReady(rt);
-						if (!ok) { offline++; continue; }
-						if (File.Exists(it.Path)) continue;
-						// 루트는 살아있어도 마운트 포인트 볼륨이 분리됐을 수 있다 — 부모 폴더까지 닿아야 "진짜 사라짐"
-						string dir = Path.GetDirectoryName(it.Path) ?? "";
-						if (!dirOk.TryGetValue(dir, out bool de)) dirOk[dir] = de = dir.Length > 0 && Directory.Exists(dir);
-						if (de) Check(it); else offline++;
+						// 폴더째 지워졌든 드라이브가 빠졌든 "지금 없는 파일"은 모두 체크 대상 (Classify 참고).
+						// 오프라인 드라이브에서 온 개수는 따로 알려준다 — 외장을 빼놓고 눌렀을 때 알아채도록.
+						var st = Classify(it.Path, rootReady);
+						if (st == FileState.Present) continue;
+						Check(it);
+						if (st == FileState.MissingOffline) offline++;
 					}
-					if (offline > 0) note = $"오프라인/접근 불가 {offline}개 파일 제외";
+					if (offline > 0) note = $"오프라인 드라이브의 {offline}개 포함 — 연결하지 않은 드라이브라면 확인해줘";
 					break;
 				}
 				case "oldest": {   // 가장 오래된 것 체크 (최신 유지)
@@ -1521,9 +1756,9 @@ static class Program {
 	// EstimatedTotalSavingsBytes/Groups[GroupId·EstimatedSavingsBytes·Reason·RemoveItems·KeepItems]).
 	static void DryRunReport(PhotinoWindow win, JsonElement root) {
 		try {
-			var want = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-			if (root.TryGetProperty("payload", out var pl) && pl.TryGetProperty("paths", out var ps) && ps.ValueKind == JsonValueKind.Array)
-				foreach (var p in ps.EnumerateArray()) { var s = p.GetString(); if (!string.IsNullOrEmpty(s)) want.Add(s); }
+			// 정리와 완전히 같은 수집(BuildSelection): 보고서가 실제 삭제 대상과 다르면 시뮬레이션이 아니다.
+			if (!root.TryGetProperty("payload", out var pl) || pl.ValueKind != JsonValueKind.Object) return;
+			var want = new HashSet<string>(BuildSelection(pl).Checked.Select(i => i.Path), StringComparer.OrdinalIgnoreCase);
 			if (want.Count == 0) { Reply(win, "error", new { message = "체크된 항목이 없다 — 먼저 체크해줘." }); return; }
 			var snap = _lastDupes;
 			static object Dto(DuplicateItem i) => new { i.Path, SizeBytes = i.SizeLong, Resolution = i.FrameSize ?? "", i.DateCreated };
@@ -1560,28 +1795,25 @@ static class Program {
 		string cancelCmd = move ? "moveCancelled" : "copyCancelled";
 		try {
 			var paths = new List<string>();
-			var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 			int missing = 0;
-			if (root.TryGetProperty("payload", out var pl) && pl.TryGetProperty("paths", out var ps) && ps.ValueKind == JsonValueKind.Array)
-				foreach (var p in ps.EnumerateArray()) {
-					var s = p.GetString();
-					if (string.IsNullOrEmpty(s) || !seen.Add(s)) continue;
-					if (File.Exists(s)) paths.Add(s); else missing++;
-				}
+			if (!root.TryGetProperty("payload", out var pl) || pl.ValueKind != JsonValueKind.Object) return;
+			// 정리와 같은 수집(BuildSelection) — 화면 페이지가 아니라 전체 결과의 체크 항목이 대상이다.
+			foreach (var it in BuildSelection(pl).Checked) {
+				if (File.Exists(it.Path)) paths.Add(it.Path); else missing++;
+			}
 			if (paths.Count == 0) { Reply(win, "error", new { message = $"{act}할 파일이 없다 (디스크에 없는 파일 {missing}개 제외).", fatal = true }); return; }
 			var picked = win.ShowOpenFolder($"{act}할 대상 폴더 선택", null, false);
 			if (picked is not { Length: > 0 }) { Reply(win, cancelCmd, new { }); return; }
 			string dest = picked[0];
 			long bytes = paths.Sum(p => { try { return new FileInfo(p).Length; } catch { return 0L; } });
-			var choice = win.ShowMessage($"{act} 확인",
+			AskConfirm(win, $"{act} 확인",
 				$"체크된 {paths.Count}개 파일 ({HumanBytes(bytes)})을\n{dest}\n(으)로 {act}할까?" +
 				(move ? "\n\n이동 후 DB 경로가 자동 갱신된다 (지문 유지)." : "\n\n원본은 그대로 두고 사본을 만든다.") +
 				"\n이름 충돌은 _0, _1… 을 붙여 해결." +
 				(missing > 0 ? $"\n\n※ 디스크에 없는 {missing}개는 제외됨." : ""),
-				PhotinoDialogButtons.YesNo, PhotinoDialogIcon.Question);
-			if (choice != PhotinoDialogResult.Yes) { Reply(win, cancelCmd, new { }); return; }
-
-			Task.Run(() => {
+				false, act, ok => {
+			if (!ok) { Reply(win, cancelCmd, new { }); return; }
+			{
 				int done = 0, failed = 0, skipped = 0, prog = 0;
 				lock (_engineLock) {   // move 는 DB 를 만진다; copy 도 스캔과의 파일 경합을 피해 직렬화
 					foreach (var p in paths) {
@@ -1611,7 +1843,9 @@ static class Program {
 					}
 					if (move && done > 0) try { ScanEngine.SaveDatabase(); } catch { }   // 경로 갱신을 재시작 후에도 보존
 				}
+				if (move && done > 0) MarkResultsDirty();   // 결과 캐시의 경로도 새 위치를 가리켜야 한다
 				Reply(win, move ? "moveDone" : "copyDone", new { done, failed, skipped, dest });
+			}
 			});
 		}
 		catch (Exception ex) { Reply(win, "error", new { message = ex.Message, fatal = true }); }
@@ -1624,6 +1858,180 @@ static class Program {
 		int c = 0;
 		while (File.Exists(t)) t = Path.Combine(destDir, name + "_" + c++ + ext);
 		return t;
+	}
+
+	// ---------- 비교 결과 영속화 (재시작해도 검토 목록이 살아있게) ----------
+	// 지문 DB 는 비싼 부분(스캔)을 이미 보존한다. 사라지던 건 "비교 결과 그룹" 뿐이었고, 그것 때문에
+	// 실행할 때마다 전체 재비교를 다시 시켜야 했다. 결과 한 줄은 (경로 · 그룹 · 차이 · 플래그)만 있으면
+	// DB 엔트리로 완전히 재구성되므로 그것만 적는다 — 메타데이터를 중복 저장하지 않는다.
+	// DB 와 나란히 둔다: DB 마다 자기 결과를 갖는다 (사본/실 DB 전환에도 섞이지 않는다).
+	static string ResultsFile => Path.Combine(ActiveDbFolder, "photino-results.json");
+
+	sealed class ResRow {
+		public string p { get; set; } = "";
+		public string g { get; set; } = "";
+		public float d { get; set; }        // difference = 1 - Similarity/100
+		public int f { get; set; }          // DuplicateFlags
+		public double off { get; set; }     // PartialClip 시작 위치(초)
+	}
+	sealed class ResFile {
+		public int v { get; set; } = 1;
+		public long dbLen { get; set; }     // 저장 시점 ScannedFiles.db 크기/시각 — "그 뒤로 DB가 바뀌었나" 판정용
+		public long dbTicks { get; set; }
+		public string stamp { get; set; } = "";
+		public List<ResRow> items { get; set; } = new();
+	}
+
+	static readonly object _resSaveLock = new();
+	static System.Threading.Timer? _resSaveTimer;
+
+	// 삭제/개명처럼 결과를 조금씩 갉아먹는 변경은 몰아서 한 번만 다시 쓴다.
+	static void MarkResultsDirty() {
+		lock (_resSaveLock) {
+			_resSaveTimer ??= new System.Threading.Timer(_ => SaveResults(), null, Timeout.Infinite, Timeout.Infinite);
+			_resSaveTimer.Change(2000, Timeout.Infinite);
+		}
+	}
+
+	static void SaveResults() {
+		try {
+			var snap = _lastDupes;
+			var dbf = new FileInfo(Path.Combine(ActiveDbFolder, "ScannedFiles.db"));
+			var f = new ResFile {
+				dbLen = dbf.Exists ? dbf.Length : 0,
+				dbTicks = dbf.Exists ? dbf.LastWriteTimeUtc.Ticks : 0,
+				stamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm"),
+				items = snap.Select(d => new ResRow {
+					p = d.Path, g = d.GroupId.ToString("N"),
+					d = 1f - d.Similarity / 100f, f = (int)d.Flags,
+					off = d.PartialClipOffset.TotalSeconds,
+				}).ToList(),
+			};
+			// 임시 파일에 쓰고 바꿔치기 — 쓰다 죽어도 반쯤 적힌 결과 파일이 남지 않는다.
+			string tmp = ResultsFile + ".tmp";
+			File.WriteAllText(tmp, JsonSerializer.Serialize(f));
+			File.Move(tmp, ResultsFile, overwrite: true);
+		}
+		catch (Exception ex) { Console.Error.WriteLine($"[results] save failed: {ex.Message}"); }
+	}
+
+	// DB 에 없는 경로(다른 경로로 지워졌거나 DB 자체가 바뀐 경우)는 버리고, 그래서 멤버가 하나만 남은
+	// 그룹도 버린다 — PruneStaleDuplicates 와 같은 규칙. 반환값 = 복원된 항목 수.
+	static int LoadResults(out string stamp, out bool stale) {
+		stamp = ""; stale = false;
+		try {
+			if (!File.Exists(ResultsFile)) return 0;
+			var f = JsonSerializer.Deserialize<ResFile>(File.ReadAllText(ResultsFile));
+			if (f?.items is not { Count: > 0 }) return 0;
+			stamp = f.stamp;
+			var dbf = new FileInfo(Path.Combine(ActiveDbFolder, "ScannedFiles.db"));
+			stale = !dbf.Exists || dbf.Length != f.dbLen || dbf.LastWriteTimeUtc.Ticks != f.dbTicks;
+
+			var rebuilt = new List<DuplicateItem>(f.items.Count);
+			foreach (var r in f.items) {
+				if (!Guid.TryParseExact(r.g, "N", out var gid)) continue;
+				if (!DatabaseUtils.Database.TryGetValue(new FileEntry { Path = r.p }, out var fe) || fe is null) continue;
+				var it = new DuplicateItem(fe, r.d, gid, (DuplicateFlags)r.f);   // 여기서 stat 하므로 miss 표시가 매 실행 갱신된다
+				if (r.off > 0) it.PartialClipOffset = TimeSpan.FromSeconds(r.off);
+				rebuilt.Add(it);
+			}
+			var singles = rebuilt.GroupBy(x => x.GroupId).Where(g => g.Count() < 2).Select(g => g.Key).ToHashSet();
+			_lastDupes = new HashSet<DuplicateItem>(singles.Count > 0 ? rebuilt.Where(x => !singles.Contains(x.GroupId)) : rebuilt);
+			return _lastDupes.Count;
+		}
+		catch (Exception ex) { Console.Error.WriteLine($"[results] load failed: {ex.Message}"); return 0; }
+	}
+
+	// 시작 시 1회. 이미 결과가 메모리에 있으면(같은 세션에서 비교했다) 그대로 첫 페이지만 다시 그린다.
+	static void RestoreResults(PhotinoWindow win) {
+		try {
+			if (_lastDupes.Count > 0) { SendGroupsPage(win, 0); return; }
+			EnsureDb();
+			if (LoadResults(out string stamp, out bool stale) == 0) return;
+			string note = $"이전 비교 결과 복원 ({stamp})" +
+				(stale ? " · 그 뒤로 DB가 바뀌었다 — 정확한 목록은 ‘비교만 다시’" : "");
+			SendGroupsPage(win, 0, note, restored: true);
+		}
+		catch (Exception ex) { Reply(win, "error", new { message = ex.Message }); }
+	}
+
+	// 파일이 사라졌으면(정리·순회비교 삭제) 결과에서도 빼야 다음 실행에서 유령으로 돌아오지 않는다.
+	// _lastDupes 는 SWAP 으로만 갱신한다 (필드 주석 참고 — 감시 스레드가 동시에 열거 중일 수 있다).
+	static void DropFromResults(params string[] paths) {
+		var gone = new HashSet<string>(paths.Where(p => !string.IsNullOrEmpty(p)), StringComparer.OrdinalIgnoreCase);
+		if (gone.Count == 0) return;
+		var snap = _lastDupes;
+		var kept = snap.Where(d => !gone.Contains(d.Path)).ToList();
+		if (kept.Count == snap.Count) return;
+		var singles = kept.GroupBy(d => d.GroupId).Where(g => g.Count() < 2).Select(g => g.Key).ToHashSet();
+		_lastDupes = new HashSet<DuplicateItem>(singles.Count > 0 ? kept.Where(d => !singles.Contains(d.GroupId)) : kept);
+		MarkResultsDirty();
+	}
+
+	// ---------- 선택 모델 (서버측) ----------
+	// 체크 상태의 진실 = cutState(명시적 예외) + 기본값(유지본 아님 & 디스크에 있음). 화면은 한 페이지만
+	// 들고 있으므로 삭제·복사·이동·보고서는 전부 여기서 전체 결과를 훑어 대상을 모은다.
+	sealed class Selection {
+		public List<DuplicateItem> Checked = new();
+		public HashSet<string> Keepers = new(StringComparer.OrdinalIgnoreCase);     // 모든 그룹의 유지본
+		public HashSet<string> Overrides = new(StringComparer.OrdinalIgnoreCase);   // 직접 클릭으로 체크된 유지본 = 명시 승인
+	}
+
+	static Dictionary<string, bool> ReadCutMap(JsonElement pl) {
+		var cut = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+		if (pl.TryGetProperty("cut", out var ce) && ce.ValueKind == JsonValueKind.Object)
+			foreach (var kv in ce.EnumerateObject())
+				if (kv.Value.ValueKind is JsonValueKind.True or JsonValueKind.False)
+					cut[kv.Name] = kv.Value.ValueKind == JsonValueKind.True;
+		return cut;
+	}
+
+	static Selection BuildSelection(JsonElement pl) {
+		var cut = ReadCutMap(pl);
+		var autoCut = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		if (pl.TryGetProperty("autoCut", out var ae) && ae.ValueKind == JsonValueKind.Array)
+			foreach (var v in ae.EnumerateArray()) { var s = v.GetString(); if (!string.IsNullOrEmpty(s)) autoCut.Add(s); }
+
+		var sel = new Selection();
+		var snap = _lastDupes;
+		Dictionary<Guid, string> keepMap;
+		lock (_sideLock) keepMap = new Dictionary<Guid, string>(_keepByGroup);
+		var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		foreach (var g in snap.GroupBy(d => d.GroupId)) {
+			var members = g.ToList();
+			if (members.Count < 2) continue;
+			if (!keepMap.TryGetValue(g.Key, out var keeper)) keeper = PickKeep(members).Path;   // 아직 카드로 그린 적 없는 그룹
+			sel.Keepers.Add(keeper);
+			foreach (var it in members) {
+				bool isKeeper = keeper.Equals(it.Path, StringComparison.OrdinalIgnoreCase);
+				// 화면의 isCut() 과 같은 규칙이어야 한다 — 다르면 사용자가 본 것과 다른 걸 지우게 된다.
+				bool chk = cut.TryGetValue(it.Path, out var v) ? v : (!isKeeper && !Missing(it));
+				if (!chk || !seen.Add(it.Path)) continue;
+				sel.Checked.Add(it);
+				if (isKeeper && !autoCut.Contains(it.Path)) sel.Overrides.Add(it.Path);
+			}
+		}
+		return sel;
+	}
+
+	// 검토 화면 검색창과 같은 필터 (index.html 의 fmatch 와 같은 규칙). 자동 체크류는 "화면에 보이는 범위"가
+	// 곧 작업 범위라서, 페이지에 갇히지 않도록 필터 문자열만 받아 서버가 전체 결과에 적용한다.
+	static bool FilterMatch(DuplicateItem d, string q) {
+		if (string.IsNullOrEmpty(q)) return true;
+		if (q.StartsWith("drive:", StringComparison.OrdinalIgnoreCase))
+			return q.Length > 6 && d.Path.StartsWith(q[6..] + ":", StringComparison.OrdinalIgnoreCase);
+		if (d.Path.Contains(q, StringComparison.OrdinalIgnoreCase)) return true;
+		return Height(d) is int h && h > 0 && (h + "p").Contains(q, StringComparison.OrdinalIgnoreCase);
+	}
+
+	// 정리 대기함 숫자 — 화면은 한 페이지만 아니까 전체 기준 합계는 서버가 알려준다.
+	static void ReplyCutStats(PhotinoWindow win, Selection sel) {
+		long bytes = sel.Checked.Sum(d => Math.Max(0, d.SizeLong));
+		int miss = sel.Checked.Count(Missing);
+		Reply(win, "cutStats", new {
+			count = sel.Checked.Count, del = sel.Checked.Count - miss, miss,
+			bytes = HumanBytes(bytes),
+		});
 	}
 
 	// ---------- 트리아지 영속화 (검토 체크 상태 — 재시작·재비교 생존) ----------
@@ -1641,12 +2049,16 @@ static class Program {
 		Reply(win, "triage", new { cut = cut ?? new Dictionary<string, bool>() });
 	}
 
-	static void SaveTriage(JsonElement root) {
+	static void SaveTriage(PhotinoWindow win, JsonElement root) {
+		if (!root.TryGetProperty("payload", out var pl) || pl.ValueKind != JsonValueKind.Object) return;
 		try {
-			if (root.TryGetProperty("payload", out var pl) && pl.TryGetProperty("cut", out var c) && c.ValueKind == JsonValueKind.Object)
+			if (pl.TryGetProperty("cut", out var c) && c.ValueKind == JsonValueKind.Object)
 				File.WriteAllText(TriageFile, c.GetRawText());
 		}
 		catch { }
+		// 체크가 바뀔 때마다 전체 결과 기준 대기함 합계를 돌려준다 — 화면의 페이지 로컬 숫자가 아니라
+		// 실제로 정리 버튼이 처리할 대상의 수/용량이어야 한다.
+		try { ReplyCutStats(win, BuildSelection(pl)); } catch { }
 	}
 
 	// ---------- DB 뷰어 (인덱스 열람 — 페이지드, 검색, 엔트리 제거) ----------
@@ -1680,21 +2092,75 @@ static class Program {
 		catch (Exception ex) { Reply(win, "error", new { message = ex.Message }); }
 	}
 
-	// In-memory removal, same semantics as every other row removal (copy DB by default; a scan re-adds
-	// the file if it still exists — this is "forget", not "delete").
+	// 인덱스에서 잊기 — 파일은 건드리지 않는다 (스캔하면 아직 있는 파일은 다시 등록된다).
+	// 예전에는 메모리에서만 지우고 저장을 안 해서, 화면에선 사라지지만 재시작하면 그대로 돌아왔다:
+	// 라벨이 "잊기"인데 실제로는 아무것도 잊지 않았다. MarkDbDirty 로 반드시 디스크까지 간다.
 	static void DbRemove(PhotinoWindow win, JsonElement root) {
 		try {
 			string? p = root.TryGetProperty("payload", out var pl) && pl.TryGetProperty("path", out var pe) ? pe.GetString() : null;
 			if (string.IsNullOrEmpty(p)) return;
 			_dbEngine.RemoveFromDatabase(new FileEntry { Path = p });
+			MarkDbDirty();
+			DropFromResults(p);
 			Reply(win, "dbRemoved", new { path = p, total = DatabaseUtils.Database.Count });
 		}
 		catch (Exception ex) { Reply(win, "error", new { message = ex.Message }); }
 	}
 
-	// NO '미존재 정리': DatabaseUtils.CleanupDatabase is a deliberate no-op (tombstone policy — a
-	// missing file's fingerprint is kept so a re-download is caught; see TOMBSTONE-DESIGN.md), so the
-	// button could only ever promise a prune and report 0. Per-entry ✕ (dbRemove) is the real escape hatch.
+	// DB 뷰어에서 실제 파일 삭제 — 비교 결과가 없어도 지울 수 있는 경로가 필요하다는 요청.
+	// 파일이 없거나 드라이브가 오프라인이어도 거부하지 않는다: 사용자가 삭제를 결정하면 DB 엔트리는
+	// 지운다 (파일에 닿을 수 없을 뿐이다). 휴지통 없는 볼륨만 영구 삭제 메뉴로 유도한다.
+	static void DbDelete(PhotinoWindow win, JsonElement root) {
+		try {
+			if (!root.TryGetProperty("payload", out var pl) || pl.ValueKind != JsonValueKind.Object) return;
+			string? p = pl.TryGetProperty("path", out var pe) ? pe.GetString() : null;
+			if (string.IsNullOrEmpty(p)) return;
+			bool permanent = pl.TryGetProperty("permanent", out var pm) && pm.ValueKind == JsonValueKind.True;
+			var state = Classify(p, new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase));
+
+			if (state != FileState.Present) {   // 파일에 닿을 수 없다 → DB 엔트리만
+				AskConfirm(win, "DB 엔트리 정리",
+					(state == FileState.MissingOffline ? "드라이브가 오프라인이라 파일에 닿을 수 없다." : "이 파일은 이미 디스크에 없다.")
+						+ $"\n\nDB 인덱스 엔트리를 제거할까?\n\n{Path.GetFileName(p)}",
+					false, "엔트리 제거", ok => {
+						if (!ok) { Reply(win, "dbDeleteCancelled", new { }); return; }
+						try {
+							lock (_engineLock) { _dbEngine.RemoveFromDatabase(new FileEntry { Path = p }); ScanEngine.SaveDatabase(); }
+							DropFromResults(p);
+							Reply(win, "removed", new { path = p, newKeeps = ReElectKeeps(p) });
+							Reply(win, "dbDeleted", new { path = p, freed = "0 B", permanent = false, entryOnly = true, total = DatabaseUtils.Database.Count });
+						}
+						catch (Exception ex) { Reply(win, "error", new { message = "엔트리 제거 실패: " + ex.Message }); }
+					});
+				return;
+			}
+			if (!permanent && !CanRecycle(p)) {
+				Reply(win, "error", new { message = "이 드라이브에는 휴지통이 없다 — 영구 삭제로만 지울 수 있다." });
+				return;
+			}
+			long len = 0; try { len = new FileInfo(p).Length; } catch { }
+			AskConfirm(win, permanent ? "영구 삭제 확인" : "휴지통으로 삭제",
+				(permanent ? "⚠ 이 파일을 영구 삭제할까? 복구 불가!\n\n" : "이 파일을 휴지통으로 보낼까? (복구 가능)\n\n")
+					+ Path.GetFileName(p) + $"\n{HumanBytes(len)}",
+				permanent, permanent ? "영구 삭제" : "휴지통으로", ok => {
+					if (!ok) { Reply(win, "dbDeleteCancelled", new { }); return; }
+					try {
+						if (permanent) File.Delete(p); else MoveToTrash(p);
+						lock (_engineLock) { _dbEngine.RemoveFromDatabase(new FileEntry { Path = p }); ScanEngine.SaveDatabase(); }
+						DropFromResults(p);
+						Reply(win, "removed", new { path = p, newKeeps = ReElectKeeps(p) });   // 검토 목록에 열려 있으면 행도 사라진다
+						Reply(win, "dbDeleted", new { path = p, freed = HumanBytes(len), permanent, total = DatabaseUtils.Database.Count });
+					}
+					catch (Exception ex) { Reply(win, "error", new { message = "삭제 실패: " + ex.Message }); }
+				});
+		}
+		catch (Exception ex) { Reply(win, "error", new { message = ex.Message }); }
+	}
+
+	// NO '미존재 정리' 일괄 버튼: DatabaseUtils.CleanupDatabase is a deliberate no-op (tombstone policy —
+	// a missing file's fingerprint is kept so a re-download is caught; see TOMBSTONE-DESIGN.md), so the
+	// button could only ever promise a prune and report 0. 없어진 파일의 엔트리를 실제로 비우는 길은 두 개다:
+	// 검토정리의 '사라진 파일 체크' → 정리(엔트리만 제거), 그리고 DB 뷰어의 per-entry ✕ (dbRemove).
 
 	// ---------- 중복 아님 (group blacklist — GUI 호환: DB 폴더의 BlacklistedGroups.json 공유) ----------
 	static string BlacklistFile => Path.Combine(ActiveDbFolder, "BlacklistedGroups.json");
@@ -1721,11 +2187,11 @@ static class Program {
 			if (root.TryGetProperty("payload", out var pl) && pl.TryGetProperty("paths", out var ps))
 				foreach (var p in ps.EnumerateArray()) { var s = p.GetString(); if (!string.IsNullOrEmpty(s)) paths.Add(s); }
 			if (paths.Count < 2) { Reply(win, "error", new { message = "그룹 정보가 비었다." }); return; }
-			var choice = win.ShowMessage("중복 아님 표시",
+			AskConfirm(win, "중복 아님 표시",
 				$"이 그룹({paths.Count}개 파일)을 ‘중복 아님’으로 기록할까?\n\n다음 비교부터 이 조합은 결과에서 빠진다. 기록은 DB 폴더의 BlacklistedGroups.json — 지우면 되돌릴 수 있다.",
-				PhotinoDialogButtons.YesNo, PhotinoDialogIcon.Question);
-			if (choice != PhotinoDialogResult.Yes) { Reply(win, "notMatchCancelled", new { }); return; }
-
+				false, "기록", ok => {
+			if (!ok) { Reply(win, "notMatchCancelled", new { }); return; }
+			try {
 			var entry = new HashSet<string>(PathComparer.ForCurrentPlatform);
 			foreach (var p in paths) {
 				entry.Add(p);
@@ -1748,8 +2214,12 @@ static class Program {
 			if (gids.Count > 0) {
 				_lastDupes = new HashSet<DuplicateItem>(snap.Where(d => !gids.Contains(d.GroupId)));
 				lock (_sideLock) foreach (var gid in gids) _keepByGroup.Remove(gid);
+				MarkResultsDirty();   // 복원된 목록에 '중복 아님' 그룹이 다시 나타나면 표시가 무의미해진다
 			}
 			Reply(win, "notMatchDone", new { paths });
+			}
+			catch (Exception ex) { Reply(win, "error", new { message = ex.Message }); }
+			});
 		}
 		catch (Exception ex) { Reply(win, "error", new { message = ex.Message }); }
 	}
@@ -1773,11 +2243,14 @@ static class Program {
 			if (File.Exists(np) && !string.Equals(np, p, StringComparison.OrdinalIgnoreCase)) { Reply(win, "error", new { message = "같은 이름의 파일이 이미 있다." }); return; }
 			File.Move(p, np);
 			try {
-				if (DatabaseUtils.Database.TryGetValue(new FileEntry { Path = p }, out var fe) && fe != null)
+				if (DatabaseUtils.Database.TryGetValue(new FileEntry { Path = p }, out var fe) && fe != null) {
 					ScanEngine.UpdateFilePathInDatabase(np, fe);   // fingerprints survive the rename
+					MarkDbDirty();   // 새 경로가 저장되지 않으면 재시작 후 옛 경로가 톰스톤으로 되살아난다
+				}
 			}
 			catch { }
 			foreach (var it in _lastDupes.Where(d => d.Path.Equals(p, StringComparison.OrdinalIgnoreCase)).ToList()) it.Path = np;
+			MarkResultsDirty();   // 결과 캐시의 경로도 따라가야 복원이 맞는 파일을 가리킨다
 			lock (_sideLock)
 				foreach (var k in _keepByGroup.Where(kv => kv.Value.Equals(p, StringComparison.OrdinalIgnoreCase)).Select(kv => kv.Key).ToList())
 					_keepByGroup[k] = np;   // a renamed KEEPER must stay protected
@@ -1835,7 +2308,8 @@ static class Program {
 			}
 			else if (!File.Exists(p)) {                                // deletion
 				// Serialize against compare/scan — this runs on a watcher thread and mutates the shared static DB.
-				try { lock (_engineLock) _dbEngine.RemoveFromDatabase(new FileEntry { Path = p }); } catch { }   // in-memory only (copy DB)
+				try { lock (_engineLock) _dbEngine.RemoveFromDatabase(new FileEntry { Path = p }); MarkDbDirty(); } catch { }
+				DropFromResults(p);   // 결과 캐시에서도 빼야 다음 실행에서 유령으로 돌아오지 않는다
 				Reply(win, "removed", new { path = p, newKeeps = ReElectKeeps(p) });
 			}
 		}
@@ -1859,6 +2333,169 @@ static class Program {
 			}
 		}
 		return res;
+	}
+
+	// ---------- 회귀 테스트: 체크 규칙 (`VDF.Photino.exe seltest`) ----------
+	// 사용자가 겪은 "확인 대화상자는 뜨는데 결과 0개"의 정체는, 디스크에서 이미 사라진 파일(톰스톤)이
+	// "유지본이 아니다"라는 이유만으로 기본 체크되어 정리 대상이 전부 entryOnly 로 빠진 것이었다.
+	// 임시 파일로 그 상황을 그대로 만들어 놓고 규칙 4가지를 확인한다 — 라이브러리는 건드리지 않는다.
+	static void SelTest() {
+		string dir = Path.Combine(Path.GetTempPath(), "vdf-seltest");
+		Directory.CreateDirectory(dir);
+		string keep = Path.Combine(dir, "keep.mp4"), dupe = Path.Combine(dir, "dupe.mp4"), gone = Path.Combine(dir, "gone.mp4");
+		File.WriteAllBytes(keep, new byte[4096]);   // 가장 큼 → 우선순위 최종 타이브레이크에서 유지본
+		File.WriteAllBytes(dupe, new byte[1024]);
+		try { File.Delete(gone); } catch { }        // 톰스톤: DB 에는 있고 디스크엔 없다
+
+		var gid = Guid.NewGuid();
+		var set = new HashSet<DuplicateItem> {
+			new(new FileEntry { Path = keep }, 0.02f, gid, DuplicateFlags.None),
+			new(new FileEntry { Path = dupe }, 0.02f, gid, DuplicateFlags.None),
+			new(new FileEntry { Path = gone }, 0.02f, gid, DuplicateFlags.None),
+		};
+		_lastDupes = set;
+		OrderGroups(set);   // _keepByGroup 을 굽는다 (화면이 표시하는 유지본과 같은 것)
+
+		static JsonElement P(string json) => JsonDocument.Parse(json).RootElement;
+		int pass = 0, fail = 0;
+		void Check(string what, bool ok) { Console.WriteLine($"[seltest] {(ok ? "PASS" : "FAIL")} {what}"); if (ok) pass++; else fail++; }
+
+		string kq = JsonSerializer.Serialize(keep), dq = JsonSerializer.Serialize(dupe), gq = JsonSerializer.Serialize(gone);
+
+		var s1 = BuildSelection(P("{\"cut\":{},\"autoCut\":[]}"));
+		Check("기본: 실존 비유지본 1개만 체크", s1.Checked.Count == 1 && s1.Checked[0].Path == dupe);
+		Check("기본: 유지본은 보호 목록에", s1.Keepers.Contains(keep));
+		Check("기본: 톰스톤은 체크되지 않는다", !s1.Checked.Any(i => i.Path == gone));
+
+		var s2 = BuildSelection(P($"{{\"cut\":{{{kq}:true}},\"autoCut\":[]}}"));
+		Check("유지본 직접 클릭 → 삭제 승인(override)", s2.Overrides.Contains(keep) && s2.Checked.Any(i => i.Path == keep));
+
+		var s3 = BuildSelection(P($"{{\"cut\":{{{kq}:true}},\"autoCut\":[{kq}]}}"));
+		Check("일괄로 체크된 유지본은 승인 아님", !s3.Overrides.Contains(keep));
+
+		var s4 = BuildSelection(P($"{{\"cut\":{{{gq}:true}},\"autoCut\":[]}}"));
+		Check("톰스톤을 직접 체크하면 대상에 들어온다 (DB 엔트리 정리용)", s4.Checked.Any(i => i.Path == gone));
+
+		var s5 = BuildSelection(P($"{{\"cut\":{{{dq}:false}},\"autoCut\":[]}}"));
+		Check("명시 해제는 기본값을 이긴다", !s5.Checked.Any(i => i.Path == dupe));
+
+		Console.WriteLine($"[seltest] {pass} passed, {fail} failed");
+		try { Directory.Delete(dir, true); } catch { }
+	}
+
+	// ---------- 회귀 테스트: DB 변경이 디스크까지 가는가 (`VDF.Photino.exe dbpersisttest`) ----------
+	// 이 세션의 근본 버그 그 자체를 재현·검증한다. 예전에는 사이드카 삭제와 DB 뷰어 ✕ 가 정적
+	// DatabaseUtils.Database 만 고치고 저장하지 않아서, 재시작하면 지운 파일이 톰스톤으로 부활하고
+	// 비교 목록에 다시 떠서 정리가 "휴지통 0개"만 반복했다. 임시 폴더의 임시 DB 로만 돈다 —
+	// 실 DB(D:\)도, 사본 DB(%LOCALAPPDATA%)도 건드리지 않는다.
+	static void DbPersistTest() {
+		string dir = Path.Combine(Path.GetTempPath(), "vdf-dbpersist");
+		try { if (Directory.Exists(dir)) Directory.Delete(dir, true); } catch { }
+		Directory.CreateDirectory(dir);
+		_cfg.realDbMode = true; _cfg.realDbFolder = dir;   // ActiveDbFolder → 임시 폴더 (SaveCfg 는 안 부른다)
+		DatabaseUtils.CustomDatabaseFolder = dir;
+		DatabaseUtils.InvalidateDatabaseFolder();
+		DatabaseUtils.Database.Clear();
+
+		int pass = 0, fail = 0;
+		void Check(string what, bool ok) { Console.WriteLine($"[dbpersist] {(ok ? "PASS" : "FAIL")} {what}"); if (ok) pass++; else fail++; }
+		// 디스크에서 새로 읽어 확인 — 메모리 상태를 믿지 않는다 (그게 버그였다). 단 이 프로브는
+		// 인메모리 DB 를 갈아치우므로(= 대기 중인 제거를 되살린다) 저장이 끝난 뒤에만 부른다.
+		bool OnDisk(string path) {
+			DatabaseUtils.Database.Clear();
+			DatabaseUtils.LoadDatabase();
+			return DatabaseUtils.Database.Contains(new FileEntry { Path = path });
+		}
+		string dbFile = Path.Combine(dir, "ScannedFiles.db");
+		DateTime Written() { try { return new FileInfo(dbFile).LastWriteTimeUtc; } catch { return default; } }
+
+		string a = Path.Combine(dir, "keep.mp4"), b = Path.Combine(dir, "dupe.mp4");
+		File.WriteAllBytes(a, new byte[4096]); File.WriteAllBytes(b, new byte[1024]);
+		DatabaseUtils.Database.Add(new FileEntry(a));
+		DatabaseUtils.Database.Add(new FileEntry(b));
+		ScanEngine.SaveDatabase();
+		Check("저장한 엔트리는 재로드해도 있다", OnDisk(a) && OnDisk(b));
+
+		// 결과 캐시도 함께 만들어 둔다 (삭제가 결과에서도 빠져야 한다)
+		var gid = Guid.NewGuid();
+		DatabaseUtils.Database.TryGetValue(new FileEntry { Path = a }, out var fa);
+		DatabaseUtils.Database.TryGetValue(new FileEntry { Path = b }, out var fb);
+		_lastDupes = new HashSet<DuplicateItem> {
+			new(fa!, 0.02f, gid, DuplicateFlags.None), new(fb!, 0.02f, gid, DuplicateFlags.None),
+		};
+		OrderGroups(_lastDupes);
+		SaveResults();
+		Check("결과 캐시 파일이 만들어진다", File.Exists(ResultsFile));
+
+		// ── 핵심: 인메모리 제거 + MarkDbDirty 만으로 디스크까지 가는가 (앱 종료 시 FlushDb 와 같은 경로)
+		var stamp = Written();
+		_dbEngine.RemoveFromDatabase(new FileEntry { Path = b });
+		MarkDbDirty();
+		Check("디바운스 중에는 DB 파일을 아직 안 쓴다", Written() == stamp);   // 즉시 쓰지 않는 설계 확인
+		FlushDb();
+		Check("Flush 가 DB 파일을 다시 썼다", Written() != stamp);
+		// 여기서부터 재시작 시뮬레이션 — 디스크에서 새로 읽는다
+		Check("★ 잊은 엔트리는 재시작(재로드) 후에도 사라져 있다", !OnDisk(b));
+		Check("남긴 엔트리는 그대로 있다", OnDisk(a));
+
+		DropFromResults(b);
+		Check("결과에서도 빠지고, 멤버 1개만 남은 그룹은 해체된다", _lastDupes.Count == 0);
+
+		// 삭제된 파일은 결과 캐시 파일에서도 사라져야 한다 (재시작 때 유령으로 안 돌아오게)
+		SaveResults();
+		string json = File.ReadAllText(ResultsFile);
+		Check("결과 캐시 파일에 지운 경로가 남지 않는다", !json.Contains("dupe.mp4", StringComparison.OrdinalIgnoreCase));
+
+		// 삭제 판정: 사용자가 결정하면 앱은 거부하지 않는다. 폴더째 지워졌든 드라이브가 빠졌든
+		// "파일에 닿을 수 없다"로 분류되어 DB 엔트리 제거로 처리돼야 한다.
+		// (예전엔 부모 폴더가 없거나 오프라인이면 건너뛰어 "오프라인 16개" 오류만 나고 정리가 안 됐다.)
+		var rr = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+		Check("★ 폴더째 지워진 파일 = 없음(엔트리 정리 대상)", Classify(Path.Combine(dir, "지운폴더", "sub", "x.mp4"), rr) == FileState.Missing);
+		Check("살아있는 폴더의 없는 파일 = 없음", Classify(Path.Combine(dir, "x.mp4"), rr) == FileState.Missing);
+		Check("★ 없는 드라이브 = 없음(오프라인) — 거부하지 않는다", Classify(@"Q:\없는폴더\x.mp4", rr) == FileState.MissingOffline);
+		Check("실존 파일 = 있음", Classify(b, rr) == FileState.Present);
+
+		// 휴지통 경로도 실제로 밟아본다 (임시 파일 하나 — 고정 드라이브라 복구 가능)
+		try { MoveToTrash(a); Check("휴지통 삭제가 실제로 동작한다", !File.Exists(a)); }
+		catch (Exception ex) { Check($"휴지통 삭제가 실제로 동작한다 ({ex.Message})", false); }
+
+		Console.WriteLine($"[dbpersist] {pass} passed, {fail} failed");
+		try { Directory.Delete(dir, true); } catch { }
+	}
+
+	// ---------- 회귀 테스트: 결과 저장→복원 왕복 (`VDF.Photino.exe restoretest`) ----------
+	// 실 DB 의 결과 파일을 절대 건드리지 않도록 사본 DB 폴더로 고정하고, 끝나면 원래 파일을 되돌린다.
+	static void RestoreTest() {
+		_cfg.realDbMode = false;   // 사본 DB 고정 (SaveCfg 는 부르지 않으니 사용자 설정은 그대로)
+		EnsureDb();
+		var db = DatabaseUtils.Database.Take(40).ToList();
+		if (db.Count < 4) { Console.WriteLine("[restoretest] SKIP: 사본 DB 엔트리가 부족하다"); return; }
+
+		var made = new HashSet<DuplicateItem>();
+		for (int i = 0; i + 1 < db.Count; i += 2) {
+			var gid = Guid.NewGuid();
+			made.Add(new DuplicateItem(db[i], 0.02f, gid, DuplicateFlags.None));
+			made.Add(new DuplicateItem(db[i + 1], 0.02f, gid, DuplicateFlags.None));
+		}
+		_lastDupes = made;
+		int groupsBefore = OrderGroups(made).Count;
+
+		string bak = ResultsFile + ".restoretest-bak";
+		bool had = File.Exists(ResultsFile);
+		try {
+			if (had) File.Copy(ResultsFile, bak, true);
+			SaveResults();
+			_lastDupes = new HashSet<DuplicateItem>();   // 재시작 흉내
+			int n = LoadResults(out string stamp, out bool stale);
+			int groupsAfter = OrderGroups(_lastDupes).Count;
+			int missing = _lastDupes.Count(Missing);
+			Console.WriteLine($"[restoretest] 저장 {made.Count}항목/{groupsBefore}그룹 → 복원 {n}항목/{groupsAfter}그룹 (stamp {stamp}, stale={stale}, 디스크에 없는 항목 {missing})");
+			Console.WriteLine(n == made.Count && groupsAfter == groupsBefore ? "[restoretest] PASS" : "[restoretest] FAIL");
+		}
+		finally {
+			try { if (had) File.Copy(bak, ResultsFile, true); else File.Delete(ResultsFile); } catch { }
+			try { File.Delete(bak); } catch { }
+		}
 	}
 
 	// Headless live-scan check on a SMALL test folder — exercises StartSearch → Progress.Drives → StartCompare.
@@ -1887,7 +2524,7 @@ static class Program {
 		engine.ScanAborted += (s, e) => s2.TrySetResult();
 		engine.StartCompare();
 		s2.Task.Wait();
-		BuildGroups(engine.Duplicates, out int tg);
+		int tg = OrderGroups(engine.Duplicates).Count;
 		Console.WriteLine($"[scantest] compare done. {engine.Duplicates.Count} dup items, {tg} groups");
 	}
 
@@ -2001,7 +2638,7 @@ static class Program {
 		tcs.Task.Wait();
 		sw.Stop();
 
-		var groups = BuildGroups(engine.Duplicates, out int totalGroups);
-		Console.WriteLine($"[selftest] compare: {engine.Duplicates.Count} items, {totalGroups} groups ({groups.Count} shaped for UI), {sw.ElapsedMilliseconds}ms");
+		var ordered = OrderGroups(engine.Duplicates);
+		Console.WriteLine($"[selftest] compare: {engine.Duplicates.Count} items, {ordered.Count} groups ({Math.Min(ordered.Count, GroupPageSize)} per UI page), {sw.ElapsedMilliseconds}ms");
 	}
 }
