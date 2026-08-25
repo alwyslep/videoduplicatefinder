@@ -62,6 +62,22 @@ namespace VDF.Core {
 		/// <summary>Entries a fingerprint can still be computed for (video, not permanently flagged).
 		/// 0 when partial-clip detection is off — hide the inventory then.</summary>
 		public int FingerprintTarget;
+		/// <summary><see cref="ScanEngine.GetDrivePreview"/> only: entries still incomplete whose file no
+		/// longer exists at its recorded path. A scan enumerates the DISK, so it can never finish these —
+		/// counting them as "remaining" pins the remaining-count and the progress bar at a constant that no
+		/// number of rescans moves. Report them separately and exclude them from the remaining work.</summary>
+		public int MissingIncomplete;
+		/// <summary>Recorded size of the <see cref="MissingIncomplete"/> entries, so a byte-based progress
+		/// figure can subtract them from its denominator and actually reach 100%.</summary>
+		public long MissingIncompleteBytes;
+		/// <summary><see cref="ScanEngine.GetDrivePreview"/> only: entries flagged <see cref="EntryFlags.TooDark"/>.
+		/// Their frames carry no usable signal, so <c>InvalidEntry</c> drops them before any work and they are
+		/// excluded from comparison entirely — neither remaining work nor a meaningful "analysed" file. Report
+		/// them as their own bucket; folding them into either side of the ratio misstates it.</summary>
+		public int ExcludedDark;
+		/// <summary>Recorded size of the <see cref="ExcludedDark"/> entries, for the same denominator
+		/// correction as <see cref="MissingIncompleteBytes"/>.</summary>
+		public long ExcludedDarkBytes;
 	}
 
 	/// <summary>One worker's in-progress file on a drive, for a per-drive "now processing" row.</summary>

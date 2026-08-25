@@ -221,8 +221,18 @@ namespace VDF.Core {
 		}
 
 		bool EntryIsAlreadyComplete(FileEntry e) {
-			if (e.Flags.Has(EntryFlags.ThumbnailError))
-				return SamplingPermanentlyFailed(true, Settings.AlwaysRetryFailedSampling, e.SamplingFailCount, Settings.MaxSamplingRetryAttempts);
+			// Terminal: InvalidEntry() drops a too-dark entry before any work, so no scan can ever fill in
+			// its missing frames. Reporting it as remaining work pins the remaining-count and the progress
+			// bar at a constant that no number of rescans moves — the trap tombstones already sprang.
+			if (e.Flags.Has(EntryFlags.TooDark)) return true;
+			// Only the exhausted-retry case is terminal here. A ThumbnailError that still has retries left
+			// must NOT short-circuit to "incomplete", because an entry can hold every frame and the flag
+			// both at once: the cached-complete fast path in GatherInfos returns without clearing it, so
+			// such an entry stayed incomplete forever while a scan skipped straight past it. Fall through
+			// and let the data itself decide.
+			if (e.Flags.Has(EntryFlags.ThumbnailError) &&
+				SamplingPermanentlyFailed(true, Settings.AlwaysRetryFailedSampling, e.SamplingFailCount, Settings.MaxSamplingRetryAttempts))
+				return true;
 			if (!e.IsImage && e.mediaInfo == null) return false;
 			if (e.grayBytes == null || (e.IsImage && e.grayBytes.Count == 0)) return false;
 			if (!e.IsImage)
@@ -291,6 +301,13 @@ namespace VDF.Core {
 		/// is touched. Requires the database to be loaded; uses the CURRENT settings (include
 		/// scope, partial-clip toggle, thumbnail count), so sync GUI settings first.
 		/// </summary>
+		// A recorded path can be malformed or on a disconnected/permission-denied volume; File.Exists
+		// already swallows those, but a long-path/invalid-char entry can still throw. Never let one bad
+		// row take down a preview that is only ever informational.
+		static bool FileExistsQuiet(string path) {
+			try { return File.Exists(path); } catch { return false; }
+		}
+
 		public DriveProgress[] GetDrivePreview() {
 			if (DatabaseUtils.Database.Count == 0) return Array.Empty<DriveProgress>();
 			BuildPositionList(); // EntryIsAlreadyComplete evaluates cached frames against it
@@ -302,9 +319,24 @@ namespace VDF.Core {
 				dp.Root = root;
 				dp.TotalBytes += e.FileSize;
 				dp.TotalFiles++;
-				if (EntryIsAlreadyComplete(e)) {
+				// Checked before "complete": a too-dark entry is skipped by InvalidEntry() and never
+				// compared, so calling it analysed overstates the work done just as calling it remaining
+				// overstates the work left. It gets its own bucket and leaves the ratio alone.
+				if (e.Flags.Has(EntryFlags.TooDark)) {
+					dp.ExcludedDark++;
+					dp.ExcludedDarkBytes += e.FileSize;
+				}
+				else if (EntryIsAlreadyComplete(e)) {
 					dp.DoneBytes += e.FileSize;
 					dp.DoneFiles++;
+				}
+				// A scan enumerates the DISK: an entry whose file is gone can never be completed by one.
+				// Left in the plain remaining count it pins "남은 파일" (and the progress %) at a constant
+				// that no rescan ever moves. Only the INCOMPLETE entries are stat'ed — the completed ones
+				// need no check, which keeps this to a few hundred ms instead of tens of seconds.
+				else if (!FileExistsQuiet(e.Path)) {
+					dp.MissingIncomplete++;
+					dp.MissingIncompleteBytes += e.FileSize;
 				}
 				if (Settings.EnablePartialClipDetection && !e.IsImage) {
 					if (e.AudioFingerprint != null) {
@@ -1622,6 +1654,15 @@ namespace VDF.Core {
 								}
 							}
 							if (hasAllInformation) {
+								// Every sampling position is cached, so a ThumbnailError left over from an
+								// earlier partial failure is stale — clear it exactly as the full-sampling
+								// path below does. Left set, EntryIsAlreadyComplete() calls this entry
+								// incomplete on every future scan while this very branch skips the work
+								// that would clear it, and it never converges.
+								if (entry.Flags.Has(EntryFlags.ThumbnailError)) {
+									entry.Flags.Set(EntryFlags.ThumbnailError, false);
+									entry.SamplingFailCount = 0;
+								}
 								// Thumbnails are cached but audio fingerprint might still be needed
 								if (Settings.EnablePartialClipDetection &&
 									!entry.IsImage &&
